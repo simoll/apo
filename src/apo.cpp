@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <iostream>
 #include <map>
+#include <vector>
+#include <cassert>
 
 enum class OpCode : int16_t {
   Nop = 0,
@@ -189,10 +191,64 @@ evaluate(const Program & prog, Data * params) {
 
   return result;
 }
-// matches program @pattern aligning the two at the statement at @pc of @prog
+
 static bool
-MatchPattern(const Program & prog, int pc, const Program & pattern) {
-  // TODO
+rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, int32_t * holes, std::vector<bool> & defined) {
+  // matching a pattern hole
+  if (patternPc < 0) {
+    int holeIdx = -patternPc - 1;
+    if (defined[holeIdx]) {
+      return holes[holeIdx] == pc; // matched a defined hole
+    } else {
+      // add a new definition
+      holes[holeIdx] = pc;
+      return true;
+    }
+  }
+
+  assert (patternPc >= 0);
+  if (pc < 0) {
+    // argument matching
+    return false; // can only match parameters with placeholders
+
+  } else {
+    OpCode oc = prog.code[pc].oc;
+    if (oc != pattern.code[patternPc].oc) return false;
+    if (oc == OpCode::Constant) {
+      // constant matching
+      return pattern.code[patternPc].getValue() == prog.code[pc].getValue(); // matching constant
+
+    } else {
+      // generic statement matching
+      for (int i = 0; i < 2; ++i) {
+        if (!rec_MatchPattern(prog, prog.code[pc].getOperand(i), pattern, pattern.code[patternPc].getOperand(i), holes, defined)) return false;
+      }
+      return true;
+    }
+  }
+}
+
+// matches program @pattern aligning the two at the statement at @pc of @prog (stores the operand index at "holes" (parameters) in @holes
+template<bool Verbose>
+static bool
+MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * holes) {
+  assert (pattern.codeLen > 0);
+
+  std::vector<bool> defined(false, pattern.numParams);
+  bool ok = rec_MatchPattern(prog, pc, pattern, pattern.codeLen - 1, holes, defined);
+  if (Verbose) {
+    if (ok) {
+      std::cerr << "Match. Holes:";
+      for (int i = 0; i < pattern.numParams; ++i) {
+        std::cerr << " "; PrintIndex(holes[i], std::cerr);
+      }
+      std::cerr << "\n";
+    }
+    else {
+      std::cerr << "Mismatch.\n";
+    }
+  }
+  return ok;
 }
 
 struct Rule {
@@ -206,11 +262,23 @@ int main(int argc, char ** argv) {
   Program prog;
   prog.codeLen = 3;
   prog.numParams = 2;
+  // define a simple program
   prog.code[0] = Statement(OpCode::Add, -1, -2);
   prog.code[1] = Statement(OpCode::Nop, 0, 0);
   prog.code[2] = Statement(OpCode::Sub, 0, -1);
-  prog.dump();
   prog.compress();
   prog.dump();
+
+  // try some matching
+  Program pat;
+  pat.codeLen = 2;
+  pat.numParams = 2;
+  pat.code[0] = Statement(OpCode::Add, -1, -2);
+  pat.code[1] = Statement(OpCode::Sub, 0, -1);
+
+  int32_t holes[2];
+  bool ok = MatchPattern<true>(prog, 1, pat, holes);
+  assert(ok);
+
 }
 
