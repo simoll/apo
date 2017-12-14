@@ -2,7 +2,9 @@
 #include <iostream>
 
 enum class OpCode : int16_t {
-  Constant = 0,
+  Nop = 0,
+  // @Data typed literal
+  Constant,
 
   // arithmetic
   Add,
@@ -17,6 +19,7 @@ enum class OpCode : int16_t {
 static void
 PrintOpCode(OpCode oc, std::ostream & out) {
   switch (oc) {
+    case OpCode::Nop: { out << "nop"; } break;
     case OpCode::Add: { out << "add"; } break;
     case OpCode::Sub: { out << "sub"; } break;
     case OpCode::Mul: { out << "mul"; } break;
@@ -68,6 +71,23 @@ struct Statement {
     out << " "; PrintIndex(getOperand(0), out);
     out << " "; PrintIndex(getOperand(1), out);
     out << "\n";
+  }
+
+  Statement()
+  : oc(OpCode::Nop)
+  {}
+
+  Statement(OpCode _oc, int32_t firstOp, int32_t secondOp)
+  : oc(_oc)
+  {
+    elements.indices.first = firstOp;
+    elements.indices.second = secondOp;
+  }
+
+  Statement(Data constVal)
+  : oc(OpCode::Constant)
+  {
+    elements.value = constVal;
   }
 };
 
@@ -138,5 +158,11 @@ evaluate(const Program & prog, Data * params) {
 }
 
 int main(int argc, char ** argv) {
+  Program prog;
+  prog.codeLen = 2;
+  prog.numParams = 2;
+  prog.code[0] = Statement(OpCode::Add, -1, -2);
+  prog.code[1] = Statement(OpCode::Sub, 0, -1);
+  prog.dump();
 }
 
