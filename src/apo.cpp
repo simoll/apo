@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <iostream>
+#include <map>
 
 enum class OpCode : int16_t {
   Nop = 0,
@@ -46,27 +47,29 @@ struct Statement {
   OpCode oc;
 
   union {
-    struct {
-      int32_t first;
-      int32_t second;
-    } indices;
+    int32_t indices[2];
     Data value;
   } elements;
 
   // operand indices
-  int32_t getOperand(int i) const {
-    if (i == 0) return elements.indices.first;
-    if (i == 1) return elements.indices.second;
-  }
+  int32_t getOperand(int i) const { return elements.indices[i]; }
+  void setOperand(int i, int32_t op) { elements.indices[i] = op; }
 
   // only for constants
   Data getValue() const { return elements.value; }
 
-  void print(std::ostream & out) const {
+  void print(std::ostream & out, int i) const {
+    if (oc == OpCode::Nop) return;
+
+    out << '%' << i << " = ";
+
+    // constant
     if (oc == OpCode::Constant) {
       out << ' ' << elements.value << "\n";
       return;
     }
+
+    // regular binary operator
     PrintOpCode(oc, out);
     out << " "; PrintIndex(getOperand(0), out);
     out << " "; PrintIndex(getOperand(1), out);
@@ -80,8 +83,8 @@ struct Statement {
   Statement(OpCode _oc, int32_t firstOp, int32_t secondOp)
   : oc(_oc)
   {
-    elements.indices.first = firstOp;
-    elements.indices.second = secondOp;
+    elements.indices[0] = firstOp;
+    elements.indices[1] = secondOp;
   }
 
   Statement(Data constVal)
@@ -103,11 +106,39 @@ struct Program {
   // instruction listing
   Statement code[MaxLength];
 
-  void print(std::ostream & out) const {
-    for (int i = 0; i < codeLen; ++i) {
-      out << '%' << i << " = ";
-      code[i].print(out);
+  // compress all no-op (OpCode::Nop) nodes
+  void compress() {
+    int j = 0;
+    std::map<int32_t, int32_t> operandMap;
+
+    for (int i = 0; i < MaxLength; ++i) {
+      if (code[i].oc == OpCode::Nop) continue;
+
+      // compress
+      operandMap[i] = j;
+      int slot = j++;
+      code[slot] = code[i];
+      if (i != slot) code[i].oc = OpCode::Nop;
+
+      if (code[slot].oc == OpCode::Constant) continue;
+
+      // remap operands
+      int oldFirst = code[slot].getOperand(0);
+      if (oldFirst >= 0) code[slot].setOperand(0, operandMap[oldFirst]);
+
+      int oldSecond = code[slot].getOperand(1);
+      if (oldSecond >= 1) code[slot].setOperand(1, operandMap[oldSecond]);
     }
+
+    codeLen = j;
+  }
+
+  void print(std::ostream & out) const {
+    out << "Program {\n";
+    for (int i = 0; i < codeLen; ++i) {
+      code[i].print(out, i);
+    }
+    out << "}\n";
   }
 
   void dump() const { print(std::cerr); }
@@ -146,6 +177,8 @@ evaluate(const Program & prog, Data * params) {
         result = A | B;
       case OpCode::Xor:
         result = A ^ B;
+
+      case OpCode::Nop: break;
       default:
         abort(); // not implemented
       }
@@ -156,13 +189,28 @@ evaluate(const Program & prog, Data * params) {
 
   return result;
 }
+// matches program @pattern aligning the two at the statement at @pc of @prog
+static bool
+MatchPattern(const Program & prog, int pc, const Program & pattern) {
+  // TODO
+}
+
+struct Rule {
+  Program lhs;
+  Program rhs;
+};
+
+
 
 int main(int argc, char ** argv) {
   Program prog;
-  prog.codeLen = 2;
+  prog.codeLen = 3;
   prog.numParams = 2;
   prog.code[0] = Statement(OpCode::Add, -1, -2);
-  prog.code[1] = Statement(OpCode::Sub, 0, -1);
+  prog.code[1] = Statement(OpCode::Nop, 0, 0);
+  prog.code[2] = Statement(OpCode::Sub, 0, -1);
+  prog.dump();
+  prog.compress();
   prog.dump();
 }
 
