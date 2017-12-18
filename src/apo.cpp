@@ -32,7 +32,8 @@ enum class OpCode : int16_t {
   Return,
 
   // arithmetic
-  Add,
+  Begin_Binary,
+  Add = Begin_Binary,
   Sub,
   Mul,
 
@@ -40,6 +41,7 @@ enum class OpCode : int16_t {
   And,
   Or,
   Xor,
+  End_Binary = Xor,
   End_OpCode = (int32_t) Xor + 1
 };
 
@@ -526,7 +528,7 @@ rec_ErasePattern(Program & prog, int pc, const Program & pattern, int patternPc,
   stat.oc = OpCode::Nop;
 }
 
-static bool
+static void
 ErasePattern(Program & prog, int pc, const Program & pattern) {
   NodeSet erased;
   rec_ErasePattern(prog, pc, pattern, pattern.size() - 1, erased);
@@ -702,8 +704,63 @@ BuildRules() {
 struct RPG {
   int numParams;
 
+  struct Elem {
+    int numUses;
+    int valIdx; // instruction or arg
+
+    /// Elem()
+    /// : numUses(0)
+    /// , valIdx(0)
+    /// {}
+
+    Elem(int _numUses, int _valIdx) : numUses(_numUses), valIdx(_valIdx) {}
+    bool operator< (const Elem & right) const {
+      return numUses > right.numUses; // prioritize unused elements
+    }
+  };
+
+  std::uniform_real_distribution<float> constantRand;
+
+  struct Sampler {
+    std::vector<int> unused;
+    std::priority_queue<Elem, std::vector<Elem>> opQueue;
+
+    void addUseable(int valIdx) {
+      unused.push_back(valIdx);
+    }
+
+    // fetch a random operand and increase its use count
+    int acquireOperand(int distToLimit) {
+
+      // check whether its safe to peek to already used operands at this point
+      if (unused.size() > 0) {
+        bool allowPeek = !opQueue.empty() && (distToLimit > unused.size());
+        std::uniform_int_distribution<int> opRand(0, unused.size() - 1 + allowPeek);
+
+        // pick element from unused vector
+        int idx = opRand(randGen);
+        assert(idx >= 0);
+        if (idx < unused.size()) {
+          int valIdx = unused[idx];
+          unused.erase(unused.begin() + idx);
+          opQueue.emplace(1, valIdx); // add to used-tracked queue for potential re-use
+          return valIdx;
+        }
+      }
+
+      // Otw, take element from queue
+      Elem elem = opQueue.top();
+      opQueue.pop(); // TODO add randomness
+      int valIdx = elem.valIdx;
+      elem.numUses++;
+      opQueue.push(elem); // re-insert element
+
+      return valIdx;
+    }
+  };
+
   std::vector<Data> constVec; // recognized constants in the match rules
-  const double pConstant = 0.20;
+  const double pConstant = 0.10;
 
   void collectConstants(const Program & prog, std::set<Data> & seen) {
     for (auto & stat : prog.code) {
@@ -730,29 +787,41 @@ struct RPG {
   rec_generate(Program & P, int usePc) {
   }
 
-  Program generate(int length) {
+  Program
+  generate(int length) {
     Program P;
+    P.code.reserve(length);
 
-    struct Elem {
-      int numUses;
-      int valIdx; // instruction or arg
-    };
-
-    auto cmp = [](const Elem & left, const Elem & right) {
-      return left.numUses < right.numUses; // prioritize unused elements
-    };
-
-    std::priority_queue<Elem, std::vector<Elem>, decltype(cmp)> opQueue(cmp);
-    std::uniform_real_distribution<float> constantRand;
+    Sampler S;
+    for (int a = 0; a < numParams; ++a) {
+      S.addUseable(-a - 1);
+    }
 
     for (int i = 0; i < length - 1; ++i) {
       if (constantRand(randGen) <= pConstant) {
-      } else {
+        // random constant
+        std::uniform_int_distribution<int> constIdxRand(0, constVec.size() - 1);
+        int idx = constIdxRand(randGen);
+        P.push(build_const(constVec[idx]));
 
+      } else {
+        // pick random opCode and operands
+        int beginBin = (int) OpCode::Begin_Binary;
+        int endBin = (int) OpCode::End_Binary;
+
+        std::uniform_int_distribution<int> ocRand(beginBin, endBin);
+        OpCode oc = (OpCode) ocRand(randGen);
+        int distToLimit = length - 1 - i;
+        int firstOp = S.acquireOperand(distToLimit);
+        int sndOp = S.acquireOperand(distToLimit);
+        P.push(Statement(oc, firstOp, sndOp));
       }
+
+      // publish the i-th instruction as useable in an operand position
+      S.addUseable(i);
     }
 
-    P.push(build_ret(length - 1));
+    P.push(build_ret(length - 2));
 
     return P;
   }
@@ -784,8 +853,7 @@ int main(int argc, char ** argv) {
   bool ok = rules[0].match(true, prog, 1, holes);
   assert(ok);
 
-  for (const auto & rule : rules) {
-  }
+  // rewrite test
   rules[0].rewrite(true, prog, 1, holes);
   std::cerr << "after rewrite:\n";
   prog.dump();
@@ -794,8 +862,11 @@ int main(int argc, char ** argv) {
   std::cerr << "Generating some random programs:\n";
   RPG rpg(rules, 3);
 
-  const int progLen = 4;
-  Program p = rpg.generate(progLen);
-  p.dump();
+  for (int i = 0; i < 10; ++i) {
+    const int progLen = 4;
+    Program p = rpg.generate(2*i);
+    std::cerr << "Rand " << i << " ";
+    p.dump();
+  }
 }
 
