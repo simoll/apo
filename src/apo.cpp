@@ -4,6 +4,8 @@
 #include <vector>
 #include <cassert>
 #include <set>
+#include <initializer_list>
+#include <functional>
 
 // #include "tensorflow/cc/client/client_session.h"
 // #include "tensorflow/cc/ops/standard_ops.h"
@@ -16,6 +18,7 @@ const bool Verbose = false;
 namespace apo {
 
 enum class OpCode : int16_t {
+  Begin_OpCode = 0,
   Nop = 0,
   // @Data typed literal
   Constant,
@@ -31,9 +34,56 @@ enum class OpCode : int16_t {
   // bitwise logic
   And,
   Or,
-  Xor
-
+  Xor,
+  End_OpCode = (int32_t) Xor + 1
 };
+
+// arithmetic data type
+using Data = uint64_t;
+
+static bool
+IsCommutative(OpCode oc) {
+  return (oc == OpCode::Add || oc == OpCode::Mul || oc == OpCode::And || oc == OpCode::Or || oc == OpCode::Xor);
+}
+
+static bool
+IsAssociative(OpCode oc) {
+  return (oc == OpCode::Add || oc == OpCode::Mul || oc == OpCode::And || oc == OpCode::Or);
+}
+
+static bool
+HasNeutralRHS(OpCode oc) {
+  return (oc == OpCode::Add || oc == OpCode::Mul || oc == OpCode::Sub || oc == OpCode::And || oc == OpCode::Or || oc == OpCode::Xor);
+}
+
+static Data
+GetNeutralRHS(OpCode oc) {
+  assert(HasNeutralRHS(oc));
+  switch (oc) {
+  case OpCode::Add:
+  case OpCode::Or:
+  case OpCode::Xor:
+  case OpCode::Sub:
+    return (Data) 0;
+
+  case OpCode::Mul:
+    return (Data) 1;
+
+  case OpCode::And:
+    return (Data) -1;
+
+  default: abort(); // not mapped
+  }
+}
+
+static
+void
+for_such(std::function<bool(OpCode oc)> filterFunc, std::function<void(OpCode oc)> userFunc) {
+  for (int16_t oc = (int16_t) OpCode::Begin_OpCode; oc < (int16_t) OpCode::End_OpCode; ++oc) {
+    if (filterFunc((OpCode) oc)) userFunc((OpCode) oc);
+  }
+}
+
 static void
 PrintOpCode(OpCode oc, std::ostream & out) {
   switch (oc) {
@@ -59,7 +109,6 @@ PrintIndex(int32_t idx, std::ostream & out) {
   }
 }
 
-using Data = uint64_t;
 
 struct Statement {
   OpCode oc;
@@ -135,6 +184,10 @@ struct Statement {
   }
 };
 
+static Statement build_ret(int32_t handle) { return Statement(OpCode::Return, handle); }
+static Statement build_const(Data val) { return Statement(val); }
+
+
 static bool
 IsStatement(int32_t idx) {
   return idx >= 0;
@@ -151,8 +204,6 @@ GetHoleIndex(int32_t valueIdx) {
   return -valueIdx - 1;
 }
 
-const size_t MaxLength = 16;
-
 using ReMap = std::map<int32_t, int32_t>;
 
 struct Program {
@@ -163,10 +214,16 @@ struct Program {
   int codeLen;
 
   // instruction listing
-  Statement code[MaxLength];
+  std::vector<Statement> code;
 
   int size() const { return codeLen; }
   int num_Params() const { return numParams; }
+
+  Program(int _numParams, std::initializer_list<Statement> stats)
+  : numParams(_numParams)
+  , codeLen(stats.size())
+  , code(stats)
+  {}
 
   // create @size many Nop slots before @endPc
   int make_space(int endPc, int size, ReMap & reMap) {
@@ -228,7 +285,7 @@ struct Program {
     int j = 0;
     ReMap operandMap;
 
-    for (int i = 0; i < MaxLength; ++i) {
+    for (int i = 0; i < code.size(); ++i) {
       if (code[i].oc == OpCode::Nop) continue;
 
       // compact
@@ -381,7 +438,8 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * ho
   std::vector<bool> defined(false, pattern.numParams);
   NodeSet nodes;
   // match the pattern
-  bool ok = rec_MatchPattern(prog, pc, pattern, pattern.codeLen - 1, holes, defined, nodes);
+  int retIndex = pattern.code[pattern.codeLen - 1].getOperand(0);
+  bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, nodes);
 
   // verify that there is no user that is not covered by the pattern (except for the match root)
   for (int i = 0; ok && (i < prog.codeLen); ++i) {
@@ -446,6 +504,11 @@ struct Rule {
   Program lhs;
   Program rhs;
 
+  Rule(Program _lhs, Program _rhs)
+  : lhs(_lhs)
+  , rhs(_rhs)
+  {}
+
   bool match(const Program & prog, int pc, int32_t * holes) { return MatchPattern(prog, pc, lhs, holes); }
 
   void print(std::ostream & out) const {
@@ -499,42 +562,102 @@ struct Rule {
   }
 };
 
+
+using RuleVec = std::vector<Rule>;
+// create a basic rule set
+static
+RuleVec
+BuildRules() {
+  RuleVec rules;
+
+  {
+    // try some matching
+    Program lhs (2, {Statement(OpCode::Add, -2, -1), Statement(OpCode::Sub, 0, -2)});
+    Program rhs (1, {build_ret(-1)});
+    rules.emplace_back(lhs, rhs);
+  }
+
+  // commutative rules (oc %a %b --> oc %b %a)
+  for_such(IsCommutative, [&](OpCode oc){
+    rules.emplace_back(
+      Program(2, {Statement(oc, -1, -2), build_ret(0)}),
+      Program(2, {Statement(oc, -2, -1), build_ret(0)})
+    );
+  });
+
+  // associative rules (oc (%a %b) %c --> %a (%b %c)
+  for_such(IsAssociative, [&](OpCode oc){
+    rules.emplace_back(
+      Program(3, {Statement(oc, -1, -2),
+                  Statement(oc, 0, -3),
+                  build_ret(1)
+                  }),
+      Program(3, {Statement(oc, -2, -3),
+                  Statement(oc, -1, 0),
+                  build_ret(1)
+                  })
+    );
+  });
+
+  // %a * (%b + %c) --> (%a * %b) + (%a * %c)
+  rules.emplace_back(
+      Program(3, {Statement(OpCode::Add, -2, -3),
+                  Statement(OpCode::Mul, -1, 0),
+                  build_ret(1)
+                  }),
+      Program(3, {Statement(OpCode::Mul, -1, -2),
+                  Statement(OpCode::Mul, -2, -3),
+                  Statement(OpCode::Add, 0, 1),
+                  build_ret(2)
+                  })
+  );
+
+  // (%a <oc> neutral) --> %a
+  for_such(HasNeutralRHS, [&](OpCode oc){
+    Data neutral = GetNeutralRHS(oc);
+    rules.emplace_back(
+      Program(1, {build_const(neutral),
+                  Statement(oc, -1, 0),
+                  build_ret(1)
+                  }),
+      Program(1, {Statement(oc, -2, -3),
+                  Statement(oc, -1, 0),
+                  build_ret(1)
+                  })
+    );
+  });
+
+  // arithmetic simplifaction rules
+  return rules;
+}
+
 } // namespace apo
+
+
+
+
+const size_t MaxLength = 16;
 
 int main(int argc, char ** argv) {
   using namespace apo;
 
-  Program prog;
-  prog.codeLen = 4;
-  prog.numParams = 2;
+  Program prog(2, {
+      Statement(OpCode::Add, -1, -2),
+      Statement(OpCode::Nop, 0, 0),
+      Statement(OpCode::Sub, 0, -1),
+      Statement(OpCode::Return, 2)
+  });
   // define a simple program
-  prog.code[0] = Statement(OpCode::Add, -1, -2);
-  prog.code[1] = Statement(OpCode::Nop, 0, 0);
-  prog.code[2] = Statement(OpCode::Sub, 0, -1);
-  prog.code[3] = Statement(OpCode::Return, 2);
   prog.compact();
   prog.dump();
 
-  // try some matching
-  Rule rule;
-  Program & lhs = rule.lhs;  // (b + a) - b
-  lhs.codeLen = 2;
-  lhs.numParams = 2;
-  lhs.code[0] = Statement(OpCode::Add, -2, -1);
-  lhs.code[1] = Statement(OpCode::Sub, 0, -2);
+  RuleVec rules = BuildRules();
+  std::cerr << "Loaded " << rules.size() << " rules!\n";
+  int32_t holes[4];
 
-  // rewrite to no-op
-  Program  & rhs = rule.rhs; // (ret %a)
-  rhs.codeLen = 1;
-  rhs.numParams = 1;
-  rhs.code[0] = Statement(OpCode::Return, -1);
-
-  rule.dump();
-
-  int32_t holes[2];
-  bool ok = rule.match(prog, 1, holes);
+  bool ok = rules[0].match(prog, 1, holes);
   assert(ok);
-  rule.rewrite(prog, 1, holes);
+  rules[0].rewrite(prog, 1, holes);
   std::cerr << "after rewrite:\n";
   prog.dump();
   // bool ok = MatchPattern<true>(prog, 1, pat, holes);
