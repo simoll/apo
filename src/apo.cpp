@@ -6,12 +6,17 @@
 #include <set>
 #include <initializer_list>
 #include <functional>
+#include <queue>
+
+#include <random>
+
+std::mt19937 randGen(42);
 
 // #include "tensorflow/cc/client/client_session.h"
 // #include "tensorflow/cc/ops/standard_ops.h"
 // #include "tensorflow/cc/framework/tensor.h"
 
-const bool Verbose = true;
+const bool Verbose = false;
 
 #define IF_VERBOSE if (Verbose)
 
@@ -127,6 +132,8 @@ struct Statement {
 
   bool isOperator() const { return oc != OpCode::Nop && oc != OpCode::Constant; }
 
+  bool isConstant() const { return oc == OpCode::Constant; }
+
   int num_Operands() const {
     if (oc == OpCode::Nop || oc == OpCode::Constant) return 0;
     else if (oc == OpCode::Return) return 1;
@@ -226,6 +233,32 @@ struct Program {
   : numParams(0)
   , code()
   { code.reserve(4); }
+
+  bool
+  verify(std::function<bool(int, std::string)> handler) const {
+    for (int pc = 0; pc < size(); ++pc) {
+      const auto & stat = code[pc];
+      for (int o = 0; o < stat.num_Operands(); ++o) {
+        if (stat.getOperand(o) > pc) {
+          if (handler(pc, "use before definition!")) return false;
+        }
+
+        if (stat.getOperand(o) <= -num_Params() - 1) {
+          if (handler(pc, "uses out-of-bounds parameter!")) return false;
+        }
+      }
+
+      if (code[size() - 1].oc != OpCode::Return) {
+        handler(size() - 1, "does not terminate in a return statement!");
+      }
+    }
+
+    return true;
+  }
+
+  void push(Statement&& s) {
+    code.emplace_back(s);
+  }
 
   // create @size many Nop slots before @endPc
   int make_space(int endPc, int allocSize, ReMap & reMap) {
@@ -336,7 +369,7 @@ struct Program {
   }
 
   void print(std::ostream & out) const {
-    out << "Program {\n";
+    out << "Program (" << num_Params() << ") {\n";
     for (int i = 0; i < size(); ++i) {
       if (code[i].oc != OpCode::Nop) out << i << ": "; code[i].print(out, i);
     }
@@ -505,12 +538,28 @@ struct Rule {
   Program lhs;
   Program rhs;
 
+  Program & getMatchProg(bool matchLeft) {
+    if (matchLeft) return lhs; else return rhs;
+  }
+  const Program & getMatchProg(bool matchLeft) const {
+    if (matchLeft) return lhs; else return rhs;
+  }
+
+  Program & getRewriteProg(bool matchLeft) {
+    if (matchLeft) return rhs; else return lhs;
+  }
+  const Program & getRewriteProg(bool matchLeft) const {
+    if (matchLeft) return rhs; else return lhs;
+  }
+
   Rule(Program _lhs, Program _rhs)
   : lhs(_lhs)
   , rhs(_rhs)
   {}
 
-  bool match(const Program & prog, int pc, int32_t * holes) { return MatchPattern(prog, pc, lhs, holes); }
+  bool match(bool matchLeft, const Program & prog, int pc, int32_t * holes) const {
+    return MatchPattern(prog, pc, getMatchProg(matchLeft), holes);
+  }
 
   void print(std::ostream & out) const {
     out << "Rule [[ lhs = "; lhs.print(out);
@@ -522,13 +571,13 @@ struct Rule {
   void dump() const { print(std::cerr); }
 
   // applies this rule (after a match)
-  void rewrite(Program & prog, int rootPc, int32_t * holes) {
+  void rewrite(bool matchLeft, Program & prog, int rootPc, int32_t * holes) {
     // erase @lhs
-    ErasePattern(prog, rootPc, lhs);
+    ErasePattern(prog, rootPc, getMatchProg(matchLeft));
 
     // make space for rewrite rule
     ReMap reMap;
-    int afterInsertPc = prog.make_space(rootPc + 1, rhs.size(), reMap);
+    int afterInsertPc = prog.make_space(rootPc + 1, getRewriteProg(matchLeft).size(), reMap);
     // updated match root
     int mappedRootPc = reMap.count(rootPc) ? reMap[rootPc] : rootPc;
 
@@ -537,7 +586,7 @@ struct Rule {
     // insert @rhs
     // patch holes (some positions were remapped)
     IF_VERBOSE { std::cerr << "Adjust remap\n"; }
-    for (int i = 0; i < rhs.num_Params(); ++i) {
+    for (int i = 0; i < getRewriteProg(matchLeft).num_Params(); ++i) {
       IF_VERBOSE { std::cerr << i << " -> " << holes[i]; }
       if (reMap.count(holes[i])) { // re-map hole indices for moved statements
         holes[i] = reMap[holes[i]];
@@ -546,7 +595,7 @@ struct Rule {
     }
 
     // rmappedRootPc replacement after the insertion of this pattern
-    int rootSubstPc = rhs.link(prog, afterInsertPc - (rhs.size() - 1), holes);
+    int rootSubstPc = getRewriteProg(matchLeft).link(prog, afterInsertPc - (getRewriteProg(matchLeft).size() - 1), holes);
 
     IF_VERBOSE {
       std::cerr << "-- after linking (root subst " << rootSubstPc << ") -- \n";
@@ -628,23 +677,92 @@ BuildRules() {
                   Statement(oc, -1, 0),
                   build_ret(1)
                   }),
-      Program(1, {Statement(oc, -2, -3),
-                  Statement(oc, -1, 0),
-                  build_ret(1)
+      Program(1, {build_ret(-1)
                   })
     );
   });
+
+  //  paranoid rule consistency checking
+  for (int i = 0; i < rules.size(); ++i) {
+    const auto & rule = rules[i];
+    bool lhs = true;
+    auto handler = [&rule,&lhs](int pc, std::string msg) -> bool {
+      std::cerr << "Error at " << pc << " : " <<msg << "\n";
+      return true;
+    };
+
+    lhs = true; if (!rule.lhs.verify(handler)) { std::cerr << "in rule lhs: " << i << "\n"; exit(-1); }
+    lhs = false; if (!rule.rhs.verify(handler))  { std::cerr << "in rule rhs: " << i << "\n"; exit(-1); }
+  }
 
   // arithmetic simplifaction rules
   return rules;
 }
 
+struct RPG {
+  int numParams;
+
+  std::vector<Data> constVec; // recognized constants in the match rules
+  const double pConstant = 0.20;
+
+  void collectConstants(const Program & prog, std::set<Data> & seen) {
+    for (auto & stat : prog.code) {
+      if (stat.isConstant()) {
+        if (seen.insert(stat.getValue()).second) {
+          constVec.push_back(stat.getValue());
+        }
+      }
+    }
+  }
+
+  RPG(const RuleVec & rules, int _numParams)
+  : numParams(_numParams)
+  {
+    std::set<Data> seen;
+    for (auto & rule : rules) {
+      collectConstants(rule.lhs, seen);
+      collectConstants(rule.rhs, seen);
+    }
+    std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
+  }
+
+  void
+  rec_generate(Program & P, int usePc) {
+  }
+
+  Program generate(int length) {
+    Program P;
+
+    struct Elem {
+      int numUses;
+      int valIdx; // instruction or arg
+    };
+
+    auto cmp = [](const Elem & left, const Elem & right) {
+      return left.numUses < right.numUses; // prioritize unused elements
+    };
+
+    std::priority_queue<Elem, std::vector<Elem>, decltype(cmp)> opQueue(cmp);
+    std::uniform_real_distribution<float> constantRand;
+
+    for (int i = 0; i < length - 1; ++i) {
+      if (constantRand(randGen) <= pConstant) {
+      } else {
+
+      }
+    }
+
+    P.push(build_ret(length - 1));
+
+    return P;
+  }
+};
+
+
 } // namespace apo
 
 
 
-
-const size_t MaxLength = 16;
 
 int main(int argc, char ** argv) {
   using namespace apo;
@@ -663,14 +781,21 @@ int main(int argc, char ** argv) {
   std::cerr << "Loaded " << rules.size() << " rules!\n";
   int32_t holes[4];
 
-  bool ok = rules[0].match(prog, 1, holes);
+  bool ok = rules[0].match(true, prog, 1, holes);
   assert(ok);
 
   for (const auto & rule : rules) {
   }
-  rules[0].rewrite(prog, 1, holes);
+  rules[0].rewrite(true, prog, 1, holes);
   std::cerr << "after rewrite:\n";
   prog.dump();
   // bool ok = MatchPattern<true>(prog, 1, pat, holes);
+  //
+  std::cerr << "Generating some random programs:\n";
+  RPG rpg(rules, 3);
+
+  const int progLen = 4;
+  Program p = rpg.generate(progLen);
+  p.dump();
 }
 
