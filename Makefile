@@ -6,7 +6,7 @@ TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
 CFLAGS=${INC} ${LIBPATH} ${LIBS}
 
-CXX=g++ -std=c++14 -O0 -g -Isrc/
+CXX=clang++ -std=c++14 -O0 -g -Isrc/
 
 
 apo: src/apo.cpp Makefile
