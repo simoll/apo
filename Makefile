@@ -9,5 +9,9 @@ CFLAGS=${INC} ${LIBPATH} ${LIBS}
 CXX=g++ -std=c++14 -O0 -g -Isrc/
 
 
-apo: src/apo.cpp
-	$(CXX) ${CFLAGS} $^ -o $@
+apo: src/apo.cpp Makefile
+	$(CXX) ${CFLAGS} $< -o $@
+
+.PHONY: clean
+clean:
+	rm -f apo
