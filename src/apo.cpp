@@ -236,8 +236,15 @@ struct Program {
   , code()
   { code.reserve(4); }
 
+  bool verify() {
+    auto handler = [](int pc, std::string msg) {
+      std::cerr << "Error at " << pc << ": " << msg << "\n"; return true;
+    };
+    return verify(handler);
+  }
+
   bool
-  verify(std::function<bool(int, std::string)> handler) const {
+  verify(std::function<bool(int pc, std::string msg)> handler) const {
     for (int pc = 0; pc < size(); ++pc) {
       const auto & stat = code[pc];
       for (int o = 0; o < stat.num_Operands(); ++o) {
@@ -822,6 +829,8 @@ struct RPG {
     }
 
     P.push(build_ret(length - 2));
+
+    assert(P.verify());
 
     return P;
   }
