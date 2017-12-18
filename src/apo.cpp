@@ -20,6 +20,9 @@ const bool Verbose = true;
 
 #define IF_VERBOSE if (Verbose)
 
+// expensive consistency checks
+#define IF_DEBUG if (true)
+
 namespace apo {
 
 enum class OpCode : int16_t {
@@ -240,9 +243,15 @@ struct Program {
   , code()
   { code.reserve(4); }
 
+  int
+  getReturnIndex() const {
+    assert(code[size() - 1].oc == OpCode::Return);
+    return code[size() - 1].getOperand(0);
+  }
+
   bool verify() {
     auto handler = [](int pc, std::string msg) {
-      std::cerr << "Error at " << pc << ": " << msg << "\n"; return true;
+      std::cerr << "ERROR at " << pc << ": " << msg << "\n"; return true;
     };
     return verify(handler);
   }
@@ -252,7 +261,7 @@ struct Program {
     for (int pc = 0; pc < size(); ++pc) {
       const auto & stat = code[pc];
       for (int o = 0; o < stat.num_Operands(); ++o) {
-        if (stat.getOperand(o) > pc) {
+        if (stat.getOperand(o) >= pc) {
           if (handler(pc, "use before definition!")) return false;
         }
 
@@ -359,13 +368,14 @@ struct Program {
       int destPc = startPc + i;
       dest.code[destPc] = code[i];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
-        if (IsArgument(code[i].getOperand(o))) {
+        int opIdx = code[i].getOperand(o);
+        if (IsArgument(opIdx)) {
           // operand is a hole in the pattern -> replace with index in match hole
-          int holeIdx = GetHoleIndex(code[i].getOperand(o));
+          int holeIdx = GetHoleIndex(opIdx);
           dest.code[destPc].setOperand(o, holes[holeIdx]);
         } else {
           // operand is a proper statement -> shift by startPc
-          dest.code[destPc].setOperand(o, startPc + i); // apply startPc
+          dest.code[destPc].setOperand(o, startPc + opIdx); // apply startPc
         }
       }
     }
@@ -401,8 +411,20 @@ evaluate(const Program & prog, Data * params) {
   for (int pc = 0; pc < prog.size(); ++pc) {
     const Statement & stat = prog.code[pc];
     if (stat.oc == OpCode::Constant) {
+      // constant
       result = stat.getValue();
+
+    } else if (stat.oc == OpCode::Nop) {
+      // no-op
+      continue;
+
+    } else if (stat.oc == OpCode::Pipe) {
+      // wrapper instructions
+      int32_t first = stat.getOperand(0);
+      result = first < 0 ? params[(-first) - 1] : state[first];
+
     } else {
+      // binary operators
       int32_t first = stat.getOperand(0);
       int32_t second = stat.getOperand(1);
       Data A = first < 0 ? params[(-first) - 1] : state[first];
@@ -422,7 +444,6 @@ evaluate(const Program & prog, Data * params) {
       case OpCode::Xor:
         result = A ^ B;
 
-      case OpCode::Nop: break;
       default:
         abort(); // not implemented
       }
@@ -521,6 +542,7 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * ho
 
 static void
 rec_ErasePattern(Program & prog, int pc, const Program & pattern, int patternPc, NodeSet & erased) {
+  if (!IsStatement(pc)) return; // do not erase by argument indices
   if (!erased.insert(pc).second) return;
 
   auto & stat = prog.code[pc];
@@ -541,6 +563,7 @@ rec_ErasePattern(Program & prog, int pc, const Program & pattern, int patternPc,
 
 static void
 ErasePattern(Program & prog, int pc, const Program & pattern) {
+  if (pattern.size() <= 1) return; // nothing to erase
   NodeSet erased;
   rec_ErasePattern(prog, pc, pattern, pattern.size() - 1, erased);
 }
@@ -550,6 +573,10 @@ ErasePattern(Program & prog, int pc, const Program & pattern) {
 struct Rule {
   Program lhs;
   Program rhs;
+
+  bool removesHoles(bool leftMatch) const {
+    return getMatchProg(leftMatch).num_Params() > getRewriteProg(leftMatch).num_Params();
+  }
 
   Program & getMatchProg(bool matchLeft) {
     if (matchLeft) return lhs; else return rhs;
@@ -584,9 +611,13 @@ struct Rule {
   void dump() const { print(std::cerr); }
 
   // applies this rule (after a match)
-  void rewrite(bool matchLeft, Program & prog, int rootPc, int32_t * holes) {
+  void rewrite(bool matchLeft, Program & prog, int rootPc, int32_t * holes) const {
+    IF_VERBOSE { std::cerr << "-- rewrite at " << rootPc << " --\n"; prog.dump(); }
+
     // erase @lhs
     ErasePattern(prog, rootPc, getMatchProg(matchLeft));
+
+    IF_VERBOSE { std::cerr << "-- after erase at " << rootPc << " --\n"; prog.dump(); }
 
     // make space for rewrite rule
     ReMap reMap;
@@ -599,7 +630,7 @@ struct Rule {
     // insert @rhs
     // patch holes (some positions were remapped)
     IF_VERBOSE { std::cerr << "Adjust remap\n"; }
-    for (int i = 0; i < getRewriteProg(matchLeft).num_Params(); ++i) {
+    for (int i = 0; i < getMatchProg(matchLeft).num_Params(); ++i) {
       IF_VERBOSE { std::cerr << i << " -> " << holes[i]; }
       if (reMap.count(holes[i])) { // re-map hole indices for moved statements
         holes[i] = reMap[holes[i]];
@@ -616,14 +647,14 @@ struct Rule {
     }
 
     // prog.applyAfter(afterInsertPc, lambda[=](Statement & stat) { .. }
-    for (int i = afterInsertPc; i < prog.size(); ++i) {
+    for (int i = rootSubstPc + 1; i < prog.size(); ++i) {
       for (int o = 0; o < prog.code[i].num_Operands(); ++o) {
         if (prog.code[i].getOperand(o) == mappedRootPc) { prog.code[i].setOperand(o, rootSubstPc); }
       }
     }
 
     IF_VERBOSE {
-      std::cerr << "-- after insert  (next pc " << afterInsertPc << ") -- \n";
+      std::cerr << "-- after insert -- \n";
       prog.dump();
     }
     prog.compact();
@@ -644,7 +675,6 @@ BuildRules() {
     Program lhs (2, {Statement(OpCode::Add, -2, -1), Statement(OpCode::Sub, 0, -2), build_ret(1) });
     Program rhs (1, {build_ret(-1)});
     rules.emplace_back(lhs, rhs);
-    rules[0].dump();
   }
 
   // commutative rules (oc %a %b --> oc %b %a)
@@ -736,7 +766,15 @@ struct RPG {
     std::vector<int> unused;
     std::priority_queue<Elem, std::vector<Elem>> opQueue;
 
+    // value may be used but does not have to (arguments)
+    void addOptionalUseable(int valIdx) {
+      // std::cerr << "OPT " << valIdx << "\n";
+      opQueue.emplace(0, valIdx);
+    }
+
+    // value has to be used (instruction)
     void addUseable(int valIdx) {
+      // std::cerr << "MUST USE: " << valIdx << "\n";
       unused.push_back(valIdx);
     }
 
@@ -750,6 +788,7 @@ struct RPG {
 
         // pick element from unused vector
         int idx = opRand(randGen);
+        // std::cerr << "UNUED ID " << idx << "\n";
         assert(idx >= 0);
         if (idx < unused.size()) {
           int valIdx = unused[idx];
@@ -768,6 +807,8 @@ struct RPG {
 
       return valIdx;
     }
+
+    bool empty() const { return unused.empty() && opQueue.empty(); }
   };
 
   std::vector<Data> constVec; // recognized constants in the match rules
@@ -794,10 +835,6 @@ struct RPG {
     std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
   }
 
-  void
-  rec_generate(Program & P, int usePc) {
-  }
-
   Program
   generate(int length) {
     Program P(numParams, {});
@@ -807,11 +844,12 @@ struct RPG {
     // wrap all arguments in pipes
     for (int a = 0; a < numParams; ++a) {
       P.push(build_pipe(-a - 1));
-      S.addUseable(a);
+      S.addOptionalUseable(a);
     }
 
-    for (int i = 0; i < length - 1; ++i) {
-      if (constantRand(randGen) <= pConstant) {
+    int s = numParams;
+    for (int i = 0; i < length - 1; ++i, ++s) {
+      if (S.empty() || (constantRand(randGen) <= pConstant)) {
         // random constant
         std::uniform_int_distribution<int> constIdxRand(0, constVec.size() - 1);
         int idx = constIdxRand(randGen);
@@ -831,7 +869,7 @@ struct RPG {
       }
 
       // publish the i-th instruction as useable in an operand position
-      S.addUseable(i);
+      S.addUseable(s);
     }
 
     P.push(build_ret(length - 2));
@@ -839,6 +877,90 @@ struct RPG {
     assert(P.verify());
 
     return P;
+  }
+};
+
+
+
+struct Mutator {
+  const RuleVec & rules;
+
+  Mutator(const RuleVec & _rules)
+  : rules(_rules)
+  {}
+
+  void mutate(Program & P, int steps) const {
+    auto handler=[](int pc, int ruleId, bool leftMatch, const Program & P) { }; // TODO global mutation cache
+    mutate(P, steps, handler);
+  }
+
+  void mutate(Program & P, int steps, std::function<void(int pc, int ruleId, bool leftMatch, const Program & P)> handler) const {
+    for (int i = 0; i < steps; ) {
+      // pick a random pc
+      std::uniform_int_distribution<int> pcRand(0, P.size() - 1);
+      int pc = pcRand(randGen);
+
+      // pick a random rule
+      std::uniform_int_distribution<int> flipRand(0, 1);
+      bool leftMatch = flipRand(randGen) == 0;
+
+      // number of applicable rules to skip
+      std::uniform_int_distribution<int> ruleRand(0, rules.size() - 1);
+      int numSkips = 0;//ruleRand(randGen);
+
+      int32_t holes[16];
+
+      std::cerr << "(" << pc << ", " << leftMatch << ", " << numSkips << ")\n";
+      // check if any rule matches
+      bool hasMatch = false;
+      int ruleIdx = 0;
+      for (int t = 0; t < rules.size(); ++t) {
+        if (rules[t].match(leftMatch, P, pc, holes)) {
+          hasMatch = true;
+          ruleIdx = t;
+          break;
+        }
+      }
+
+      // no rule matches -> pick different rule
+      if (!hasMatch) continue;
+
+      rules[ruleIdx].dump();
+
+      for (int skip = 1; skip < numSkips; ) {
+        ruleIdx = (ruleIdx + 1) % rules.size();
+        if (rules[ruleIdx].match(leftMatch, P, pc, holes)) {
+          ++skip;
+        }
+      }
+
+      // supplement holes
+      if (!rules[ruleIdx].removesHoles(leftMatch)) {
+        const auto & lhs = rules[ruleIdx].getMatchProg(leftMatch);
+        const auto & rhs = rules[ruleIdx].getRewriteProg(leftMatch);
+
+        int lowestVal = -(P.num_Params()) - 1;
+        int highestVal = pc - rhs.size() - 1;
+        assert(lowestVal <= highestVal);
+        std::uniform_int_distribution<int> opRand(lowestVal, highestVal);
+
+        for (int h = lhs.num_Params(); h < rhs.num_Params(); ++h) {
+          holes[h] = opRand(randGen);
+        }
+
+        // TODO allow experssion invention
+      }
+
+      // apply rewrite
+      rules[ruleIdx].rewrite(leftMatch, P, pc, holes);
+
+      IF_DEBUG if (!P.verify()) {
+        P.dump();
+        abort();
+      }
+
+      ++i;
+    }
   }
 };
 
@@ -905,19 +1027,26 @@ RunTests() {
 
 int main(int argc, char ** argv) {
 
-  RunTests();
-  return 0;
+  // RunTests();
+  // return 0;
 
   RuleVec rules = BuildRules();
   std::cerr << "Loaded " << rules.size() << " rules!\n";
 
   std::cerr << "Generating some random programs:\n";
-  RPG rpg(rules, 3);
 
-  for (int i = 0; i < 10; ++i) {
-    const int progLen = 4;
-    Program p = rpg.generate(2*i);
+  const int stubLen = 3;
+  const int mutSteps = 3;
+
+  RPG rpg(rules, 3);
+  Mutator mut(rules);
+
+  for (int i = 0; i < 1; ++i) {
+    Program p = rpg.generate(stubLen);
     std::cerr << "Rand " << i << " ";
+    p.dump();
+    mut.mutate(p, mutSteps);
+    std::cerr << "Mutated " << i << " ";
     p.dump();
   }
 }
