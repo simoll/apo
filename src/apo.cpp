@@ -789,7 +789,7 @@ struct RPG {
 
   Program
   generate(int length) {
-    Program P;
+    Program P(numParams, {});
     P.code.reserve(length);
 
     Sampler S;
