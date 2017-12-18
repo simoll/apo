@@ -11,7 +11,7 @@
 // #include "tensorflow/cc/ops/standard_ops.h"
 // #include "tensorflow/cc/framework/tensor.h"
 
-const bool Verbose = false;
+const bool Verbose = true;
 
 #define IF_VERBOSE if (Verbose)
 
@@ -222,6 +222,11 @@ struct Program {
   , code(stats)
   {}
 
+  Program()
+  : numParams(0)
+  , code()
+  { code.reserve(4); }
+
   // create @size many Nop slots before @endPc
   int make_space(int endPc, int allocSize, ReMap & reMap) {
     // compact until @endPc
@@ -304,29 +309,29 @@ struct Program {
   // paste this program into dest (starting at @startPc)
   // returns the linked return value (instead of linking it in)
   int link(Program & dest, int startPc, int32_t * holes) const {
-    for (int i = 0; i < size() - 2; ++i) {
+    for (int i = 0; i < size() - 1; ++i) {
       int destPc = startPc + i;
       dest.code[destPc] = code[i];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
         if (IsArgument(code[i].getOperand(o))) {
           // operand is a hole in the pattern -> replace with index in match hole
           int holeIdx = GetHoleIndex(code[i].getOperand(o));
-          dest.code[destPc].setOperand(o, holeIdx);
+          dest.code[destPc].setOperand(o, holes[holeIdx]);
         } else {
           // operand is a proper statement -> shift by startPc
           dest.code[destPc].setOperand(o, startPc + i); // apply startPc
         }
       }
+    }
 
-      // fetch the return value
-      const auto & ret = code[size() - 1];
-      assert(ret.oc == OpCode::Return); // expected a return statement
-      if (IsArgument(ret.getOperand(0))) {
-        int holeIdx = GetHoleIndex(ret.getOperand(0));
-        return holes[holeIdx]; // matched hole
-      } else {
-        return startPc + ret.getOperand(0); // shifted
-      }
+    // fetch the return value
+    const auto & ret = code[size() - 1];
+    assert(ret.oc == OpCode::Return); // expected a return statement
+    if (IsArgument(ret.getOperand(0))) {
+      int holeIdx = GetHoleIndex(ret.getOperand(0));
+      return holes[holeIdx]; // matched hole
+    } else {
+      return startPc + ret.getOperand(0); // shifted
     }
   }
 
@@ -340,10 +345,6 @@ struct Program {
 
   void dump() const { print(std::cerr); }
 
-  Program()
-  : numParams(0)
-  , code()
-  {}
 };
 
 static Data
@@ -437,6 +438,9 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * ho
   // match the pattern
   int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
   bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, nodes);
+  if (Verbose) {
+    std::cerr << "op match: " << ok << "\n";
+  }
 
   // verify that there is no user that is not covered by the pattern (except for the match root)
   for (int i = 0; ok && (i < prog.size()); ++i) {
@@ -544,6 +548,11 @@ struct Rule {
     // rmappedRootPc replacement after the insertion of this pattern
     int rootSubstPc = rhs.link(prog, afterInsertPc - (rhs.size() - 1), holes);
 
+    IF_VERBOSE {
+      std::cerr << "-- after linking (root subst " << rootSubstPc << ") -- \n";
+      prog.dump();
+    }
+
     // prog.applyAfter(afterInsertPc, lambda[=](Statement & stat) { .. }
     for (int i = afterInsertPc; i < prog.size(); ++i) {
       for (int o = 0; o < prog.code[i].num_Operands(); ++o) {
@@ -567,11 +576,13 @@ RuleVec
 BuildRules() {
   RuleVec rules;
 
+  // (%b + %a) - %b --> %a
   {
     // try some matching
-    Program lhs (2, {Statement(OpCode::Add, -2, -1), Statement(OpCode::Sub, 0, -2)});
+    Program lhs (2, {Statement(OpCode::Add, -2, -1), Statement(OpCode::Sub, 0, -2), build_ret(1) });
     Program rhs (1, {build_ret(-1)});
     rules.emplace_back(lhs, rhs);
+    rules[0].dump();
   }
 
   // commutative rules (oc %a %b --> oc %b %a)
