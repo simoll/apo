@@ -184,6 +184,7 @@ struct Statement {
   }
 };
 
+static Statement build_nop() { return Statement(); }
 static Statement build_ret(int32_t handle) { return Statement(OpCode::Return, handle); }
 static Statement build_const(Data val) { return Statement(val); }
 
@@ -210,23 +211,19 @@ struct Program {
   // number of parameters
   int numParams;
 
-  // number of instructions
-  int codeLen;
-
   // instruction listing
   std::vector<Statement> code;
 
-  int size() const { return codeLen; }
+  int size() const { return code.size(); }
   int num_Params() const { return numParams; }
 
   Program(int _numParams, std::initializer_list<Statement> stats)
   : numParams(_numParams)
-  , codeLen(stats.size())
   , code(stats)
   {}
 
   // create @size many Nop slots before @endPc
-  int make_space(int endPc, int size, ReMap & reMap) {
+  int make_space(int endPc, int allocSize, ReMap & reMap) {
     // compact until @endPc
     int j = 0;
 
@@ -248,11 +245,14 @@ struct Program {
 
     // move all other instructions back by the remaining gap
     int gain = endPc - (j - 1); // compaction gain
-    if (gain >= size) return endPc; // user unmodified
+    if (gain >= allocSize) return endPc; // user unmodified
+
 
     // Otw, shift everything back
-    int shift = size - gain;
-    for (int i = codeLen + shift - 1; i >= endPc + shift; --i) {
+    int shift = allocSize - gain;
+    code.resize(size() + shift, build_nop());
+
+    for (int i = size() + shift - 1; i >= endPc + shift; --i) {
       code[i] = code[i - shift];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
         int old = code[i].getOperand(o);
@@ -273,9 +273,6 @@ struct Program {
     for (int i = endPc; i < endPc + shift; ++i) {
       code[i].oc = OpCode::Nop;
     }
-
-    // update codeLen
-    codeLen = codeLen + shift;
 
     return endPc + shift;
   }
@@ -301,13 +298,13 @@ struct Program {
       }
     }
 
-    codeLen = j;
+    code.resize(j);
   }
 
   // paste this program into dest (starting at @startPc)
   // returns the linked return value (instead of linking it in)
   int link(Program & dest, int startPc, int32_t * holes) const {
-    for (int i = 0; i < codeLen - 2; ++i) {
+    for (int i = 0; i < size() - 2; ++i) {
       int destPc = startPc + i;
       dest.code[destPc] = code[i];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
@@ -322,7 +319,7 @@ struct Program {
       }
 
       // fetch the return value
-      const auto & ret = code[codeLen - 1];
+      const auto & ret = code[size() - 1];
       assert(ret.oc == OpCode::Return); // expected a return statement
       if (IsArgument(ret.getOperand(0))) {
         int holeIdx = GetHoleIndex(ret.getOperand(0));
@@ -335,7 +332,7 @@ struct Program {
 
   void print(std::ostream & out) const {
     out << "Program {\n";
-    for (int i = 0; i < codeLen; ++i) {
+    for (int i = 0; i < size(); ++i) {
       if (code[i].oc != OpCode::Nop) out << i << ": "; code[i].print(out, i);
     }
     out << "}\n";
@@ -345,16 +342,16 @@ struct Program {
 
   Program()
   : numParams(0)
-  , codeLen(0)
+  , code()
   {}
 };
 
 static Data
 evaluate(const Program & prog, Data * params) {
-  Data state[prog.codeLen];
+  Data state[prog.size()];
 
   Data result = 0; // no undefined behavior...
-  for (int pc = 0; pc < prog.codeLen; ++pc) {
+  for (int pc = 0; pc < prog.size(); ++pc) {
     const Statement & stat = prog.code[pc];
     if (stat.oc == OpCode::Constant) {
       result = stat.getValue();
@@ -433,16 +430,16 @@ rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patt
 // matches program @pattern aligning the two at the statement at @pc of @prog (stores the operand index at "holes" (parameters) in @holes
 static bool
 MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * holes) {
-  assert (pattern.codeLen > 0);
+  assert (pattern.size() > 0);
 
   std::vector<bool> defined(false, pattern.numParams);
   NodeSet nodes;
   // match the pattern
-  int retIndex = pattern.code[pattern.codeLen - 1].getOperand(0);
+  int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
   bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, nodes);
 
   // verify that there is no user that is not covered by the pattern (except for the match root)
-  for (int i = 0; ok && (i < prog.codeLen); ++i) {
+  for (int i = 0; ok && (i < prog.size()); ++i) {
     if (!prog.code[i].isOperator()) continue;
 
     for (int o = 0; ok && (o < prog.code[i].num_Operands()); ++o) {
@@ -495,7 +492,7 @@ rec_ErasePattern(Program & prog, int pc, const Program & pattern, int patternPc,
 static bool
 ErasePattern(Program & prog, int pc, const Program & pattern) {
   NodeSet erased;
-  rec_ErasePattern(prog, pc, pattern, pattern.codeLen - 1, erased);
+  rec_ErasePattern(prog, pc, pattern, pattern.size() - 1, erased);
 }
 
 
@@ -548,7 +545,7 @@ struct Rule {
     int rootSubstPc = rhs.link(prog, afterInsertPc - (rhs.size() - 1), holes);
 
     // prog.applyAfter(afterInsertPc, lambda[=](Statement & stat) { .. }
-    for (int i = afterInsertPc; i < prog.codeLen; ++i) {
+    for (int i = afterInsertPc; i < prog.size(); ++i) {
       for (int o = 0; o < prog.code[i].num_Operands(); ++o) {
         if (prog.code[i].getOperand(o) == mappedRootPc) { prog.code[i].setOperand(o, rootSubstPc); }
       }
@@ -657,6 +654,9 @@ int main(int argc, char ** argv) {
 
   bool ok = rules[0].match(prog, 1, holes);
   assert(ok);
+
+  for (const auto & rule : rules) {
+  }
   rules[0].rewrite(prog, 1, holes);
   std::cerr << "after rewrite:\n";
   prog.dump();
