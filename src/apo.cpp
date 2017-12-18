@@ -16,7 +16,7 @@ std::mt19937 randGen(42);
 // #include "tensorflow/cc/ops/standard_ops.h"
 // #include "tensorflow/cc/framework/tensor.h"
 
-const bool Verbose = false;
+const bool Verbose = true;
 
 #define IF_VERBOSE if (Verbose)
 
@@ -25,6 +25,8 @@ namespace apo {
 enum class OpCode : int16_t {
   Begin_OpCode = 0,
   Nop = 0,
+  Pipe, // fake value use (e.g. replication)
+
   // @Data typed literal
   Constant,
 
@@ -95,6 +97,7 @@ static void
 PrintOpCode(OpCode oc, std::ostream & out) {
   switch (oc) {
     case OpCode::Nop: { out << "nop"; } break;
+    case OpCode::Pipe: {out << "#"; } break;
     case OpCode::Return: { out << "ret"; } break;
     case OpCode::Add: { out << "add"; } break;
     case OpCode::Sub: { out << "sub"; } break;
@@ -138,7 +141,7 @@ struct Statement {
 
   int num_Operands() const {
     if (oc == OpCode::Nop || oc == OpCode::Constant) return 0;
-    else if (oc == OpCode::Return) return 1;
+    else if (oc == OpCode::Return || oc == OpCode::Pipe) return 1;
     return 2;
   }
 
@@ -193,6 +196,7 @@ struct Statement {
   }
 };
 
+static Statement build_pipe(int32_t handle) { return Statement(OpCode::Pipe, handle); }
 static Statement build_nop() { return Statement(); }
 static Statement build_ret(int32_t handle) { return Statement(OpCode::Return, handle); }
 static Statement build_const(Data val) { return Statement(val); }
@@ -800,8 +804,10 @@ struct RPG {
     P.code.reserve(length);
 
     Sampler S;
+    // wrap all arguments in pipes
     for (int a = 0; a < numParams; ++a) {
-      S.addUseable(-a - 1);
+      P.push(build_pipe(-a - 1));
+      S.addUseable(a);
     }
 
     for (int i = 0; i < length - 1; ++i) {
@@ -841,33 +847,70 @@ struct RPG {
 
 
 
+using namespace apo;
+
+void
+RunTests() {
+  auto rules = BuildRules();
+
+  {
+    int32_t holes[4];
+    std::cerr << "\nTEST: Shrinking re-write:\n";
+    Program prog(2, {
+        Statement(OpCode::Add, -1, -2),
+        Statement(OpCode::Nop, 0, 0),
+        Statement(OpCode::Sub, 0, -1),
+        Statement(OpCode::Return, 2)
+    });
+    // define a simple program
+    prog.compact();
+    prog.dump();
+
+    bool ok = rules[0].match(true, prog, 1, holes);
+    assert(ok);
+
+    // rewrite test
+    rules[0].rewrite(true, prog, 1, holes);
+    std::cerr << "after rewrite:\n";
+    prog.dump();
+  }
+
+  {
+    std::cerr << "\nTEST: Expanding re-write:\n";
+    Program prog(2, {
+        build_pipe(-1),
+        Statement(OpCode::Mul, -1, 0),
+        build_ret(0)
+    });
+
+    // define a simple program
+    prog.compact();
+    prog.dump();
+
+    int32_t holes[4];
+    bool ok = rules[0].match(false, prog, 0, holes);
+    assert(ok);
+
+    holes[0] = -3;
+    holes[1] = -2;
+
+    // rewrite test
+    rules[0].rewrite(false, prog, 0, holes);
+    std::cerr << "after rewrite:\n";
+    prog.dump();
+  }
+
+  std::cerr << "END_OF_TESTS\n";
+}
 
 int main(int argc, char ** argv) {
-  using namespace apo;
 
-  Program prog(2, {
-      Statement(OpCode::Add, -1, -2),
-      Statement(OpCode::Nop, 0, 0),
-      Statement(OpCode::Sub, 0, -1),
-      Statement(OpCode::Return, 2)
-  });
-  // define a simple program
-  prog.compact();
-  prog.dump();
+  RunTests();
+  return 0;
 
   RuleVec rules = BuildRules();
   std::cerr << "Loaded " << rules.size() << " rules!\n";
-  int32_t holes[4];
 
-  bool ok = rules[0].match(true, prog, 1, holes);
-  assert(ok);
-
-  // rewrite test
-  rules[0].rewrite(true, prog, 1, holes);
-  std::cerr << "after rewrite:\n";
-  prog.dump();
-  // bool ok = MatchPattern<true>(prog, 1, pat, holes);
-  //
   std::cerr << "Generating some random programs:\n";
   RPG rpg(rules, 3);
 
