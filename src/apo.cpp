@@ -1,4 +1,5 @@
 #include "apo.h"
+#include "ml.h"
 
 using namespace apo;
 
@@ -104,6 +105,8 @@ RunTests() {
 }
 
 int main(int argc, char ** argv) {
+
+  test_tf();
 
   RunTests();
 
