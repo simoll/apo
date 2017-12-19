@@ -16,7 +16,7 @@ std::mt19937 randGen(42);
 // #include "tensorflow/cc/ops/standard_ops.h"
 // #include "tensorflow/cc/framework/tensor.h"
 
-const bool Verbose = true;
+const bool Verbose = false;
 
 #define IF_VERBOSE if (Verbose)
 
@@ -1067,7 +1067,8 @@ RunTests() {
     bool ok = rules[0].match(false, prog, 0, holes);
     assert(ok);
 
-    assert(holes.size() >= 2);
+    assert(holes.size() == 1);
+    holes.resize(2, 0);
     holes[0] = -3;
     holes[1] = -2;
 
@@ -1120,46 +1121,58 @@ static bool Equal(const DataVec & A, const DataVec & B) {
   return true;
 }
 
-int main(int argc, char ** argv) {
 
-  // RunTests();
-  // return 0;
+// RPG + Mutator fuzzing tests
+void
+TestGenerators() {
+  std::cerr << "TEST: RPG + mutator fuzzing!\n";
 
   RuleVec rules = BuildRules();
   std::cerr << "Loaded " << rules.size() << " rules!\n";
 
   std::cerr << "Generating some random programs:\n";
-
-  const int stubLen = 3;
-  const int mutSteps = 2;
+  const int stubLen = 10;
+  const int mutSteps = 100;
 
   const float pExpand = 0.05;
   const int numParams = 3;
   RPG rpg(rules, numParams);
 
-
   const int numSets = 3;
   RandExecutor Exec(numParams, numSets);
-
   Mutator mut(rules, pExpand);
-
   const int numRounds = 10000;
   for (int i = 0; i < numRounds; ++i) {
     Program p = rpg.generate(stubLen);
 
-    std::cerr << "Rand " << i << " ";
-    p.dump();
+    IF_VERBOSE {
+      std::cerr << "Rand " << i << " ";
+      p.dump();
+    }
     DataVec refResult = Exec.run(p);
-    std::cerr << "--> Result: "; Print(std::cerr, refResult); std::cerr << "\n";
+    IF_VERBOSE { std::cerr << "--> Result: "; Print(std::cerr, refResult); std::cerr << "\n"; }
 
     for (int m = 0; m < mutSteps; ++m) {
       mut.mutate(p, 1);
-      std::cerr << "Mutated " << i << " at " << m << ": ";
-      p.dump();
+      IF_VERBOSE {
+        std::cerr << "Mutated " << i << " at " << m << ": ";
+        p.dump();
+      }
       DataVec mutResult = Exec.run(p);
-      std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n";
+      IF_VERBOSE { std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n"; }
       assert(Equal(refResult, mutResult));
     }
   }
 }
 
+
+
+
+int main(int argc, char ** argv) {
+
+  RunTests();
+
+  TestGenerators();
+  // return 0;
+
+}
