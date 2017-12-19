@@ -565,7 +565,7 @@ static void
 ErasePattern(Program & prog, int pc, const Program & pattern) {
   if (pattern.size() <= 1) return; // nothing to erase
   NodeSet erased;
-  rec_ErasePattern(prog, pc, pattern, pattern.size() - 1, erased);
+  rec_ErasePattern(prog, pc, pattern, pattern.getReturnIndex(), erased);
 }
 
 
