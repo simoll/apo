@@ -2,12 +2,13 @@ TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
 
 SOURCES=$(wildcard src/*.cpp)
+OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
+
+
 INC= -Isrc/ \
     -I${TFLOW}/include \
     -I${TFLOW}/include/external/nsync/public \
     -I$(TFLOW)/tensorflow/contrib/makefile/downloads/protobuf/src
-
-LDFLAGS=-Wl,--allow-multiple-definition -Wl,--whole-archive
 
 LIBS=-ltensorflow_framework \
     $(TFLOW)/python/_pywrap_tensorflow_internal.so \
@@ -16,9 +17,9 @@ LIBS=-ltensorflow_framework \
     -lpython3
 LIBPATH=-L${TFLOW}
 
-    # $(TFLOW)/../pycuda/_driver.cpython-36m-x86_64-linux-gnu.so \
+LDFLAGS=-Wl,--allow-multiple-definition -Wl,--whole-archive ${LIBPATH} ${LIBS}
 
-CFLAGS=${INC} ${LIBPATH} ${LIBS}
+CFLAGS=${INC}
 
 PYTHON=python3
 
@@ -26,8 +27,12 @@ CXX=clang++ -std=c++14 -O3 -g -Isrc/ #-fsanitize=address
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 
-apo: $(SOURCES) build/apo_graph.pb Makefile
-	$(CXX) ${CFLAGS} ${SOURCES} -o $@ $(LDFLAGS)
+apo: $(OBJECTS) build/apo_graph.pb Makefile
+	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
+
+build/%.o: src/%.cpp Makefile
+	$(CXX) ${CFLAGS} $< -c -o $@ 
+	mkdir -p $(dir $@)
 
 build/apo_graph.pb: src/model.py
 	$(PYTHON) src/model.py
