@@ -682,7 +682,7 @@ struct Rule {
     }
 
     // prog.applyAfter(afterInsertPc, lambda[=](Statement & stat) { .. }
-    for (int i = rootSubstPc + 1; i < prog.size(); ++i) {
+    for (node_t i = std::max(0, rootSubstPc + 1); i < prog.size(); ++i) {
       for (int o = 0; o < prog.code[i].num_Operands(); ++o) {
         if (prog.code[i].getOperand(o) == mappedRootPc) { prog.code[i].setOperand(o, rootSubstPc); }
       }
@@ -1082,20 +1082,45 @@ RunTests() {
   std::cerr << "END_OF_TESTS\n";
 }
 
+using DataVec = std::vector<data_t>;
 struct RandExecutor {
-  std::vector<data_t> params;
+  std::vector<DataVec> paramSets;
 
-  RandExecutor(int numParams)
-  : params()
+  RandExecutor(int numParams, int numSets)
+  : paramSets()
   {
     std::uniform_int_distribution<data_t> argRand(0, std::numeric_limits<data_t>::max());
-    for (int i = 0; i< numParams; ++i) {
-      params.push_back(argRand(randGen));
+
+    for (int s = 0; s < numSets; ++s) {
+      DataVec params;
+      for (int i = 0; i< numParams; ++i) {
+        params.push_back(argRand(randGen));
+      }
+      paramSets.push_back(params);
     }
   }
 
-  data_t run(const Program & P) { return Evaluate(P, params); }
+  DataVec run(const Program & P) {
+    DataVec results;
+    for (const auto & params : paramSets) {
+      results.push_back(Evaluate(P, params));
+    }
+    return results;
+ }
 };
+
+static void
+Print(std::ostream & out, const DataVec & D) {
+  for (auto & d : D) out << ", " << d;
+}
+
+static bool Equal(const DataVec & A, const DataVec & B) {
+  if (A.size() != B.size()) return false;
+  for (size_t i = 0; i < A.size(); ++i) {
+    if (A[i] != B[i]) return false;
+  }
+  return true;
+}
 
 int main(int argc, char ** argv) {
 
@@ -1114,23 +1139,26 @@ int main(int argc, char ** argv) {
   const int numParams = 3;
   RPG rpg(rules, numParams);
 
-  Program p = rpg.generate(stubLen);
-  RandExecutor Exec(numParams);
+
+  const int numSets = 3;
+  RandExecutor Exec(numParams, numSets);
+
   Mutator mut(rules, pExpand);
 
+  Program p = rpg.generate(stubLen);
   const int numRounds = 10000;
   for (int i = 0; i < numRounds; ++i) {
     std::cerr << "Rand " << i << " ";
     p.dump();
-    data_t refResult = Exec.run(p);
-    std::cerr << "--> Result: " << refResult << "\n";
+    DataVec refResult = Exec.run(p);
+    std::cerr << "--> Result: "; Print(std::cerr, refResult); std::cerr << "\n";
 
     mut.mutate(p, mutSteps);
     std::cerr << "Mutated " << i << " ";
     p.dump();
-    data_t mutResult = Exec.run(p);
-    std::cerr << "--> Result: " << mutResult << "\n";
-    assert(refResult == mutResult);
+    DataVec mutResult = Exec.run(p);
+    std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n";
+    assert(Equal(refResult, mutResult));
   }
 }
 
