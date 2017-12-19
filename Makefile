@@ -1,10 +1,11 @@
 TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
-SOURCES=$(wildcard src/*.cpp)
 
-INC=-I${TFLOW}/include -Isrc/
-# LIBS=-ltensorflow_framework
-# LIBPATH=-L${TFLOW}
+SOURCES=$(wildcard src/*.cpp)
+INC=-I${TFLOW}/include -I${TFLOW}/include/external/nsync/public -Isrc/
+
+LIBS=-ltensorflow_framework
+LIBPATH=-L${TFLOW}
 
 CFLAGS=${INC} ${LIBPATH} ${LIBS}
 
