@@ -2,7 +2,7 @@
 #define APO_ML_H
 
 namespace apo {
-  void test_tf();
+  int test_tf();
 }
 
 #endif // APO_ML_H
