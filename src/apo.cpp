@@ -312,7 +312,7 @@ struct Program {
     int shift = allocSize - gain;
     code.resize(size() + shift, build_nop());
 
-    for (int i = size() + shift - 1; i >= endPc + shift; --i) {
+    for (int i = size() - 1; i >= endPc + shift; --i) {
       code[i] = code[i - shift];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
         int old = code[i].getOperand(o);
@@ -461,7 +461,7 @@ static bool
 rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, int32_t * holes, std::vector<bool> & defined, NodeSet & nodes) {
   // matching a pattern hole
   if (patternPc < 0) {
-    int holeIdx = -patternPc - 1;
+    int holeIdx = GetHoleIndex(patternPc);
     if (defined[holeIdx]) {
       return holes[holeIdx] == pc; // matched a defined hole
     } else {
@@ -500,7 +500,7 @@ static bool
 MatchPattern(const Program & prog, int pc, const Program & pattern, int32_t * holes) {
   assert (pattern.size() > 0);
 
-  std::vector<bool> defined(false, pattern.numParams);
+  std::vector<bool> defined(pattern.numParams, false);
   NodeSet nodes;
   // match the pattern
   int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
@@ -573,6 +573,10 @@ ErasePattern(Program & prog, int pc, const Program & pattern) {
 struct Rule {
   Program lhs;
   Program rhs;
+
+  bool isExpanding(bool leftMatch) const {
+    return getMatchProg(leftMatch).size() < getRewriteProg(leftMatch).size();
+  }
 
   bool removesHoles(bool leftMatch) const {
     return getMatchProg(leftMatch).num_Params() > getRewriteProg(leftMatch).num_Params();
@@ -884,9 +888,11 @@ struct RPG {
 
 struct Mutator {
   const RuleVec & rules;
+  const float pExpand;
 
-  Mutator(const RuleVec & _rules)
+  Mutator(const RuleVec & _rules, float _pExpand=0.5)
   : rules(_rules)
+  , pExpand(_pExpand)
   {}
 
   void mutate(Program & P, int steps) const {
@@ -897,24 +903,25 @@ struct Mutator {
   void mutate(Program & P, int steps, std::function<void(int pc, int ruleId, bool leftMatch, const Program & P)> handler) const {
     for (int i = 0; i < steps; ) {
       // pick a random pc
-      std::uniform_int_distribution<int> pcRand(0, P.size() - 1);
+      std::uniform_int_distribution<int> pcRand(0, P.size() - 2); // don't allow return rewrites
       int pc = pcRand(randGen);
 
       // pick a random rule
-      std::uniform_int_distribution<int> flipRand(0, 1);
-      bool leftMatch = flipRand(randGen) == 0;
+      std::uniform_real_distribution<float> shrinkRand(0, 1);
+      bool shrinkingMatch = shrinkRand(randGen) > pExpand;
 
-      // number of applicable rules to skip
-      std::uniform_int_distribution<int> ruleRand(0, rules.size() - 1);
-      int numSkips = 0;//ruleRand(randGen);
+      std::uniform_int_distribution<int> flipRand(0, 1);
+      bool leftMatch = flipRand(randGen)  == 1;
 
       int32_t holes[16];
 
-      std::cerr << "(" << pc << ", " << leftMatch << ", " << numSkips << ")\n";
+      // std::cerr << "(" << pc << ", " << leftMatch << ", " << numSkips << ")\n";
       // check if any rule matches
       bool hasMatch = false;
       int ruleIdx = 0;
       for (int t = 0; t < rules.size(); ++t) {
+        if (rules[t].isExpanding(leftMatch) != shrinkingMatch) continue;
+
         if (rules[t].match(leftMatch, P, pc, holes)) {
           hasMatch = true;
           ruleIdx = t;
@@ -925,10 +932,14 @@ struct Mutator {
       // no rule matches -> pick different rule
       if (!hasMatch) continue;
 
-      rules[ruleIdx].dump();
+      // number of applicable rules to skip
+      std::uniform_int_distribution<int> ruleRand(0, rules.size() - 1);
+      int numSkips = ruleRand(randGen);
 
       for (int skip = 1; skip < numSkips; ) {
         ruleIdx = (ruleIdx + 1) % rules.size();
+        if (rules[ruleIdx].isExpanding(leftMatch) != shrinkingMatch) continue;
+
         if (rules[ruleIdx].match(leftMatch, P, pc, holes)) {
           ++skip;
         }
@@ -939,8 +950,8 @@ struct Mutator {
         const auto & lhs = rules[ruleIdx].getMatchProg(leftMatch);
         const auto & rhs = rules[ruleIdx].getRewriteProg(leftMatch);
 
-        int lowestVal = -(P.num_Params()) - 1;
-        int highestVal = pc - rhs.size() - 1;
+        int lowestVal = -(P.num_Params());
+        int highestVal = pc - std::max<int>(0,rhs.size() - 1);
         assert(lowestVal <= highestVal);
         std::uniform_int_distribution<int> opRand(lowestVal, highestVal);
 
@@ -1035,13 +1046,13 @@ int main(int argc, char ** argv) {
 
   std::cerr << "Generating some random programs:\n";
 
-  const int stubLen = 3;
-  const int mutSteps = 3;
+  const int stubLen = 7;
+  const int mutSteps = 15;
 
   RPG rpg(rules, 3);
   Mutator mut(rules);
 
-  for (int i = 0; i < 1; ++i) {
+  for (int i = 0; i < 100; ++i) {
     Program p = rpg.generate(stubLen);
     std::cerr << "Rand " << i << " ";
     p.dump();
