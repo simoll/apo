@@ -6,11 +6,17 @@ TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
 CFLAGS=${INC} ${LIBPATH} ${LIBS}
 
-CXX=clang++ -std=c++14 -O0 -g -Isrc/
+PYTHON=python3
+
+CXX=clang++ -std=c++14 -O3 -g -Isrc/ -fsanitize=address
+# CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 
-apo: src/apo.cpp Makefile
+apo: src/apo.cpp build/apo_graph.pb Makefile
 	$(CXX) ${CFLAGS} $< -o $@
+
+build/apo_graph.pb: src/model.py
+	$(PYTHON) src/model.py
 
 .PHONY: clean
 clean:
