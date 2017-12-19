@@ -320,7 +320,7 @@ struct Program {
 
         if (old >= endPc) {
           // shifted operand
-          code[i].setOperand(o, i + shift);
+          code[i].setOperand(o, old + shift);
           reMap[i] = i + shift;
         } else {
           // remapping before endPc
@@ -876,7 +876,7 @@ struct RPG {
       S.addUseable(s);
     }
 
-    P.push(build_ret(length - 2));
+    P.push(build_ret(P.size() - 1));
 
     assert(P.verify());
 
@@ -1046,13 +1046,13 @@ int main(int argc, char ** argv) {
 
   std::cerr << "Generating some random programs:\n";
 
-  const int stubLen = 7;
-  const int mutSteps = 15;
+  const int stubLen = 3;
+  const int mutSteps = 1;
 
   RPG rpg(rules, 3);
   Mutator mut(rules);
 
-  for (int i = 0; i < 100; ++i) {
+  for (int i = 0; i < 1; ++i) {
     Program p = rpg.generate(stubLen);
     std::cerr << "Rand " << i << " ";
     p.dump();
