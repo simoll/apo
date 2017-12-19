@@ -131,7 +131,7 @@ struct Statement {
   OpCode oc;
 
   union {
-    int32_t indices[2];
+    node_t indices[2];
     data_t value;
   } elements;
 
@@ -247,6 +247,7 @@ struct Program {
   , code()
   { code.reserve(4); }
 
+  // index of returned value
   int
   getReturnIndex() const {
     assert(code[size() - 1].oc == OpCode::Return);
@@ -288,6 +289,7 @@ struct Program {
 
   // create @size many Nop slots before @endPc
   int make_space(int endPc, int allocSize, ReMap & reMap) {
+    IF_VERBOSE { std::cerr << "make_space( endPc " << endPc << ", size " << allocSize << ")\n"; }
     // compact until @endPc
     int j = 0;
 
@@ -295,8 +297,8 @@ struct Program {
       if (code[i].oc == OpCode::Nop) continue;
 
       // compact
-      reMap[i] = j;
       int slot = j++;
+      reMap[i] = slot;
       code[slot] = code[i];
       if (i != slot) code[i].oc = OpCode::Nop;
 
@@ -309,15 +311,18 @@ struct Program {
 
     // move all other instructions back by the remaining gap
     int gain = endPc - (j - 1); // compaction gain
-    if (gain >= allocSize) return endPc; // user unmodified
+    // if (gain >= allocSize) return endPc; // user unmodified
 
 
-    // Otw, shift everything back
-    int shift = allocSize - gain;
+    // Otw, shift everything back (remapping operands)
+    int extraSpace = allocSize - gain;
+    int shift = std::max<int>(0, extraSpace);
+
     code.resize(size() + shift, build_nop());
 
+    assert(shift >= 0);
     for (int i = size() - 1; i >= endPc + shift; --i) {
-      code[i] = code[i - shift];
+      if (shift != 0) code[i] = code[i - shift];
       for (int o = 0; o < code[i].num_Operands(); ++o) {
         int old = code[i].getOperand(o);
         if (!IsStatement(old)) continue; // only remap statements
@@ -327,8 +332,14 @@ struct Program {
           code[i].setOperand(o, old + shift);
           reMap[i] = i + shift;
         } else {
+          int modifiedOp = 0;
+          if (reMap.count(old)) {
+            modifiedOp = reMap[old];
+          } else {
+            modifiedOp = old;
+          }
           // remapping before endPc
-          code[i].setOperand(o, reMap[old]);
+          code[i].setOperand(o, modifiedOp);
         }
       }
     }
@@ -411,17 +422,16 @@ static data_t
 Evaluate(const Program & prog, const std::vector<data_t> & params) {
   data_t state[prog.size()];
 
-  data_t result = 0; // no undefined behavior...
   assert(prog.code[prog.size() - 1].oc == OpCode::Return);
-  for (int pc = 0; pc < prog.size() - 1; ++pc) {
+  for (int pc = 0; pc <= prog.getReturnIndex(); ++pc) {
+    data_t result = 0; // no undefined behavior...
     const Statement & stat = prog.code[pc];
     if (stat.oc == OpCode::Constant) {
       // constant
       result = stat.getValue();
 
     } else if (stat.oc == OpCode::Nop) {
-      // no-op
-      continue;
+      // pass
 
     } else if (stat.oc == OpCode::Pipe) {
       // wrapper instructions
@@ -436,24 +446,12 @@ Evaluate(const Program & prog, const std::vector<data_t> & params) {
       data_t B = second < 0 ? params[GetHoleIndex(second)] : state[second];
 
       switch (stat.oc) {
-      case OpCode::Add:
-        result = A + B;
-        break;
-      case OpCode::Sub:
-        result = A - B;
-        break;
-      case OpCode::Mul:
-        result = A * B;
-        break;
-      case OpCode::And:
-        result = A & B;
-        break;
-      case OpCode::Or:
-        result = A | B;
-        break;
-      case OpCode::Xor:
-        result = A ^ B;
-        break;
+      case OpCode::Add: result = A + B; break;
+      case OpCode::Sub: result = A - B; break;
+      case OpCode::Mul: result = A * B; break;
+      case OpCode::And: result = A & B; break;
+      case OpCode::Or:  result = A | B; break;
+      case OpCode::Xor: result = A ^ B; break;
 
       default:
         abort(); // not implemented
@@ -463,7 +461,7 @@ Evaluate(const Program & prog, const std::vector<data_t> & params) {
     state[pc] = result;
   }
 
-  return result;
+  return state[prog.getReturnIndex()];
 }
 
 using NodeSet = std::set<int32_t>;
@@ -741,7 +739,7 @@ BuildRules() {
                   build_ret(1)
                   }),
       Program(3, {Statement(OpCode::Mul, -1, -2),
-                  Statement(OpCode::Mul, -2, -3),
+                  Statement(OpCode::Mul, -1, -3),
                   Statement(OpCode::Add, 0, 1),
                   build_ret(2)
                   })
@@ -1132,8 +1130,8 @@ int main(int argc, char ** argv) {
 
   std::cerr << "Generating some random programs:\n";
 
-  const int stubLen = 10;
-  const int mutSteps = 1;
+  const int stubLen = 3;
+  const int mutSteps = 2;
 
   const float pExpand = 0.05;
   const int numParams = 3;
@@ -1145,20 +1143,23 @@ int main(int argc, char ** argv) {
 
   Mutator mut(rules, pExpand);
 
-  Program p = rpg.generate(stubLen);
   const int numRounds = 10000;
   for (int i = 0; i < numRounds; ++i) {
+    Program p = rpg.generate(stubLen);
+
     std::cerr << "Rand " << i << " ";
     p.dump();
     DataVec refResult = Exec.run(p);
     std::cerr << "--> Result: "; Print(std::cerr, refResult); std::cerr << "\n";
 
-    mut.mutate(p, mutSteps);
-    std::cerr << "Mutated " << i << " ";
-    p.dump();
-    DataVec mutResult = Exec.run(p);
-    std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n";
-    assert(Equal(refResult, mutResult));
+    for (int m = 0; m < mutSteps; ++m) {
+      mut.mutate(p, 1);
+      std::cerr << "Mutated " << i << " at " << m << ": ";
+      p.dump();
+      DataVec mutResult = Exec.run(p);
+      std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n";
+      assert(Equal(refResult, mutResult));
+    }
   }
 }
 
