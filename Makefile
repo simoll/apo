@@ -1,6 +1,6 @@
 TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
-# INC=-I${TFLOW}/include
+INC=-I${TFLOW}/include -Isrc/
 # LIBS=-ltensorflow_framework
 # LIBPATH=-L${TFLOW}
 
@@ -20,4 +20,4 @@ build/apo_graph.pb: src/model.py
 
 .PHONY: clean
 clean:
-	rm -f apo
+	rm -f apo build/*
