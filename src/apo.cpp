@@ -105,8 +105,7 @@ RunTests() {
 }
 
 int main(int argc, char ** argv) {
-
-  Model model;
+  Model model("build/apo_graph.pb");
 
   RunTests();
 

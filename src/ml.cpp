@@ -7,6 +7,8 @@
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_init.h"
 
+#include <string>
+
 using namespace tensorflow;
 // namespace tf = tensorflow;
 
@@ -49,7 +51,7 @@ Model::init_tflow() {
 }
 
 
-Model::Model() {
+Model::Model(const std::string & graphFile) {
   init_tflow(); // make sure tensorflow session works as expected
 
   // Read in the protobuf graph we exported
@@ -57,7 +59,7 @@ Model::Model() {
   // when using `bazel run` since the cwd isn't where you call
   // `bazel run` but from inside a temp folder.)
   GraphDef graph_def;
-  Status status = ReadBinaryProto(Env::Default(), "build/toy_graph.pb", &graph_def);
+  Status status = ReadBinaryProto(Env::Default(), graphFile, &graph_def);
   if (!status.ok()) {
     std::cout << "READ_PROTO: " << status.ToString() << "\n";
     abort();
@@ -72,6 +74,7 @@ Model::Model() {
 
   // Setup inputs and outputs:
 
+#if 0
   // Our graph doesn't require any inputs, since it specifies default values,
   // but we'll change an input to demonstrate.
   Tensor a(DT_FLOAT, TensorShape());
@@ -105,6 +108,7 @@ Model::Model() {
   // Print the results
   std::cout << outputs[0].DebugString() << "\n"; // Tensor<type: float shape: [] values: 30>
   std::cout << output_c() << "\n"; // 30
+#endif
 
   // Free any resources used by the session
   // assert(false && "do something!");
