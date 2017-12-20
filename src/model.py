@@ -74,8 +74,17 @@ else:
     num_Params = 5
 
 # input feed
+
+# number of instructions in the program
+length_data = tf.placeholder(tf.int32, [batch_size], name="length_data")
+
+# opCode per instruction
 oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_data")
+
+# first operand index per instruction
 firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_data")
+
+# second operand index per instruction
 sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_data")
 
 rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
@@ -168,7 +177,6 @@ with tf.Session() as sess:
                     print("flat_oce: {}".format(flat_oc.get_shape()))
                     print("flat_first: {}".format(flat_first.get_shape()))
                     print("flat_snd: {}".format(flat_snd.get_shape()))
-                
 
                 if Debug:
                     print("time_inp: {}".format(time_input.get_shape()))
@@ -185,7 +193,7 @@ with tf.Session() as sess:
     else:
         # use a plain LSTM
         inputs = tf.unstack(oc_inputs, num=max_Time, axis=1)
-        outputs, state = tf.contrib.rnn.static_rnn(cell, inputs, initial_state=initial_state)
+        outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
         rdn_output = outputs[-1]
 
     ### Prediction ###
@@ -212,13 +220,13 @@ with tf.Session() as sess:
     #     raise SystemExit
 
     merged = tf.summary.merge_all()
-    writer = tf.summary.FileWriter("build/tf_logs", sess.graph_def)
+    writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
 
     tf.global_variables_initializer().run()
 
     if not DummyRun:
         # init = tf.initialize_variables(tf.all_variables(), name='init_all_vars_op')
-        tf.train.write_graph(sess.graph_def, 'build/', 'apo_graph.pb', as_text=False)
+        tf.train.write_graph(sess.graph, 'build/', 'apo_graph.pb', as_text=False)
         raise SystemExit
 
     def feed_dict():
@@ -240,12 +248,13 @@ with tf.Session() as sess:
         rule_in_dummy = [1, 2, 0, 3] # number of oc_Add s
         firstOp_dummy = [[1, 4, 5]] * batch_size
         sndOp_dummy = [[2, 1, 0]] * batch_size
+        length_dummy=[3] * batch_size
 
         # firstOp_dummy = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
         # print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
         
         # return the number of instructions
-        return {oc_data: oc_dummy, firstOp_data: firstOp_dummy, sndOp_data: sndOp_dummy, rule_in: rule_in_dummy}
+        return {oc_data: oc_dummy, firstOp_data: firstOp_dummy, sndOp_data: sndOp_dummy, rule_in: rule_in_dummy, length_data: length_dummy}
 
     if DummyRun:
         feed_dict()
