@@ -4,6 +4,19 @@ import numpy as np
 def data_type():
     return tf.float32
 
+
+# learning rate
+learning_rate = 0.001
+
+# number of scalar cells in the LSTM
+lstm_size = 256
+
+# matrix size in opcode encoding
+oc_dict_size = 16
+
+
+
+
 ### OpCode model ###
 # op code encoding
 num_OpCodes = 9
@@ -11,16 +24,17 @@ oc_Ret = 3
 oc_Add = 4
 oc_Sub = 5
 
-# number of scalar cells in the LSTM
-lstm_size = 256
 
-# size of opcode embedding
-oc_dict_size = 16
-
+# enable debug output
 Debug = False
 
 # set to true for pseudo inputs
 DummyRun = False
+
+# number of re-write rules
+num_Rules = 17
+
+Training = True
 
 if DummyRun:
     batch_size = 1
@@ -46,20 +60,25 @@ if DummyRun:
     print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
     
     sndOp_data = tf.reshape(tf.slice(program, [0, 0, 2], [-1, -1, 1]), [batch_size, -1])
+
+    # return the number of instructions
+    rule_in = tf.constant([3])
 else:
     # training batch size
     batch_size = 256
 
     # maximal program len
-    max_Time = 32
+    max_Time = 8
 
     # maximal number of parameters
     num_Params = 5
 
     # input feed
-    oc_data = tf.placeholder(tf.int32, [batch_size, max_Time])
-    firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time])
-    sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time])
+    oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_feed")
+    firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_feed")
+    sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_feed")
+
+    rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
 
 # valid operand index range for this program
 lowestOperand=-2
@@ -68,8 +87,8 @@ highestOperand=1
 # most basic version -> operate over a chain of op codes (just for testing)
 with tf.Session() as sess:
     ### OK
-    sess.run(tf.global_variables_initializer())
     if DummyRun:
+        sess.run(tf.global_variables_initializer())
         print(oc_data.eval())
         print(firstOp_data.eval())
         print(sndOp_data.eval())
@@ -114,54 +133,83 @@ with tf.Session() as sess:
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
     
-    state = initial_state
-    with tf.variable_scope("DAG"): # Recursive Dag Network
-      for time_step in range(max_Time):
-        if time_step > 0: tf.get_variable_scope().reuse_variables()
+    UseRDN=False
+    if UseRDN:   # Recursive Dag Network
+        # TODO document
+        state = initial_state
+        with tf.variable_scope("DAG"): 
+          for time_step in range(max_Time):
+            if time_step > 0: tf.get_variable_scope().reuse_variables()
 
-        with tf.variable_scope("time_{}".format(time_step)): # Recursive Dag Network
-            # fetch current inputs
-            with tf.variable_scope("inputs"):
-                with tf.variable_scope("opCode"):
-                    op_code = oc_inputs[:, time_step, :] # [batch_size x lstm_size]
-                    flat_oc = tf.reshape(op_code, [batch_size, -1])
+            with tf.variable_scope("time_{}".format(time_step)): # Recursive Dag Network
+                # fetch current inputs
+                with tf.variable_scope("inputs"):
+                    with tf.variable_scope("opCode"):
+                        op_code = oc_inputs[:, time_step, :] # [batch_size x lstm_size]
+                        flat_oc = tf.reshape(op_code, [batch_size, -1])
 
-                with tf.variable_scope("firstOp"):
-                    first_tensor = tf.gather(outputs, firstOp_data[:, time_step])#[:, time_step, :] 
-                    flat_first = tf.reshape(first_tensor, [batch_size, -1])
+                    with tf.variable_scope("firstOp"):
+                        first_tensor = tf.gather(outputs, firstOp_data[:, time_step])#[:, time_step, :] 
+                        flat_first = tf.reshape(first_tensor, [batch_size, -1])
 
-                with tf.variable_scope("sndOp"):
-                    snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])#[:, time_step, :]
-                    flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
+                    with tf.variable_scope("sndOp"):
+                        snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])#[:, time_step, :]
+                        flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
 
-                # merge into joined input (TODO do we need a compression layer??)
-                time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
+                    # merge into joined input (TODO do we need a compression layer??)
+                    time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
 
-            if Debug:
-                print("op_code: {}".format(op_code.get_shape()))
-                print("first_tensor: {}".format(first_tensor.get_shape()))
-                print("snd_tensor: {}".format(snd_tensor.get_shape()))
+                if Debug:
+                    print("op_code: {}".format(op_code.get_shape()))
+                    print("first_tensor: {}".format(first_tensor.get_shape()))
+                    print("snd_tensor: {}".format(snd_tensor.get_shape()))
 
-            if Debug:
-                print("flat_oce: {}".format(flat_oc.get_shape()))
-                print("flat_first: {}".format(flat_first.get_shape()))
-                print("flat_snd: {}".format(flat_snd.get_shape()))
-            
+                if Debug:
+                    print("flat_oce: {}".format(flat_oc.get_shape()))
+                    print("flat_first: {}".format(flat_first.get_shape()))
+                    print("flat_snd: {}".format(flat_snd.get_shape()))
+                
 
-            if Debug:
-                print("time_inp: {}".format(time_input.get_shape()))
+                if Debug:
+                    print("time_inp: {}".format(time_input.get_shape()))
 
-            # invoke cell
-            (cell_output, state) = cell(time_input, state)
+                # invoke cell
+                (cell_output, state) = cell(time_input, state)
 
-            outputs.append(cell_output)
+                outputs.append(cell_output)
 
-      # merge all outputs into a single tensor
-      output = tf.reshape(tf.concat(outputs, 1), [-1, lstm_size], name="output")
+          # merge all outputs into a single tensor
+          # output = tf.reshape(tf.concat(outputs, 1), [-1, lstm_size], name="output")
+
+            rdn_output = cell_output
+    else:
+        # use a plain LSTM
+        inputs = tf.unstack(oc_inputs, num=max_Time, axis=1)
+        outputs, state = tf.contrib.rnn.static_rnn(cell, inputs, initial_state=initial_state)
+        rdn_output = outputs[-1]
+
+    ### Prediction ###
+    logits = tf.layers.dense(inputs=rdn_output, units=num_Rules)
+
+    if Training:
+      ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
+      batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
+      loss = tf.reduce_sum(batch_loss, name="cost")
+
+      optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+      train_op = optimizer.minimize(
+          loss=loss,
+          global_step=tf.train.get_global_step(),
+          name="train")
+
+    else:
+      pred_rule = tf.nn.softmax(logits, name="rule_out")
+
 
     # merged = tf.merge_all_summaries()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph_def)
 
+    init = tf.initialize_variables(tf.all_variables(), name='init_all_vars_op')
     tf.train.write_graph(sess.graph_def, 'build/', 'apo_graph.pb', as_text=False)
     writer.close()
 
