@@ -187,11 +187,19 @@ with tf.Session() as sess:
                 # invoke cell
                 (next_output, next_state) = cell(time_input, last_state)
                 
-                # suspend RNN after sequence end (zero output, copy hidden state)
-                cell_output = tf.where(time_step < length_data, next_output, last_output)
-                state       = tf.where(tf.tile([time_step < length_data], [2, 1]), next_state,  last_state) # FIXME "where" only works on scalar.. not on subtensor
+                # filter condition (suspend after sequence has ended)
+                cond = time_step < length_data
 
+                # suspend RNN after sequence end (zero output, copy hidden state)
+                # filter cell_output
+                cell_output = tf.where(cond, next_output, last_output)
                 last_output = cell_output
+
+                # filter the state tuple
+                hidden_state = tf.where(cond, next_state[0], last_state[0])
+                out_state = tf.where(cond, next_state[1], last_state[1])
+
+                state = (hidden_state, out_state)
                 last_state = state
 
                 outputs.append(cell_output)
