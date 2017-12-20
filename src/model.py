@@ -29,7 +29,7 @@ oc_Sub = 5
 Debug = False
 
 # set to true for pseudo inputs
-DummyRun = False
+DummyRun = True
 
 # number of re-write rules
 num_Rules = 17
@@ -37,7 +37,7 @@ num_Rules = 17
 Training = True
 
 if DummyRun:
-    batch_size = 1
+    batch_size = 4
 
     # maximal number of parameters
     num_Params = 5
@@ -52,17 +52,17 @@ if DummyRun:
     # 3 == param 3
     # 4 == instruction @ 0
 
-    program = tf.constant([[[oc_Add, 1, 2], [oc_Sub, 4, 1], [oc_Ret, 5, 0]]])
-    oc_data = tf.reshape(tf.slice(program, [0, 0, 0], [-1, -1, 1]), [batch_size, -1])
-    print("oc_data: {}".format(oc_data.get_shape())) # [batch_size x max_len]
-    
-    firstOp_data = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
-    print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
-    
-    sndOp_data = tf.reshape(tf.slice(program, [0, 0, 2], [-1, -1, 1]), [batch_size, -1])
+    # program = tf.constant([[[oc_Add, 1, 2], [oc_Sub, 4, 1], [oc_Ret, 5, 0]]])
+    # oc_data = tf.reshape(tf.slice(program, [0, 0, 0], [-1, -1, 1]), [batch_size, -1])
+    # print("oc_data: {}".format(oc_data.get_shape())) # [batch_size x max_len]
+    # 
+    # firstOp_data = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
+    # print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
+    # 
+    # sndOp_data = tf.reshape(tf.slice(program, [0, 0, 2], [-1, -1, 1]), [batch_size, -1])
 
     # return the number of instructions
-    rule_in = tf.constant([3])
+    # rule_in = tf.constant([3])
 else:
     # training batch size
     batch_size = 256
@@ -73,12 +73,12 @@ else:
     # maximal number of parameters
     num_Params = 5
 
-    # input feed
-    oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_feed")
-    firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_feed")
-    sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_feed")
+# input feed
+oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_data")
+firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_data")
+sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_data")
 
-    rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
+rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
 
 # valid operand index range for this program
 lowestOperand=-2
@@ -87,11 +87,11 @@ highestOperand=1
 # most basic version -> operate over a chain of op codes (just for testing)
 with tf.Session() as sess:
     ### OK
-    if DummyRun:
-        sess.run(tf.global_variables_initializer())
-        print(oc_data.eval())
-        print(firstOp_data.eval())
-        print(sndOp_data.eval())
+    # if DummyRun:
+    #     sess.run(tf.global_variables_initializer())
+    #     print(oc_data.eval())
+    #     print(firstOp_data.eval())
+    #     print(sndOp_data.eval())
 
     # opCode embedding
     with tf.device("/cpu:0"):
@@ -195,8 +195,11 @@ with tf.Session() as sess:
       ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
       batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
       loss = tf.reduce_sum(batch_loss, name="cost")
+      tf.summary.scalar('loss', loss)
 
-      optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+      # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+      optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
+
       train_op = optimizer.minimize(
           loss=loss,
           global_step=tf.train.get_global_step(),
@@ -205,12 +208,66 @@ with tf.Session() as sess:
     else:
       pred_rule = tf.nn.softmax(logits, name="rule_out")
 
+    # if DummyRun:
+    #     raise SystemExit
 
-    # merged = tf.merge_all_summaries()
+    merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph_def)
 
-    init = tf.initialize_variables(tf.all_variables(), name='init_all_vars_op')
-    tf.train.write_graph(sess.graph_def, 'build/', 'apo_graph.pb', as_text=False)
+    tf.global_variables_initializer().run()
+
+    if not DummyRun:
+        # init = tf.initialize_variables(tf.all_variables(), name='init_all_vars_op')
+        tf.train.write_graph(sess.graph_def, 'build/', 'apo_graph.pb', as_text=False)
+        raise SystemExit
+
+    def feed_dict():
+        # oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_feed")
+        # firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_feed")
+        # sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_feed")
+        # rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
+        program = tf.constant([[[oc_Add, 1, 2], [oc_Sub, 4, 1], [oc_Ret, 5, 0]]])
+        # oc_dummy = tf.reshape(tf.slice(program, [0, 0, 0], [-1, -1, 1]), [batch_size, -1])
+
+
+        # print("oc_dummy: {}".format(oc_dummy.get_shape())) # [batch_size x max_len]
+        
+        oc_dummy=[[oc_Add, oc_Sub, oc_Ret],
+                  [oc_Add, oc_Sub, oc_Add],
+                  [oc_Sub, oc_Sub, oc_Sub],
+                  [oc_Add, oc_Add, oc_Add]]
+
+        rule_in_dummy = [1, 2, 0, 3] # number of oc_Add s
+        firstOp_dummy = [[1, 4, 5]] * batch_size
+        sndOp_dummy = [[2, 1, 0]] * batch_size
+
+        # firstOp_dummy = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
+        # print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
+        
+        # return the number of instructions
+        return {oc_data: oc_dummy, firstOp_data: firstOp_dummy, sndOp_data: sndOp_dummy, rule_in: rule_in_dummy}
+
+    if DummyRun:
+        feed_dict()
+        if merged is None:
+            print(" merged was none!!")
+            raise SystemExit
+
+        print(merged)
+        print(loss)
+        print(train_op)
+
+        train_steps=10000
+        for i in range(train_steps):
+          if i % 10 == 0:  # Record summaries and test-set accuracy
+            summary, roundLoss  = sess.run([merged, loss], feed_dict=feed_dict())
+            writer.add_summary(summary, i)
+            print('Loss at step %s: %s' % (i, roundLoss))
+    
+          else:  # Record train set summaries, and train
+            summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
+            writer.add_summary(summary, i)
+
     writer.close()
 
     # return output, state
