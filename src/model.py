@@ -142,11 +142,14 @@ with tf.Session() as sess:
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
     
-    UseRDN=False
+    UseRDN=True
     if UseRDN:   # Recursive Dag Network
         # TODO document
         state = initial_state
         with tf.variable_scope("DAG"): 
+          last_output = tf.zeros([batch_size, lstm_size], dtype=data_type())
+          last_state = initial_state
+
           for time_step in range(max_Time):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
 
@@ -182,7 +185,14 @@ with tf.Session() as sess:
                     print("time_inp: {}".format(time_input.get_shape()))
 
                 # invoke cell
-                (cell_output, state) = cell(time_input, state)
+                (next_output, next_state) = cell(time_input, last_state)
+                
+                # suspend RNN after sequence end (zero output, copy hidden state)
+                cell_output = tf.where(time_step < length_data, next_output, last_output)
+                state       = tf.where(tf.tile([time_step < length_data], [2, 1]), next_state,  last_state) # FIXME "where" only works on scalar.. not on subtensor
+
+                last_output = cell_output
+                last_state = state
 
                 outputs.append(cell_output)
 
