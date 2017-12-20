@@ -106,11 +106,12 @@ RunTests() {
 
 int main(int argc, char ** argv) {
 
-  test_tf();
+  Model model;
 
   RunTests();
 
   // TestGenerators();
   // return 0;
-
+  //
+  Model::shutdown();
 }

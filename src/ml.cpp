@@ -12,8 +12,14 @@ using namespace tensorflow;
 
 namespace apo {
 
+bool Model::initialized = false;
+tensorflow::Session *  Model::session = nullptr;
+
 int
-test_tf() {
+Model::init_tflow() {
+  if (initialized) return 0;
+  initialized = true;
+
   Status gpuStatus = ValidateGPUMachineManager();
   if (gpuStatus.ok()) {
     // Returns the GPU machine manager singleton, creating it and
@@ -30,34 +36,38 @@ test_tf() {
 
 
    // Initialize a tensorflow session
-  Session* session;
-
   SessionOptions opts;
   opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.5);
   opts.config.mutable_gpu_options()->set_allow_growth(true);
 
   Status status = NewSession(opts, &session);
+
   if (!status.ok()) {
     std::cout << "NEW_SESSION: " << status.ToString() << "\n";
     return 1;
   }
+}
+
+
+Model::Model() {
+  init_tflow(); // make sure tensorflow session works as expected
 
   // Read in the protobuf graph we exported
   // (The path seems to be relative to the cwd. Keep this in mind
   // when using `bazel run` since the cwd isn't where you call
   // `bazel run` but from inside a temp folder.)
   GraphDef graph_def;
-  status = ReadBinaryProto(Env::Default(), "build/apo_graph.pb", &graph_def);
+  Status status = ReadBinaryProto(Env::Default(), "build/toy_graph.pb", &graph_def);
   if (!status.ok()) {
     std::cout << "READ_PROTO: " << status.ToString() << "\n";
-    return 1;
+    abort();
   }
 
   // Add the graph to the session
   status = session->Create(graph_def);
   if (!status.ok()) {
     std::cout << "CREATE_GRAPH: " <<  status.ToString() << "\n";
-    return 1;
+    abort();
   }
 
   // Setup inputs and outputs:
@@ -82,7 +92,7 @@ test_tf() {
   status = session->Run(inputs, {"c"}, {}, &outputs);
   if (!status.ok()) {
     std::cout << status.ToString() << "\n";
-    return 1;
+    abort();
   }
 
   // Grab the first output (we only evaluated one graph node: "c")
@@ -97,10 +107,15 @@ test_tf() {
   std::cout << output_c() << "\n"; // 30
 
   // Free any resources used by the session
-  session->Close();
   // assert(false && "do something!");
-  return 0;
 }
 
+void
+Model::shutdown() {
+  if (!initialized) return;
+  session->Close();
+  session = nullptr;
+  initialized = false;
 }
 
+} // namespace apo

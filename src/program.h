@@ -8,26 +8,26 @@ namespace apo {
 enum class OpCode : int16_t {
   Begin_OpCode = 0,
   Nop = 0,
-  Pipe, // fake value use (e.g. replication)
+  Pipe = 1, // fake value use (e.g. replication)
 
   // @data_t typed literal
-  Constant,
+  Constant = 2,
 
   // single operand (for now)
-  Return,
+  Return = 3,
 
   // arithmetic
-  Begin_Binary,
+  Begin_Binary = 4,
   Add = Begin_Binary,
-  Sub,
-  Mul,
+  Sub = 5,
+  Mul = 6,
 
   // bitwise logic
-  And,
-  Or,
-  Xor,
+  And = 7,
+  Or = 8,
+  Xor = 9,
   End_Binary = Xor,
-  End_OpCode = (int32_t) Xor + 1
+  End_OpCode = Xor
 };
 
 // arithmetic data type
@@ -75,7 +75,7 @@ GetNeutralRHS(OpCode oc) {
 static
 void
 for_such(std::function<bool(OpCode oc)> filterFunc, std::function<void(OpCode oc)> userFunc) {
-  for (int16_t oc = (int16_t) OpCode::Begin_OpCode; oc < (int16_t) OpCode::End_OpCode; ++oc) {
+  for (int16_t oc = (int16_t) OpCode::Begin_OpCode; oc <= (int16_t) OpCode::End_OpCode; ++oc) {
     if (filterFunc((OpCode) oc)) userFunc((OpCode) oc);
   }
 }
