@@ -40,7 +40,7 @@ Model::init_tflow() {
 
    // Initialize a tensorflow session
   SessionOptions opts;
-  opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.5);
+  opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.95);
   opts.config.mutable_gpu_options()->set_allow_growth(true);
 
   Status status = NewSession(opts, &session);
