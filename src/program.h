@@ -3,6 +3,11 @@
 
 #include "config.h"
 
+#include <cassert>
+#include <map>
+#include <functional>
+#include <iostream>
+
 namespace apo {
 
 enum class OpCode : int16_t {

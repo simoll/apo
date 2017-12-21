@@ -29,7 +29,7 @@ oc_Sub = 5
 Debug = False
 
 # set to true for pseudo inputs
-DummyRun = True
+DummyRun = False
 
 # number of re-write rules
 num_Rules = 17
@@ -65,7 +65,7 @@ if DummyRun:
     # rule_in = tf.constant([3])
 else:
     # training batch size
-    batch_size = 256
+    batch_size = 4
 
     # maximal program len
     max_Time = 8
@@ -220,7 +220,7 @@ with tf.Session() as sess:
     if Training:
       ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
       batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
-      loss = tf.reduce_sum(batch_loss, name="cost")
+      loss = tf.reduce_sum(batch_loss, name="loss")
       tf.summary.scalar('loss', loss)
 
       # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
@@ -243,8 +243,9 @@ with tf.Session() as sess:
     tf.global_variables_initializer().run()
 
     if not DummyRun:
-        # init = tf.initialize_variables(tf.all_variables(), name='init_all_vars_op')
+        init = tf.variables_initializer(tf.global_variables(), name='init_op')
         tf.train.write_graph(sess.graph, 'build/', 'apo_graph.pb', as_text=False)
+        writer.close()
         raise SystemExit
 
     def feed_dict():
@@ -274,26 +275,24 @@ with tf.Session() as sess:
         # return the number of instructions
         return {oc_data: oc_dummy, firstOp_data: firstOp_dummy, sndOp_data: sndOp_dummy, rule_in: rule_in_dummy, length_data: length_dummy}
 
-    if DummyRun:
-        feed_dict()
-        if merged is None:
-            print(" merged was none!!")
-            raise SystemExit
+    if merged is None:
+        print(" merged was none!!")
+        raise SystemExit
 
-        print(merged)
-        print(loss)
-        print(train_op)
+    print(merged)
+    print(loss)
+    print(train_op)
 
-        train_steps=10000
-        for i in range(train_steps):
-          if i % 10 == 0:  # Record summaries and test-set accuracy
-            summary, roundLoss  = sess.run([merged, loss], feed_dict=feed_dict())
-            writer.add_summary(summary, i)
-            print('Loss at step %s: %s' % (i, roundLoss))
+    train_steps=10000
+    for i in range(train_steps):
+      if i % 10 == 0:  # Record summaries and test-set accuracy
+        summary, roundLoss  = sess.run([merged, loss], feed_dict=feed_dict())
+        writer.add_summary(summary, i)
+        print('Loss at step %s: %s' % (i, roundLoss))
     
-          else:  # Record train set summaries, and train
-            summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
-            writer.add_summary(summary, i)
+      else:  # Record train set summaries, and train
+        summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
+        writer.add_summary(summary, i)
 
     writer.close()
 
@@ -305,6 +304,5 @@ with tf.Session() as sess:
     # seq_length=[4] * batch_size
     # outputs, state = tf.nn.static_rnn(cell, tf.unstack(oc_data, 1), initial_state=initial_state, sequence_length=seq_length)
 
-    if DummyRun:
-        sess.run(tf.global_variables_initializer())
+    sess.run(tf.global_variables_initializer())
     # print(oc_inputs.eval())

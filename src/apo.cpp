@@ -104,10 +104,40 @@ RunTests() {
   std::cerr << "END_OF_TESTS\n";
 }
 
-int main(int argc, char ** argv) {
+static
+int
+CountOpCode(const Program & P, OpCode oc) {
+  int total = 0;
+  for (const auto & stat : P.code) {
+    total += (int) (stat.oc == oc);
+  }
+  return total;
+}
+
+void
+ModelTest() {
   Model model("build/apo_graph.pb");
+  ProgramVec progVec = {
+    new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), build_ret(0)}),
+    new Program(model.num_Params, {Statement(OpCode::Sub, -1 , -2), build_ret(0)}),
+    new Program(model.num_Params, {Statement(OpCode::Xor, -1 , -2), Statement(OpCode::And, 0 , -1), build_ret(1)}),
+    new Program(model.num_Params, {Statement(OpCode::And, -1 , -2), Statement(OpCode::Mul, -1, -2), Statement(OpCode::Add, 0, 1), build_ret(2)})
+  };
+
+  ResultVec results;
+  for (const auto * P : progVec) {
+    results.push_back(Result{CountOpCode(*P, OpCode::Add)});
+  }
+
+  model.train(progVec, results);
+}
+
+int main(int argc, char ** argv) {
+  ModelTest();
+  return 0;
 
   RunTests();
+
 
   // TestGenerators();
   // return 0;

@@ -2,12 +2,23 @@
 #define APO_ML_H
 
 #include <string>
+#include <vector>
+
+#include "program.h"
 
 namespace tensorflow {
   class Session;
 }
 
 namespace apo {
+
+
+  struct Result {
+    int numAdds; // number of adds in the program
+  };
+
+  using ProgramVec = std::vector<const Program*>;
+  using ResultVec = std::vector<Result>;
 
   class Model {
   // tensorflow state
@@ -18,8 +29,24 @@ namespace apo {
 
   // graph definition
 
+    // TODO read from shared config file
+  public:
+    const int batch_size = 4;
+    const int max_Time = 8;
+    const int num_Params = 5;
+    const int max_Operands = 2;
+
+    int translateOperand(node_t idx) const;
+    int encodeOperand(const Statement & stat, node_t opIdx) const;
+    int encodeOpCode(const Statement & stat) const;
+
   public:
     Model(const std::string & fileName);
+
+    // train model on a batch of programs
+    void train(const ProgramVec& progs, const ResultVec& results);
+
+    ResultVec infer(const ProgramVec& progs);
 
     static void shutdown();
   };
