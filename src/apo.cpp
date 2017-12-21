@@ -117,12 +117,21 @@ CountOpCode(const Program & P, OpCode oc) {
 void
 ModelTest() {
   Model model("build/apo_graph.pb");
+#if 0
   ProgramVec progVec = {
     new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), build_ret(0)}),
     new Program(model.num_Params, {Statement(OpCode::Sub, -1 , -2), build_ret(0)}),
     new Program(model.num_Params, {Statement(OpCode::Xor, -1 , -2), Statement(OpCode::And, 0 , -1), build_ret(1)}),
     new Program(model.num_Params, {Statement(OpCode::And, -1 , -2), Statement(OpCode::Mul, -1, -2), Statement(OpCode::Add, 0, 1), build_ret(2)})
   };
+#else
+  ProgramVec progVec = {
+    new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), Statement(OpCode::Sub, 0, -1), build_ret(0)}),
+    new Program(model.num_Params, {Statement(OpCode::Sub, -1 , -2), Statement(OpCode::Sub, 0, -1), Statement(OpCode::Add, -3, 0)}),
+    new Program(model.num_Params, {Statement(OpCode::Sub, -1 , -2), Statement(OpCode::Sub, 0 , -1), Statement(OpCode::Sub, 0, 1)}),
+    new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), Statement(OpCode::Add, -1, -2), Statement(OpCode::Add, 0, 1)})
+  };
+#endif
 
   ResultVec results;
   for (const auto * P : progVec) {

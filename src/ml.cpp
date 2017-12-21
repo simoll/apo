@@ -149,6 +149,12 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
         firstOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 0);
         sndOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 1);
       }
+      for (int t = prog.size(); t < model.max_Time; ++t) {
+        oc_Mapped(batch_id, t) = 0;
+        firstOp_Mapped(batch_id, t) = 0;
+        sndOp_Mapped(batch_id, t) = 0;
+      }
+
       length_Mapped(batch_id) = prog.size();
       result_Mapped(batch_id) = result.numAdds;
     }
@@ -190,6 +196,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
   FeedDict inputs = batch.buildFeed();
   std::vector<tensorflow::Tensor> outputs;
 
+#if 0
   // Run the session, evaluating our "c" operation from the graph
   Status status = session->Run(inputs, {"loss"}, {}, &outputs);
   if (!status.ok()) {
@@ -203,6 +210,22 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
   auto loss_out = outputs[0].scalar<float>();
   const int step = 0; // TODO add training loop
   std::cout << "Loss at step " << step << ": " << loss_out << "\n";
+#else
+  const int train_steps=10000;
+  for (int i = 0; i < train_steps; ++i) {
+    if (i % 100 == 0) {
+      TF_CHECK_OK( session->Run(inputs, {"loss"}, {}, &outputs) );
+      // writer.add_summary(summary, i)
+      auto loss_out = outputs[0].scalar<float>();
+      std::cout << "Loss at step " << i << ": " << loss_out << "\n";
+    } else {
+      TF_CHECK_OK( session->Run(inputs, {}, {"train_op"}, &outputs) );
+      // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
+      // writer.add_summary(summary, i)
+    }
+  }
+#endif
+
 
   // Grab the first output (we only evaluated one graph node: "c")
   // and convert the node to a scalar representation.
