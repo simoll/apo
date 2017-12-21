@@ -27,25 +27,27 @@ TestGenerators() {
   Mutator mut(rules, pExpand);
   const int numRounds = 10000;
   for (int i = 0; i < numRounds; ++i) {
-    Program p = rpg.generate(stubLen);
+    Program * P = rpg.generate(stubLen);
 
     IF_VERBOSE {
       std::cerr << "Rand " << i << " ";
-      p.dump();
+      P->dump();
     }
-    DataVec refResult = Exec.run(p);
+    DataVec refResult = Exec.run(*P);
     IF_VERBOSE { std::cerr << "--> Result: "; Print(std::cerr, refResult); std::cerr << "\n"; }
 
     for (int m = 0; m < mutSteps; ++m) {
-      mut.mutate(p, 1);
+      mut.mutate(*P, 1);
       IF_VERBOSE {
         std::cerr << "Mutated " << i << " at " << m << ": ";
-        p.dump();
+        P->dump();
       }
-      DataVec mutResult = Exec.run(p);
+      DataVec mutResult = Exec.run(*P);
       IF_VERBOSE { std::cerr << "--> Result: "; Print(std::cerr, mutResult); std::cerr << "\n"; }
       assert(Equal(refResult, mutResult));
     }
+
+    delete P;
   }
 }
 
@@ -119,6 +121,7 @@ void
 ModelTest() {
   Model model("build/apo_graph.pb", "model.conf");
 #if 0
+#if 0
   ProgramVec progVec = {
     new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), build_ret(0)}),
     new Program(model.num_Params, {Statement(OpCode::Sub, -1 , -2), build_ret(0)}),
@@ -133,6 +136,19 @@ ModelTest() {
     new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), Statement(OpCode::Add, -1, -2), Statement(OpCode::Add, 0, 1)})
   };
 #endif
+#endif
+  ProgramVec progVec;
+  auto rules = BuildRules();
+  RPG rpg(rules, model.num_Params);
+
+  int genLen = model.max_Time - model.num_Params - 1;
+  assert(genLen > 0 && "can not generate program within constraints");
+  for (int i = 0; i < model.batch_size; ++i) {
+    auto * P = rpg.generate(genLen);
+    assert(P->size() < model.max_Time);
+
+    progVec.push_back(P); // Return is extra
+  }
 
   ResultVec results;
   for (const auto * P : progVec) {
@@ -140,6 +156,7 @@ ModelTest() {
   }
 
   model.train(progVec, results);
+  for (auto * P : progVec) delete P;
 }
 
 int main(int argc, char ** argv) {

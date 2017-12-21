@@ -23,7 +23,7 @@ CFLAGS=${INC}
 
 PYTHON=python3
 
-CXX=clang++ -std=c++14 -O3 -g -Isrc/ #-fsanitize=address
+CXX=clang++ -std=c++14 -O0 -g -Isrc/ #-fsanitize=address
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 

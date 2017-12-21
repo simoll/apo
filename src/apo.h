@@ -429,9 +429,9 @@ struct RPG {
     std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
   }
 
-  Program
+  Program*
   generate(int length) {
-    Program P(numParams, {});
+    Program & P = *(new Program(numParams, {}));
     P.code.reserve(length);
 
     Sampler S;
@@ -473,7 +473,7 @@ struct RPG {
 
     assert(P.verify());
 
-    return P;
+    return &P;
   }
 };
 
