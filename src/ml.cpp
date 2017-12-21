@@ -1,5 +1,6 @@
 #include "ml.h"
 
+#include "parser.h"
 #include "config.h"
 #include <cassert>
 
@@ -53,9 +54,20 @@ Model::init_tflow() {
 }
 
 
-Model::Model(const std::string & graphFile) {
+Model::Model(const std::string & graphFile, const std::string & configFile) {
   init_tflow(); // make sure tensorflow session works as expected
 
+// parse shared configuration
+  {
+      Parser confParser(configFile);
+      max_Time = confParser.get<int>("max_Time");
+      num_Params = confParser.get<int>("num_Params");
+      batch_size = confParser.get<int>("batch_size");
+  }
+
+  std::cerr << "Model (apo). max_Time=" << max_Time << ", num_Params=" << num_Params << ", batch_size=" << batch_size << "\n";
+
+// build Graph
   // Read in the protobuf graph we exported
   // (The path seems to be relative to the cwd. Keep this in mind
   // when using `bazel run` since the cwd isn't where you call
@@ -75,7 +87,6 @@ Model::Model(const std::string & graphFile) {
   }
 
   // Setup inputs and outputs:
-
   std::cout << "TF: loaded graph " << graphFile << "\n";
 
   // Initialize our variables

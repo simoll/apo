@@ -31,9 +31,9 @@ namespace apo {
 
     // TODO read from shared config file
   public:
-    const int batch_size = 4;
-    const int max_Time = 8;
-    const int num_Params = 5;
+    int batch_size; // = 4;
+    int max_Time; // = 4;
+    int num_Params; // = 5;
     const int max_Operands = 2;
 
     int translateOperand(node_t idx) const;
@@ -41,7 +41,7 @@ namespace apo {
     int encodeOpCode(const Statement & stat) const;
 
   public:
-    Model(const std::string & fileName);
+    Model(const std::string & fileName, const std::string & configFile);
 
     // train model on a batch of programs
     void train(const ProgramVec& progs, const ResultVec& results);

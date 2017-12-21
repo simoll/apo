@@ -31,12 +31,12 @@ apo: $(OBJECTS) build/apo_graph.pb Makefile
 	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
 
 build/%.o: src/%.cpp Makefile
-	$(CXX) ${CFLAGS} $< -c -o $@ 
 	mkdir -p $(dir $@)
+	$(CXX) ${CFLAGS} $< -c -o $@ 
 
-build/apo_graph.pb: src/model.py
+build/apo_graph.pb: src/model.py model.conf
 	$(PYTHON) src/model.py
 
 .PHONY: clean
 clean:
-	rm -f apo build/*
+	rm -rf apo build/*

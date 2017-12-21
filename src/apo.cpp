@@ -1,5 +1,6 @@
 #include "apo.h"
 #include "ml.h"
+#include "parser.h"
 
 using namespace apo;
 
@@ -116,7 +117,7 @@ CountOpCode(const Program & P, OpCode oc) {
 
 void
 ModelTest() {
-  Model model("build/apo_graph.pb");
+  Model model("build/apo_graph.pb", "model.conf");
 #if 0
   ProgramVec progVec = {
     new Program(model.num_Params, {Statement(OpCode::Add, -1 , -2), build_ret(0)}),

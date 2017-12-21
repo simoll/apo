@@ -6,7 +6,7 @@ def data_type():
 
 
 # learning rate
-learning_rate = 0.001
+learning_rate = 0.01
 
 # number of scalar cells in the LSTM
 lstm_size = 256
@@ -19,7 +19,7 @@ oc_dict_size = 16
 
 ### OpCode model ###
 # op code encoding
-num_OpCodes = 9
+num_OpCodes = 10
 oc_Ret = 3
 oc_Add = 4
 oc_Sub = 5
@@ -35,6 +35,13 @@ DummyRun = False
 num_Rules = 17
 
 Training = True
+
+def parseConfig(fileName):
+  res = dict()
+  for line in open(fileName, 'r'):
+    parts = line.split(" ")
+    res[parts[0]] = parts[1]
+  return res
 
 if DummyRun:
     batch_size = 4
@@ -64,15 +71,18 @@ if DummyRun:
     # return the number of instructions
     # rule_in = tf.constant([3])
 else:
+    conf = parseConfig("model.conf")
+
     # training batch size
-    batch_size = 4
+    batch_size = int(conf["batch_size"])
 
     # maximal program len
-    max_Time = 8
+    max_Time = int(conf["max_Time"])
 
     # maximal number of parameters
-    num_Params = 5
+    num_Params = int(conf["num_Params"])
 
+    print("Model (construct). max_Time={}, num_Params={}, batch_size={}".format(max_Time, num_Params, batch_size))
 # input feed
 
 # number of instructions in the program
@@ -88,10 +98,6 @@ firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_da
 sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_data")
 
 rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
-
-# valid operand index range for this program
-lowestOperand=-2
-highestOperand=1
 
 # most basic version -> operate over a chain of op codes (just for testing)
 with tf.Session() as sess:
@@ -142,7 +148,7 @@ with tf.Session() as sess:
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
     
-    UseRDN=True
+    UseRDN=False
     if UseRDN:   # Recursive Dag Network
         # TODO document
         state = initial_state
@@ -229,7 +235,7 @@ with tf.Session() as sess:
       train_op = optimizer.minimize(
           loss=loss,
           global_step=tf.train.get_global_step(),
-          name="train")
+          name="train_op")
 
     else:
       pred_rule = tf.nn.softmax(logits, name="rule_out")
