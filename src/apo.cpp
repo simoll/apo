@@ -160,12 +160,13 @@ ModelTest() {
     results.push_back(Result{CountOpCode(*P, OpCode::Add)});
   }
 
-  const int numBatchSteps = 10;
-  const int numEpochs = 100;
+  const int numBatchSteps = 100;
+  const int numEpochs = 1000;
 
+  std::cout << "Training:\n";
   for (int epoch = 0; epoch < numEpochs; ++epoch) {
     double avgLoss = model.train(progVec, results, numBatchSteps);
-    std::cout << "Loss after epoch " << epoch << " " << avgLoss << "\n";
+    std::cout << "pCorrect after epoch " << epoch << " :  " << avgLoss << "\n";
   }
 
   for (auto * P : progVec) delete P;

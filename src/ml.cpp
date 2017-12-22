@@ -186,7 +186,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
 
-  double avgLoss = 0.0;
+  double avgCorrect = 0.0;
   Batch batch(*this);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
@@ -206,11 +206,11 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
       // writer.add_summary(summary, i)
     }
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pCorrect_op"}, {}, &outputs) );
     // writer.add_summary(summary, i)
-    auto loss_out = outputs[0].scalar<float>()(0);
+    auto pCorrect = outputs[0].scalar<float>()(0);
     // std::cout << loss_out << "\n";
-    avgLoss += (double) loss_out;
+    avgCorrect += (double) pCorrect;
   }
 
   // Grab the first output (we only evaluated one graph node: "c")
@@ -223,7 +223,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
   // std::cout << output_c() << "\n"; // 30
 
   int numBatches = num_Samples / batch_size;
-  return avgLoss / (double) numBatches;
+  return avgCorrect / (double) numBatches;
 }
 
 } // namespace apo

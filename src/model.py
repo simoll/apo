@@ -10,11 +10,13 @@ def data_type():
 learning_rate = 0.001
 
 # number of scalar cells in the LSTM
-state_size = 32
+state_size = 64
 
 # op code embedding size
-embed_size = 16
+embed_size = 32
 
+# stacked cells
+num_layers = 1
 
 
 ### OpCode model ###
@@ -142,19 +144,26 @@ with tf.Session() as sess:
     if Debug:
         print(outputs)
 
-    # Cell
+    ### recurrent cell setup ###
     cell_type="lstm"
 
     if cell_type== "gru":
-      cell = tf.nn.rnn_cell.GRUCell(state_size)
+        make_cell = lambda: tf.nn.rnn_cell.GRUCell(state_size)
     elif cell_type == "block":
-      cell = tf.contrib.rnn.LSTMBlockCell(state_size)
+        make_cell = lambda: tf.contrib.rnn.LSTMBlockCell(state_size)
     else:
-      cell = tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
+        make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
       # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
+
+    # instantiate
+    if num_layers > 1:
+      cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_layers)], state_is_tuple=True)
+    else:
+      cell = make_cell()
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
     
+    ### network setup ###
     UseRDN=True
     if UseRDN:   # Recursive Dag Network
         # TODO document
@@ -173,19 +182,18 @@ with tf.Session() as sess:
                         op_code = oc_inputs[:, time_step, :] # [batch_size x state_size]
                         flat_oc = tf.reshape(op_code, [batch_size, -1])
 
-                    # FIXME unstable
+                    # gather first operand outputs
                     with tf.variable_scope("firstOp"):
                         first_tensor = tf.gather(outputs, firstOp_data[:, time_step])
                         flat_first = tf.reshape(first_tensor, [batch_size, -1])
 
-                    # FIXME unstable
+                    # gather second operand outputs
                     with tf.variable_scope("sndOp"):
                         snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])
                         flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
 
                     # merge into joined input 
                     time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
-                    # time_input = tf.concat([flat_oc], axis=1,name="seq_input")
 
                 if Debug:
                     print("op_code: {}".format(op_code.get_shape()))
@@ -214,7 +222,7 @@ with tf.Session() as sess:
                 # filter the state tuple
                 def copy_fn(a,b):
                   return tf.where(cond, a, b)
-                nest.map_structure(copy_fn, next_state, last_state)
+                state = nest.map_structure(copy_fn, next_state, last_state)
                 last_state = state
 
                 outputs.append(cell_output)
@@ -224,25 +232,30 @@ with tf.Session() as sess:
         outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
         last_output = outputs[-1]
 
-    ### Prediction ###
-    logits = tf.layers.dense(inputs=last_output, units=num_Rules)
+    # fold hidden layer to decision bits
+    logits = tf.layers.dense(inputs=tf.reshape(state.c, [batch_size, -1]), units=num_Rules)
 
-    if Training:
-      ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
-      batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
-      loss = tf.reduce_mean(batch_loss, name="loss")
-      tf.summary.scalar('loss', loss)
+    ### Training ###
+    ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
+    batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
+    loss = tf.reduce_mean(batch_loss, name="loss")
+    tf.summary.scalar('loss', loss)
 
-      # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-      optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
+    # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-      train_op = optimizer.minimize(
-          loss=loss,
-          global_step=tf.train.get_global_step(),
-          name="train_op")
+    train_op = optimizer.minimize(
+        loss=loss,
+        global_step=tf.train.get_global_step(),
+        name="train_op")
 
-    else:
-      pred_rule = tf.nn.softmax(logits, name="rule_out")
+    ### prob of getting the cout right (pCorrect_op)  ###
+    predicted = tf.cast(tf.argmax(logits, axis=1, name="predicted"), tf.int32)
+    # def equals_fn(x,y):
+    #   return 1 if x == y else 0
+
+    matched = tf.cast(tf.equal(predicted, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
+    pCorrect = tf.reduce_mean(matched, name="pCorrect_op")
 
     # if DummyRun:
     #     raise SystemExit
