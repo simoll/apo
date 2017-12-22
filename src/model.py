@@ -10,13 +10,10 @@ def data_type():
 learning_rate = 0.001
 
 # number of scalar cells in the LSTM
-state_size = 64
-
-# matrix size in opcode encoding
-oc_dict_size = 16
+state_size = 32
 
 # op code embedding size
-embed_size = 32
+embed_size = 16
 
 
 
@@ -154,7 +151,6 @@ with tf.Session() as sess:
       cell = tf.contrib.rnn.LSTMBlockCell(state_size)
     else:
       cell = tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
-      # cell = tf.contrib.rnn.LSTMBlockCell(state_size)
       # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
@@ -177,16 +173,19 @@ with tf.Session() as sess:
                         op_code = oc_inputs[:, time_step, :] # [batch_size x state_size]
                         flat_oc = tf.reshape(op_code, [batch_size, -1])
 
+                    # FIXME unstable
                     with tf.variable_scope("firstOp"):
-                        first_tensor = tf.gather(outputs, firstOp_data[:, time_step])#[:, time_step, :] 
+                        first_tensor = tf.gather(outputs, firstOp_data[:, time_step])
                         flat_first = tf.reshape(first_tensor, [batch_size, -1])
 
+                    # FIXME unstable
                     with tf.variable_scope("sndOp"):
-                        snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])#[:, time_step, :]
+                        snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])
                         flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
 
                     # merge into joined input 
                     time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
+                    # time_input = tf.concat([flat_oc], axis=1,name="seq_input")
 
                 if Debug:
                     print("op_code: {}".format(op_code.get_shape()))
@@ -216,23 +215,17 @@ with tf.Session() as sess:
                 def copy_fn(a,b):
                   return tf.where(cond, a, b)
                 nest.map_structure(copy_fn, next_state, last_state)
-
                 last_state = state
 
                 outputs.append(cell_output)
-
-          # merge all outputs into a single tensor
-          # output = tf.reshape(tf.concat(outputs, 1), [-1, state_size], name="output")
-
-            rdn_output = cell_output
     else:
         # use a plain LSTM
         inputs = tf.unstack(oc_inputs, num=max_Time, axis=1)
         outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
-        rdn_output = outputs[-1]
+        last_output = outputs[-1]
 
     ### Prediction ###
-    logits = tf.layers.dense(inputs=rdn_output, units=num_Rules)
+    logits = tf.layers.dense(inputs=last_output, units=num_Rules)
 
     if Training:
       ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)

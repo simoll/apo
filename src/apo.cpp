@@ -143,19 +143,31 @@ ModelTest() {
 
   int genLen = model.max_Time - model.num_Params - 1;
   assert(genLen > 0 && "can not generate program within constraints");
-  for (int i = 0; i < model.batch_size; ++i) {
+
+// synthesize inputs
+  const int numSamples = model.batch_size * 32;
+  std::cout << "Generating " << numSamples << " programs..\n";
+
+  for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
     assert(P->size() < model.max_Time);
-
-    progVec.push_back(P); // Return is extra
+    progVec.push_back(P);
   }
 
+// reference results
   ResultVec results;
   for (const auto * P : progVec) {
     results.push_back(Result{CountOpCode(*P, OpCode::Add)});
   }
 
-  model.train(progVec, results);
+  const int numBatchSteps = 10;
+  const int numEpochs = 100;
+
+  for (int epoch = 0; epoch < numEpochs; ++epoch) {
+    double avgLoss = model.train(progVec, results, numBatchSteps);
+    std::cout << "Loss after epoch " << epoch << " " << avgLoss << "\n";
+  }
+
   for (auto * P : progVec) delete P;
 }
 

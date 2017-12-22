@@ -43,8 +43,8 @@ namespace apo {
   public:
     Model(const std::string & fileName, const std::string & configFile);
 
-    // train model on a batch of programs
-    void train(const ProgramVec& progs, const ResultVec& results);
+    // train model on a batch of programs (returns loss)
+    double train(const ProgramVec& progs, const ResultVec& results, int num_steps);
 
     ResultVec infer(const ProgramVec& progs);
 

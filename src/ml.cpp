@@ -126,8 +126,8 @@ Model::encodeOpCode(const Statement & stat) const {
 
 using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
 
-void
-Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
+double
+Model::train(const ProgramVec& progs, const std::vector<Result>& results, int num_steps) {
   // program encoding
   struct Batch {
     const Model & model;
@@ -148,8 +148,8 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
 
     void encode(int batch_id, const Program & prog, const Result & result) {
       auto oc_Mapped = oc_feed.tensor<int, 2>();
-      auto firstOp_Mapped = oc_feed.tensor<int, 2>();
-      auto sndOp_Mapped = oc_feed.tensor<int, 2>();
+      auto firstOp_Mapped = firstOp_feed.tensor<int, 2>();
+      auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
       auto length_Mapped = length_feed.tensor<int, 1>();
       auto result_Mapped = result_feed.tensor<int, 1>();
 
@@ -183,60 +183,35 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
     }
   };
 
-  // TODO build batch from programs
-  assert(results.size() == progs.size());
-  assert(results.size() == batch_size);
+  int num_Samples = progs.size();
+  assert(results.size() == num_Samples);
+
+  double avgLoss = 0.0;
   Batch batch(*this);
-  for (int i = 0; i < batch_size; ++i) {
-    const Program & P = *progs[i];
-    batch.encode(i, P, results[i]);
-  }
 
+  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    for (int i = 0; i < batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      batch.encode(i, P, results[s + i]);
+    }
 
-  // a.scalar<float>()() = 3.0;
+    // The session will initialize the outputs
+    std::vector<tensorflow::Tensor> outputs;
 
-  // Tensor b(DT_FLOAT, TensorShape());
-  // b.scalar<float>()() = 2.0;
-
-  // std::vector<std::pair<string, tensorflow::Tensor>> inputs = {
-  //   { "a", a },
-  //   { "b", b },
-  // };
-
-  // The session will initialize the outputs
-  FeedDict inputs = batch.buildFeed();
-  std::vector<tensorflow::Tensor> outputs;
-
-#if 0
-  // Run the session, evaluating our "c" operation from the graph
-  Status status = session->Run(inputs, {"loss"}, {}, &outputs);
-  if (!status.ok()) {
-    std::cout << "TF: error in session::run : " << status.ToString() << "\n";
-    abort();
-  }
-
-  // print something interesting
-  std::cout << "Outputs: " << outputs.size() << "\n";
-  std::cout << outputs[0].DebugString() << "\n"; // Tensor<type: float shape: [] values: 30>
-  auto loss_out = outputs[0].scalar<float>();
-  const int step = 0; // TODO add training loop
-  std::cout << "Loss at step " << step << ": " << loss_out << "\n";
-#else
-  const int train_steps=10000;
-  for (int i = 0; i < train_steps; ++i) {
-    if (i % 100 == 0) {
-      TF_CHECK_OK( session->Run(inputs, {"loss"}, {}, &outputs) );
-      // writer.add_summary(summary, i)
-      auto loss_out = outputs[0].scalar<float>();
-      std::cout << "Loss at step " << i << ": " << loss_out << "\n";
-    } else {
-      TF_CHECK_OK( session->Run(inputs, {}, {"train_op"}, &outputs) );
+    // std::cout << " Training on batch " << s << "\n";
+    for (int i = 0; i < num_steps; ++i) {
+      outputs.clear();
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_op"}, &outputs) );
       // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
       // writer.add_summary(summary, i)
     }
-  }
-#endif
 
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
+    // writer.add_summary(summary, i)
+    auto loss_out = outputs[0].scalar<float>()(0);
+    // std::cout << loss_out << "\n";
+    avgLoss += (double) loss_out;
+  }
 
   // Grab the first output (we only evaluated one graph node: "c")
   // and convert the node to a scalar representation.
@@ -246,6 +221,9 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results) {
 
   // Print the results
   // std::cout << output_c() << "\n"; // 30
+
+  int numBatches = num_Samples / batch_size;
+  return avgLoss / (double) numBatches;
 }
 
 } // namespace apo
