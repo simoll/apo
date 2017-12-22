@@ -167,7 +167,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
       }
 
       length_Mapped(batch_id) = prog.size();
-      result_Mapped(batch_id) = result.numAdds;
+      result_Mapped(batch_id) = result.value;
     }
 
     FeedDict

@@ -117,6 +117,26 @@ CountOpCode(const Program & P, OpCode oc) {
   return total;
 }
 
+static
+int
+CountEdge(const Program & P, OpCode userOc, OpCode defOc, int opIdx) {
+  int total = 0;
+  for (const auto & stat : P.code) {
+    if (stat.oc != userOc) continue;
+    if (opIdx >= stat.num_Operands()) continue;
+    // for (int opIdx = 0; opIdx < stat.num_Operands(); ++opIdx)
+
+    {
+      int i = stat.getOperand(opIdx);
+      if (!IsStatement(i)) continue;
+      const auto & defStat = P.code[i];
+      total += (defStat.oc == defOc);
+    }
+  }
+
+  return total;
+}
+
 void
 ModelTest() {
   Model model("build/apo_graph.pb", "model.conf");
@@ -145,7 +165,7 @@ ModelTest() {
   assert(genLen > 0 && "can not generate program within constraints");
 
 // synthesize inputs
-  const int numSamples = model.batch_size * 32;
+  const int numSamples = model.batch_size * 128;
   std::cout << "Generating " << numSamples << " programs..\n";
 
   for (int i = 0; i < numSamples; ++i) {
@@ -157,16 +177,21 @@ ModelTest() {
 // reference results
   ResultVec results;
   for (const auto * P : progVec) {
-    results.push_back(Result{CountOpCode(*P, OpCode::Add)});
+    // results.push_back(Result{CountOpCode(*P, OpCode::Add)});
+    results.push_back(Result{CountEdge(*P, OpCode::Mul, OpCode::Sub, 0)}); // number of Subs in operand position "0" of any Mul
   }
 
-  const int numBatchSteps = 100;
+  const int numBatchSteps = 5;
   const int numEpochs = 1000;
 
   std::cout << "Training:\n";
   for (int epoch = 0; epoch < numEpochs; ++epoch) {
-    double avgLoss = model.train(progVec, results, numBatchSteps);
-    std::cout << "pCorrect after epoch " << epoch << " :  " << avgLoss << "\n";
+    double fracCorrect = model.train(progVec, results, numBatchSteps);
+    std::cout << "correct fraction after epoch " << epoch << " :  " << fracCorrect << "\n";
+    if (fracCorrect >= .9999) {
+      std::cout << "Training complete!\n";
+      break;
+    }
   }
 
   for (auto * P : progVec) delete P;

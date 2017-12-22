@@ -14,7 +14,7 @@ namespace apo {
 
 
   struct Result {
-    int numAdds; // number of adds in the program
+    int value; // number of adds in the program
   };
 
   using ProgramVec = std::vector<const Program*>;
