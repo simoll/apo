@@ -1,19 +1,22 @@
 import tensorflow as tf
 import numpy as np
+from tensorflow.python.util import nest
 
 def data_type():
     return tf.float32
 
 
 # learning rate
-learning_rate = 0.01
+learning_rate = 0.001
 
 # number of scalar cells in the LSTM
-lstm_size = 256
+state_size = 64
 
 # matrix size in opcode encoding
 oc_dict_size = 16
 
+# op code embedding size
+embed_size = 32
 
 
 
@@ -110,23 +113,23 @@ with tf.Session() as sess:
 
     # opCode embedding
     with tf.device("/cpu:0"):
-        oc_embedding = tf.get_variable("oc_embed", [num_OpCodes, lstm_size], dtype=data_type())
-        oc_inputs = tf.nn.embedding_lookup(oc_embedding, oc_data) # [batch_size x idx x lstm_size]
+        oc_embedding = tf.get_variable("oc_embed", [num_OpCodes, embed_size], dtype=data_type())
+        oc_inputs = tf.nn.embedding_lookup(oc_embedding, oc_data) # [batch_size x idx x embed_size]
 
-    print("oc_inputs: {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x lstm_size ]
+    print("oc_inputs: {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
 
     # one-hot operand encoding
     # firstOp_inputs = tf.one_hot(firstOp_data, num_Indices,  on_value=0.0, off_value=1, dtype=data_type())
     # sndOp_inputs = tf.one_hot(smdOp_data, num_Indices,  on_value=0.0, off_value=1, dtype=data_type())
 
     # parameter input
-    param_data = tf.get_variable("param_embed", [num_Params, lstm_size])
+    param_data = tf.get_variable("param_embed", [num_Params, state_size])
 
     # build the network
-    zero_batch = tf.zeros([batch_size, lstm_size], dtype=data_type())
+    zero_batch = tf.zeros([batch_size, state_size], dtype=data_type())
     # param_batch = tf.split(tf.tile(param_data, [1, batch_size]), 1, batch_size)
-    # print(param_data.get_shape()) # [numParams x lstm_size]
-    # print(param_batch.get_shape()) # [batch_size x numParams x lstm_size]
+    # print(param_data.get_shape()) # [numParams x state_size]
+    # print(param_batch.get_shape()) # [batch_size x numParams x state_size]
 
     param_batch = tf.concat([[param_data] * batch_size], 1, name="concat_params")
 
@@ -138,22 +141,30 @@ with tf.Session() as sess:
     for i in range(num_Params):
         outputs.append(param_batch[:, i, :])
 
-    # outputs = [zero_batch] + param_data # [batch_size x time x lstm_size]
+    # outputs = [zero_batch] + param_data # [batch_size x time x state_size]
     if Debug:
         print(outputs)
 
     # Cell
-    cell = tf.nn.rnn_cell.BasicLSTMCell(lstm_size, state_is_tuple=True)
-    # cell = tf.nn.rnn_cell.BasicRNNCell(lstm_size)
+    cell_type="lstm"
+
+    if cell_type== "gru":
+      cell = tf.nn.rnn_cell.GRUCell(state_size)
+    elif cell_type == "block":
+      cell = tf.contrib.rnn.LSTMBlockCell(state_size)
+    else:
+      cell = tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
+      # cell = tf.contrib.rnn.LSTMBlockCell(state_size)
+      # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
 
     initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
     
-    UseRDN=False
+    UseRDN=True
     if UseRDN:   # Recursive Dag Network
         # TODO document
         state = initial_state
         with tf.variable_scope("DAG"): 
-          last_output = tf.zeros([batch_size, lstm_size], dtype=data_type())
+          last_output = tf.zeros([batch_size, state_size], dtype=data_type())
           last_state = initial_state
 
           for time_step in range(max_Time):
@@ -163,7 +174,7 @@ with tf.Session() as sess:
                 # fetch current inputs
                 with tf.variable_scope("inputs"):
                     with tf.variable_scope("opCode"):
-                        op_code = oc_inputs[:, time_step, :] # [batch_size x lstm_size]
+                        op_code = oc_inputs[:, time_step, :] # [batch_size x state_size]
                         flat_oc = tf.reshape(op_code, [batch_size, -1])
 
                     with tf.variable_scope("firstOp"):
@@ -174,7 +185,7 @@ with tf.Session() as sess:
                         snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])#[:, time_step, :]
                         flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
 
-                    # merge into joined input (TODO do we need a compression layer??)
+                    # merge into joined input 
                     time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
 
                 if Debug:
@@ -183,7 +194,7 @@ with tf.Session() as sess:
                     print("snd_tensor: {}".format(snd_tensor.get_shape()))
 
                 if Debug:
-                    print("flat_oce: {}".format(flat_oc.get_shape()))
+                    print("flat_oc: {}".format(flat_oc.get_shape()))
                     print("flat_first: {}".format(flat_first.get_shape()))
                     print("flat_snd: {}".format(flat_snd.get_shape()))
 
@@ -200,18 +211,18 @@ with tf.Session() as sess:
                 # filter cell_output
                 cell_output = tf.where(cond, next_output, last_output)
                 last_output = cell_output
-
+                
                 # filter the state tuple
-                hidden_state = tf.where(cond, next_state[0], last_state[0])
-                out_state = tf.where(cond, next_state[1], last_state[1])
+                def copy_fn(a,b):
+                  return tf.where(cond, a, b)
+                nest.map_structure(copy_fn, next_state, last_state)
 
-                state = (hidden_state, out_state)
                 last_state = state
 
                 outputs.append(cell_output)
 
           # merge all outputs into a single tensor
-          # output = tf.reshape(tf.concat(outputs, 1), [-1, lstm_size], name="output")
+          # output = tf.reshape(tf.concat(outputs, 1), [-1, state_size], name="output")
 
             rdn_output = cell_output
     else:
@@ -226,7 +237,7 @@ with tf.Session() as sess:
     if Training:
       ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
       batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
-      loss = tf.reduce_sum(batch_loss, name="loss")
+      loss = tf.reduce_mean(batch_loss, name="loss")
       tf.summary.scalar('loss', loss)
 
       # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
