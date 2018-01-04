@@ -16,7 +16,7 @@ state_size = 64
 embed_size = 32
 
 # stacked cells
-num_layers = 1
+num_layers = 2
 
 
 ### OpCode model ###
@@ -32,9 +32,6 @@ Debug = False
 
 # set to true for pseudo inputs
 DummyRun = False
-
-# number of re-write rules
-num_Rules = 17
 
 Training = True
 
@@ -53,6 +50,9 @@ if DummyRun:
 
     # maximal program length
     max_Time = 3
+
+    # number of re-write rules
+    num_Rules = 17
 
     # some test data
     # 0 == dummy
@@ -84,7 +84,10 @@ else:
     # maximal number of parameters
     num_Params = int(conf["num_Params"])
 
-    print("Model (construct). max_Time={}, num_Params={}, batch_size={}".format(max_Time, num_Params, batch_size))
+    # number of re-write rules
+    num_Rules = int(conf["num_Rules"]) #, 17
+
+    print("Model (construct). max_Time={}, num_Params={}, batch_size={}, num_Rules={}".format(max_Time, num_Params, batch_size, num_Rules))
 # input feed
 
 # number of instructions in the program
@@ -233,7 +236,9 @@ with tf.Session() as sess:
         last_output = outputs[-1]
 
     # fold hidden layer to decision bits
-    logits = tf.layers.dense(inputs=tf.reshape(state.c, [batch_size, -1]), units=num_Rules)
+    net_out = tf.reshape(state[-1].c, [batch_size, -1])
+    logits = tf.layers.dense(inputs=net_out, units=num_Rules)
+    N = tf.identity(logits,"logits") # for exports
 
     ### Training ###
     ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
@@ -250,15 +255,13 @@ with tf.Session() as sess:
         name="train_op")
 
     ### prob of getting the cout right (pCorrect_op)  ###
-    predicted = tf.cast(tf.argmax(logits, axis=1, name="predicted"), tf.int32)
+    predicted = tf.cast(tf.argmax(logits, axis=1), tf.int32, name="predicted")
+
     # def equals_fn(x,y):
     #   return 1 if x == y else 0
 
     matched = tf.cast(tf.equal(predicted, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
     pCorrect = tf.reduce_mean(matched, name="pCorrect_op")
-
-    # if DummyRun:
-    #     raise SystemExit
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
@@ -267,7 +270,9 @@ with tf.Session() as sess:
 
     if not DummyRun:
         init = tf.variables_initializer(tf.global_variables(), name='init_op')
-        tf.train.write_graph(sess.graph, 'build/', 'apo_graph.pb', as_text=False)
+        fileName = "apo_graph.pb"
+        tf.train.write_graph(sess.graph, 'build/', fileName, as_text=False)
+        print("Model written to {}.".format(fileName))
         writer.close()
         raise SystemExit
 

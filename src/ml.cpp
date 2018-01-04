@@ -126,63 +126,66 @@ Model::encodeOpCode(const Statement & stat) const {
 
 using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
 
+// program encoding
+struct Batch {
+  const Model & model;
+  Tensor oc_feed;
+  Tensor firstOp_feed;
+  Tensor sndOp_feed;
+  Tensor length_feed;
+  Tensor result_feed;
+
+  Batch(const Model & _model)
+  : model(_model)
+  , oc_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
+  , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
+  , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.max_Time}))
+  , length_feed(DT_INT32,  TensorShape({model.batch_size}))
+  , result_feed(DT_INT32,  TensorShape({model.batch_size}))
+  {}
+
+  void encode_Program(int batch_id, const Program & prog) {
+    auto oc_Mapped = oc_feed.tensor<int, 2>();
+    auto firstOp_Mapped = firstOp_feed.tensor<int, 2>();
+    auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
+    auto length_Mapped = length_feed.tensor<int, 1>();
+
+    assert((prog.size() <= model.max_Time) && "program size exceeds model limits");
+
+    for (int t = 0; t < prog.size(); ++t) {
+      oc_Mapped(batch_id, t) = model.encodeOpCode(prog.code[t]);
+      firstOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 0);
+      sndOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 1);
+    }
+    for (int t = prog.size(); t < model.max_Time; ++t) {
+      oc_Mapped(batch_id, t) = 0;
+      firstOp_Mapped(batch_id, t) = 0;
+      sndOp_Mapped(batch_id, t) = 0;
+    }
+
+    length_Mapped(batch_id) = prog.size();
+  }
+
+  void encode_Result(int batch_id, const Result & result) {
+    auto result_Mapped = result_feed.tensor<int, 1>();
+    result_Mapped(batch_id) = result.value;
+  }
+
+  FeedDict
+  buildFeed() {
+    FeedDict dict = {
+      {"oc_data", oc_feed},
+      {"firstOp_data", firstOp_feed},
+      {"sndOp_data", sndOp_feed},
+      {"rule_in", result_feed},
+      {"length_data", length_feed}
+    };
+    return dict;
+  }
+};
+
 double
 Model::train(const ProgramVec& progs, const std::vector<Result>& results, int num_steps) {
-  // program encoding
-  struct Batch {
-    const Model & model;
-    Tensor oc_feed;
-    Tensor firstOp_feed;
-    Tensor sndOp_feed;
-    Tensor length_feed;
-    Tensor result_feed;
-
-    Batch(const Model & _model)
-    : model(_model)
-    , oc_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
-    , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
-    , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.max_Time}))
-    , length_feed(DT_INT32,  TensorShape({model.batch_size}))
-    , result_feed(DT_INT32,  TensorShape({model.batch_size}))
-    {}
-
-    void encode(int batch_id, const Program & prog, const Result & result) {
-      auto oc_Mapped = oc_feed.tensor<int, 2>();
-      auto firstOp_Mapped = firstOp_feed.tensor<int, 2>();
-      auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
-      auto length_Mapped = length_feed.tensor<int, 1>();
-      auto result_Mapped = result_feed.tensor<int, 1>();
-
-      assert((prog.size() <= model.max_Time) && "program size exceeds model limits");
-
-      for (int t = 0; t < prog.size(); ++t) {
-        oc_Mapped(batch_id, t) = model.encodeOpCode(prog.code[t]);
-        firstOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 0);
-        sndOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 1);
-      }
-      for (int t = prog.size(); t < model.max_Time; ++t) {
-        oc_Mapped(batch_id, t) = 0;
-        firstOp_Mapped(batch_id, t) = 0;
-        sndOp_Mapped(batch_id, t) = 0;
-      }
-
-      length_Mapped(batch_id) = prog.size();
-      result_Mapped(batch_id) = result.value;
-    }
-
-    FeedDict
-    buildFeed() {
-      FeedDict dict = {
-        {"oc_data", oc_feed},
-        {"firstOp_data", firstOp_feed},
-        {"sndOp_data", sndOp_feed},
-        {"rule_in", result_feed},
-        {"length_data", length_feed}
-      };
-      return dict;
-    }
-  };
-
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
 
@@ -192,7 +195,8 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
-      batch.encode(i, P, results[s + i]);
+      batch.encode_Program(i, P);
+      batch.encode_Result(i, results[s + i]);
     }
 
     // The session will initialize the outputs
@@ -225,5 +229,59 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
   int numBatches = num_Samples / batch_size;
   return avgCorrect / (double) numBatches;
 }
+
+ResultVec
+Model::infer(const ProgramVec& progs) {
+  int num_Samples = progs.size();
+  assert(num_Samples % batch_size == 0);
+
+  ResultVec results;
+
+  Batch batch(*this);
+  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    for (int i = 0; i < batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      batch.encode_Program(i, P);
+    }
+
+    // The session will initialize the outputs
+    std::vector<tensorflow::Tensor> outputs;
+
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"logits"}, {}, &outputs) );
+    // writer.add_summary(summary, i)
+    auto ruleTensor = outputs[0];
+    auto logits_Mapped = ruleTensor.tensor<float, 2>();
+    int numRules = ruleTensor.dim_size(1);
+
+    for (int i = 0; i < batch_size; ++i) {
+      double highest = -1;
+      int highestRule = 0;
+      for (int r = 0; r < numRules; ++r) {
+        auto p = logits_Mapped(i, r);
+        if (p > highest) {
+          highest = p;
+          highestRule = r;
+        }
+      }
+
+      results.push_back(Result{highestRule});
+    }
+  }
+
+  return results;
+
+  // Grab the first output (we only evaluated one graph node: "c")
+  // and convert the node to a scalar representation.
+
+  // (There are similar methods for vectors and matrices here:
+  // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/public/tensor.h)
+
+  // Print the results
+  // std::cout << output_c() << "\n"; // 30
+
+  // int numBatches = num_Samples / batch_size;
+  // return avgCorrect / (double) numBatches;
+}
+
 
 } // namespace apo

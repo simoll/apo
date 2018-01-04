@@ -1,6 +1,7 @@
 #include "apo.h"
 #include "ml.h"
 #include "parser.h"
+#include "program.h"
 
 using namespace apo;
 
@@ -137,6 +138,35 @@ CountEdge(const Program & P, OpCode userOc, OpCode defOc, int opIdx) {
   return total;
 }
 
+static
+int
+CountMatches(const Program & P, const Rule & rule) {
+  int total = 0;
+  NodeVec holes;
+  for (int pc = 0; pc < P.size(); ++pc) {
+    if (rule.match(true, P, pc, holes)) total++;
+  }
+  return total;
+}
+
+static
+int
+MostLikely(const Program & P, const RuleVec & rules) {
+  int likelyRule = 0; // STOP rule
+  int likelyHits = 0;
+  for (int r = 0; r < rules.size(); ++r) {
+    const auto & R = rules[r];
+    // results.push_back(Result{CountOpCode(*P, OpCode::Add)}); // WORKS
+    // results.push_back(Result{CountEdge(*P, OpCode::Mul, OpCode::Sub, 0)}); // number of Subs in operand position "0" of any Mul // WORKS
+    int numMatched = CountMatches(P, R);
+    if (numMatched > likelyHits) {
+      likelyHits = numMatched;
+      likelyRule = r + 1; // skip virtual STOP rule
+    }
+  }
+  return likelyRule;
+}
+
 void
 ModelTest() {
   Model model("build/apo_graph.pb", "model.conf");
@@ -165,7 +195,7 @@ ModelTest() {
   assert(genLen > 0 && "can not generate program within constraints");
 
 // synthesize inputs
-  const int numSamples = model.batch_size * 128;
+  const int numSamples = model.batch_size * 4096;
   std::cout << "Generating " << numSamples << " programs..\n";
 
   for (int i = 0; i < numSamples; ++i) {
@@ -177,13 +207,23 @@ ModelTest() {
 // reference results
   ResultVec results;
   for (const auto * P : progVec) {
-    // results.push_back(Result{CountOpCode(*P, OpCode::Add)});
-    results.push_back(Result{CountEdge(*P, OpCode::Mul, OpCode::Sub, 0)}); // number of Subs in operand position "0" of any Mul
+    int likelyRule = MostLikely(*P, rules);
+    results.push_back(Result{likelyRule});
   }
 
-  const int numBatchSteps = 5;
-  const int numEpochs = 1000;
+#if 0
+  const auto & R = rules[0];
+  // TODO most likely rule prediction
+  double randFrac = 1.0 - (t / (double) numSamples);
+  std::cout << "Found " << t << " matches for rule (0-baseline " << randFrac << "):\n";
+  R.dump();
+#endif
 
+// Training
+  const int numBatchSteps = 4;
+  const int numEpochs = 10000;
+
+#if 1
   std::cout << "Training:\n";
   for (int epoch = 0; epoch < numEpochs; ++epoch) {
     double fracCorrect = model.train(progVec, results, numBatchSteps);
@@ -195,6 +235,29 @@ ModelTest() {
   }
 
   for (auto * P : progVec) delete P;
+#endif
+
+// Validation
+  progVec.clear();
+  results.clear();
+  std::cout << "Re-generating " << numSamples << " programs..\n";
+
+  for (int i = 0; i < numSamples; ++i) {
+    auto * P = rpg.generate(genLen);
+    assert(P->size() < model.max_Time);
+    progVec.push_back(P);
+  }
+
+  ResultVec predicted = model.infer(progVec);
+
+  int hits = 0;
+  for (int i = 0; i < numSamples; ++i) {
+    int refResult = MostLikely(*progVec[i], rules);
+    hits += (predicted[i].value == refResult);
+  }
+  double pCorrect = hits / (double) numSamples;
+
+  std::cout << "Validated: " << pCorrect << "\n";
 }
 
 int main(int argc, char ** argv) {
