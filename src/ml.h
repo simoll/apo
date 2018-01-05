@@ -14,7 +14,8 @@ namespace apo {
 
 
   struct Result {
-    int value; // number of adds in the program
+    int rule;   // rule index (0 == STOP)
+    int target; // target index (match root)
   };
 
   using ProgramVec = std::vector<const Program*>;

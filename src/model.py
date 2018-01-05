@@ -6,6 +6,7 @@ def data_type():
     return tf.float32
 
 
+
 # learning rate
 learning_rate = 0.001
 
@@ -102,9 +103,10 @@ firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_da
 # second operand index per instruction
 sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_data")
 
-rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
 
-# most basic version -> operate over a chain of op codes (just for testing)
+
+
+
 with tf.Session() as sess:
     ### OK
     # if DummyRun:
@@ -237,13 +239,45 @@ with tf.Session() as sess:
 
     # fold hidden layer to decision bits
     net_out = tf.reshape(state[-1].c, [batch_size, -1])
-    logits = tf.layers.dense(inputs=net_out, units=num_Rules)
-    N = tf.identity(logits,"logits") # for exports
+    rule_logits = tf.layers.dense(inputs=net_out, units=num_Rules)
+    target_logits = tf.layers.dense(inputs=net_out, units=max_Time) # TODO use ptr-net instead
 
-    ### Training ###
+    if False:
+        ### target pointer extraction (pointer net) ###
+        def attention(ref, query, scope="attention"):
+          with tf.variable_scope(scope):
+            W_ref = tf.get_variable(
+                "W_ref", [state_size, state_size])
+            W_q = tf.get_variable(
+                "W_q", [state_size, state_size])
+            v = tf.get_variable(
+                "v", [state_size])
+        
+            encoded_ref = tf.matmul(ref, W_ref, name="encoded_ref")
+            encoded_query = tf.expand_dims(tf.matmul(query, W_q, name="encoded_query"), 1)
+            tiled_encoded_Query = tf.tile(
+                encoded_query, [1, tf.shape(encoded_ref)[1], 1], name="tiled_encoded_query")
+            scores = tf.reduce_sum(v * tf.tanh(encoded_ref + encoded_query), [-1])
+            return scores
+        
+        def glimpse(ref, query, scope="glimpse"):
+          p = tf.nn.softmax(attention(ref, query, scope=scope))
+          alignments = tf.expand_dims(p, 2)
+          return tf.reduce_sum(alignments * ref, [1])
+
+    ### reference input & training ###
+    # reference input #
+    rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
+    target_in = tf.placeholder(tf.int32, [batch_size], name="target_in")
+
+    # training #
     ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
-    batch_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=logits, dim=-1)
-    loss = tf.reduce_mean(batch_loss, name="loss")
+    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=rule_logits, dim=-1)
+    ref_target = tf.one_hot(target_in, axis=-1, depth=max_Time)
+    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_target, logits=target_logits, dim=-1)
+
+    all_losses = [rule_loss, target_loss]
+    loss = tf.reduce_mean(all_losses, name="loss")
     tf.summary.scalar('loss', loss)
 
     # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
@@ -255,13 +289,15 @@ with tf.Session() as sess:
         name="train_op")
 
     ### prob of getting the cout right (pCorrect_op)  ###
-    predicted = tf.cast(tf.argmax(logits, axis=1), tf.int32, name="predicted")
+    pred_rule = tf.cast(tf.argmax(rule_logits, axis=1), tf.int32, name="pred_rule")
+    pred_target = tf.cast(tf.argmax(target_logits, axis=1), tf.int32, name="pred_target")
 
     # def equals_fn(x,y):
     #   return 1 if x == y else 0
 
-    matched = tf.cast(tf.equal(predicted, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
-    pCorrect = tf.reduce_mean(matched, name="pCorrect_op")
+    matched_rule = tf.cast(tf.equal(pred_rule, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
+    matched_target = tf.cast(tf.equal(pred_target, target_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
+    pCorrect = tf.reduce_mean([matched_rule, matched_target], name="pCorrect_op")
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)

@@ -126,14 +126,17 @@ Model::encodeOpCode(const Statement & stat) const {
 
 using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
 
-// program encoding
 struct Batch {
   const Model & model;
+  // program emcoding
   Tensor oc_feed;
   Tensor firstOp_feed;
   Tensor sndOp_feed;
   Tensor length_feed;
-  Tensor result_feed;
+
+  // output encoding
+  Tensor rule_feed;
+  Tensor target_feed;
 
   Batch(const Model & _model)
   : model(_model)
@@ -141,7 +144,8 @@ struct Batch {
   , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
   , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.max_Time}))
   , length_feed(DT_INT32,  TensorShape({model.batch_size}))
-  , result_feed(DT_INT32,  TensorShape({model.batch_size}))
+  , rule_feed(DT_INT32,  TensorShape({model.batch_size}))
+  , target_feed(DT_INT32,  TensorShape({model.batch_size}))
   {}
 
   void encode_Program(int batch_id, const Program & prog) {
@@ -167,8 +171,10 @@ struct Batch {
   }
 
   void encode_Result(int batch_id, const Result & result) {
-    auto result_Mapped = result_feed.tensor<int, 1>();
-    result_Mapped(batch_id) = result.value;
+    auto rule_Mapped = rule_feed.tensor<int, 1>();
+    auto target_Mapped = target_feed.tensor<int, 1>();
+    rule_Mapped(batch_id) = result.rule;
+    target_Mapped(batch_id) = result.target;
   }
 
   FeedDict
@@ -177,7 +183,8 @@ struct Batch {
       {"oc_data", oc_feed},
       {"firstOp_data", firstOp_feed},
       {"sndOp_data", sndOp_feed},
-      {"rule_in", result_feed},
+      {"rule_in", rule_feed},
+      {"target_in", target_feed},
       {"length_data", length_feed}
     };
     return dict;
@@ -247,9 +254,19 @@ Model::infer(const ProgramVec& progs) {
     // The session will initialize the outputs
     std::vector<tensorflow::Tensor> outputs;
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"logits"}, {}, &outputs) );
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_rule", "pred_target"}, {}, &outputs) );
     // writer.add_summary(summary, i)
     auto ruleTensor = outputs[0];
+    auto targetTensor = outputs[1];
+
+    auto rule_Mapped = ruleTensor.tensor<int, 1>();
+    auto target_Mapped = targetTensor.tensor<int, 1>();
+    int numRules = ruleTensor.dim_size(1);
+
+    for (int i = 0; i < batch_size; ++i) {
+      results.push_back(Result{rule_Mapped(i), target_Mapped(i)});
+    }
+#if 0
     auto logits_Mapped = ruleTensor.tensor<float, 2>();
     int numRules = ruleTensor.dim_size(1);
 
@@ -266,6 +283,7 @@ Model::infer(const ProgramVec& progs) {
 
       results.push_back(Result{highestRule});
     }
+#endif
   }
 
   return results;

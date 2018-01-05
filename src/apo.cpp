@@ -195,7 +195,7 @@ ModelTest() {
   assert(genLen > 0 && "can not generate program within constraints");
 
 // synthesize inputs
-  const int numSamples = model.batch_size * 4096;
+  const int numSamples = model.batch_size * 64;
   std::cout << "Generating " << numSamples << " programs..\n";
 
   for (int i = 0; i < numSamples; ++i) {
@@ -208,7 +208,7 @@ ModelTest() {
   ResultVec results;
   for (const auto * P : progVec) {
     int likelyRule = MostLikely(*P, rules);
-    results.push_back(Result{likelyRule});
+    results.push_back(Result{likelyRule, 0});
   }
 
 #if 0
@@ -253,7 +253,7 @@ ModelTest() {
   int hits = 0;
   for (int i = 0; i < numSamples; ++i) {
     int refResult = MostLikely(*progVec[i], rules);
-    hits += (predicted[i].value == refResult);
+    hits += (predicted[i].rule == refResult);
   }
   double pCorrect = hits / (double) numSamples;
 
