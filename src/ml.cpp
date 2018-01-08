@@ -69,7 +69,7 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
       num_Rules = confParser.get<int>("num_Rules");
   }
 
-  std::cerr << "Model (apo). max_Time=" << max_Time << ", num_Params=" << num_Params << ", batch_size=" << batch_size << "\n";
+  std::cerr << "Model (apo). max_Time=" << max_Time << ", num_Params=" << num_Params << ", batch_size=" << batch_size << ", num_Rules=" << num_Rules << "\n";
 
 // build Graph
   // Read in the protobuf graph we exported
@@ -276,17 +276,33 @@ Model::infer_likely(const ProgramVec& progs) {
 }
 
 ResultDistVec
-Model::infer_dist(const ProgramVec& progs) {
+Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   int num_Samples = progs.size();
   assert(num_Samples % batch_size == 0);
 
   ResultDistVec results;
 
+  Program emptyP(num_Params, {}); // the empty program
+
   Batch batch(*this);
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    bool allEmpty = true;
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
-      batch.encode_Program(i, P);
+      if (P.size() > max_Time) {
+        batch.encode_Program(i, emptyP);
+      } else {
+        allEmpty = false;
+        batch.encode_Program(i, P);
+      }
+    }
+
+    if (allEmpty) {
+      // early continue
+      for (int i = 0; i < batch_size; ++i) {
+        results.push_back(createResultDist());
+      }
+      continue;
     }
 
     // The session will initialize the outputs

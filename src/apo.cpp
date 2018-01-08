@@ -359,7 +359,7 @@ struct MonteCarloOptimizer {
 #define IF_DEBUG_DER if (false)
 
     // number of derivation walks
-    const int numRounds = 1000;
+    const int numRounds = 100;
     for (int r = 0; r < numRounds; ++r) {
 
       // re-start from initial program
@@ -369,11 +369,10 @@ struct MonteCarloOptimizer {
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
         // query model rewrite probabilities
-        ResultDistVec modelRewriteDist = model.infer_dist(roundProgs);
+        ResultDistVec modelRewriteDist = model.infer_dist(roundProgs, true); // fail silently
 
         int frozen = 0;
 
-        #pragma omp parallel reduction(frozen:+)
         for (int t = 0; t < numSamples; ++t) {
           // freeze if derivation exceeds model
           if (roundProgs[t]->size() >= model.max_Time) {
@@ -394,7 +393,6 @@ struct MonteCarloOptimizer {
         // loop until rewrite succeeds (or stop)
           while (!signalsStop && !success) {
             bool uniRule;
-            #pragma omp ordered
             uniRule = ruleRand(randGen) <= pRandom;
 
             bool signalsStop = false;
@@ -462,21 +460,25 @@ MonteCarloTest() {
   assert(genLen > 0 && "can not generate program within constraints");
   RPG rpg(rules, model.num_Params);
 
-// synthesize inputs
+// generate randomly mutated programs
   const int numSamples = model.batch_size;
   std::cout << "Generating " << numSamples << " programs..\n";
 
-  Mutator expMut(rules, 1.0); // expanding rewriter
-
+  const int maxMutations = 3;
+  Mutator expMut(rules, .7); // expanding rewriter
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
     assert(P->size() < model.max_Time);
     progVec.push_back(P);
 
-    expMut.mutate(*P, 1); // mutate at least once
+    std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
+    int mutSteps = mutRand(randGen);
+    expMut.mutate(*P, mutSteps); // mutate at least once
   }
 
-  auto derVec = montOpt.searchDerivations(progVec, 1.0, 1);
+// optimize with current best model
+  const int maxDerivationDepth = 3;
+  auto derVec = montOpt.searchDerivations(progVec, 1.0, maxDerivationDepth);
   for (int i = 0; i < progVec.size(); ++i) {
     const auto & der = derVec[i];
     const auto & P = *progVec[i];
