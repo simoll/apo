@@ -358,6 +358,9 @@ struct MonteCarloOptimizer {
 
 #define IF_DEBUG_DER if (false)
 
+    // pre-compute initial program distribution
+    ResultDistVec initialProgDist = model.infer_dist(progVec, true);
+
     // number of derivation walks
     const int numRounds = 100;
     for (int r = 0; r < numRounds; ++r) {
@@ -365,11 +368,11 @@ struct MonteCarloOptimizer {
       // re-start from initial program
       ProgramVec roundProgs = Clone(progVec);
 
-      // generate a new derivation sequence
+      ResultDistVec modelRewriteDist = initialProgDist;
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
-        // query model rewrite probabilities
-        ResultDistVec modelRewriteDist = model.infer_dist(roundProgs, true); // fail silently
+        // use cached probabilities if possible
+        if (derStep > 0) modelRewriteDist = model.infer_dist(roundProgs, true); // fail silently
 
         int frozen = 0;
 
@@ -476,9 +479,53 @@ MonteCarloTest() {
     expMut.mutate(*P, mutSteps); // mutate at least once
   }
 
-// optimize with current best model
-  const int maxDerivationDepth = 3;
-  auto derVec = montOpt.searchDerivations(progVec, 1.0, maxDerivationDepth);
+// explore all actions from current program
+  const int mcDerivationSteps = 3;
+  const int maxExplorationDepth = 3;
+
+  for (int depth = 0; depth < mvDerivationSteps; ++depth) {
+
+  // compute all possible deriable programs
+    std::vector<std::pair<int, Rewrite>> nextProgs;
+    ProgramVec nextProgs;
+
+    #pragma omp parallel
+    for (int t = 0; t < progVec.size(); ++t) {
+      for (int r = 0; r < rules.size(); ++r) {
+        for (int j = 0; j < 2; ++j) {
+          for (int pc = 0; pc < progVec[t]->size(); ++pc) {
+            bool leftMatch = (bool) j;
+
+            int ruleEnumId = 1 + 2 * r + j;
+
+            auto * clonedProg = new Program(*progVec[t]);
+            if (!mut.tryApply(*clonedProg, pc, r, leftMatch)) {
+              // TODO clone after match (or render into copy)
+              delete clonedProg;
+              continue;
+            }
+
+            // compact list of programs resulting from a single action
+            #pragma omp ordered
+            {
+              nextProgs.push_back(clonedProg);
+              nextProgs.emplace_back(t, Rewrite(pc, ruleEnumId));
+            }
+          }
+        }
+      }
+    }
+
+  // best-effort search for optimal program
+    auto derVec = montOpt.searchDerivations(progVec, 1.0, maxExplorationDepth);
+
+  // TODO decode reference ResultDistVec from detected derivations
+
+  // TODO train model
+
+  // TODO advance to next program (set current prog to chosen nextProg -> continue)
+  }
+
   for (int i = 0; i < progVec.size(); ++i) {
     const auto & der = derVec[i];
     const auto & P = *progVec[i];
