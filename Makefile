@@ -24,9 +24,11 @@ CFLAGS=${INC}
 
 PYTHON=python3
 
-OPTFLAGS=-O3 -DNDEBUG -g
+# OPTFLAGS=-O3 -DNDEBUG -fopenmp -g
+# OPTFLAGS=-O3 -DNDEBUG -g
+OPTFLAGS=-O0 -g
 
-CXX=clang++ -std=c++14 -Isrc/ #-fsanitize=address
+CXX=clang++ -std=c++14 ${OPTFLAGS} -Isrc/ #-fsanitize=address
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 
