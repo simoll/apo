@@ -242,6 +242,15 @@ with tf.Session() as sess:
     rule_logits = tf.layers.dense(inputs=net_out, units=num_Rules)
     target_logits = tf.layers.dense(inputs=net_out, units=max_Time) # TODO use ptr-net instead
 
+    ## predictions ##
+    # distributions
+    tf.nn.softmax(logits=rule_logits,name="pred_rule_dist")
+    tf.nn.softmax(logits=target_logits,name="pred_target_dist")
+
+    # most-likely categories
+    pred_rule = tf.cast(tf.argmax(rule_logits, axis=1), tf.int32, name="pred_rule")
+    pred_target = tf.cast(tf.argmax(target_logits, axis=1), tf.int32, name="pred_target")
+
     if False:
         ### target pointer extraction (pointer net) ###
         def attention(ref, query, scope="attention"):
@@ -289,8 +298,6 @@ with tf.Session() as sess:
         name="train_op")
 
     ### prob of getting the cout right (pCorrect_op)  ###
-    pred_rule = tf.cast(tf.argmax(rule_logits, axis=1), tf.int32, name="pred_rule")
-    pred_target = tf.cast(tf.argmax(target_logits, axis=1), tf.int32, name="pred_target")
 
     # def equals_fn(x,y):
     #   return 1 if x == y else 0

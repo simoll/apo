@@ -1,13 +1,16 @@
 #include "ml.h"
 
 #include "parser.h"
+#include "extmath.h"
 #include "config.h"
-#include <cassert>
+
 
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_init.h"
+#include <limits>
 
+#include <cassert>
 #include <string>
 
 using namespace tensorflow;
@@ -63,6 +66,7 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
       max_Time = confParser.get<int>("max_Time");
       num_Params = confParser.get<int>("num_Params");
       batch_size = confParser.get<int>("batch_size");
+      num_Rules = confParser.get<int>("num_Rules");
   }
 
   std::cerr << "Model (apo). max_Time=" << max_Time << ", num_Params=" << num_Params << ", batch_size=" << batch_size << "\n";
@@ -238,7 +242,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 }
 
 ResultVec
-Model::infer(const ProgramVec& progs) {
+Model::infer_likely(const ProgramVec& progs) {
   int num_Samples = progs.size();
   assert(num_Samples % batch_size == 0);
 
@@ -261,45 +265,95 @@ Model::infer(const ProgramVec& progs) {
 
     auto rule_Mapped = ruleTensor.tensor<int, 1>();
     auto target_Mapped = targetTensor.tensor<int, 1>();
-    int numRules = ruleTensor.dim_size(1);
+    assert(num_Rules == ruleTensor.dim_size(1));
 
     for (int i = 0; i < batch_size; ++i) {
       results.push_back(Result{rule_Mapped(i), target_Mapped(i)});
     }
-#if 0
-    auto logits_Mapped = ruleTensor.tensor<float, 2>();
-    int numRules = ruleTensor.dim_size(1);
-
-    for (int i = 0; i < batch_size; ++i) {
-      double highest = -1;
-      int highestRule = 0;
-      for (int r = 0; r < numRules; ++r) {
-        auto p = logits_Mapped(i, r);
-        if (p > highest) {
-          highest = p;
-          highestRule = r;
-        }
-      }
-
-      results.push_back(Result{highestRule});
-    }
-#endif
   }
 
   return results;
-
-  // Grab the first output (we only evaluated one graph node: "c")
-  // and convert the node to a scalar representation.
-
-  // (There are similar methods for vectors and matrices here:
-  // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/public/tensor.h)
-
-  // Print the results
-  // std::cout << output_c() << "\n"; // 30
-
-  // int numBatches = num_Samples / batch_size;
-  // return avgCorrect / (double) numBatches;
 }
 
+ResultDistVec
+Model::infer_dist(const ProgramVec& progs) {
+  int num_Samples = progs.size();
+  assert(num_Samples % batch_size == 0);
+
+  ResultDistVec results;
+
+  Batch batch(*this);
+  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    for (int i = 0; i < batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      batch.encode_Program(i, P);
+    }
+
+    // The session will initialize the outputs
+    std::vector<tensorflow::Tensor> outputs;
+
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_rule_dist", "pred_target_dist"}, {}, &outputs) );
+    // writer.add_summary(summary, i)
+    auto ruleDistTensor = outputs[0];
+    auto targetDistTensor = outputs[1];
+
+    auto ruleDist_Mapped = ruleDistTensor.tensor<float, 2>();
+    auto targetDist_Mapped = targetDistTensor.tensor<float, 2>();
+
+    for (int i = 0; i < batch_size; ++i) {
+      ResultDist res = createResultDist();
+      for (int j = 0; j < num_Rules; ++j) {
+        res.ruleDist[j] = ruleDist_Mapped(i, j);
+      }
+
+      for (int j = 0; j < progs[s+i]->size(); ++j) {
+        res.targetDist[j] = targetDist_Mapped(i, j);
+      }
+
+      Normalize(res.ruleDist);
+      Normalize(res.targetDist);
+
+      results.push_back(res);
+    }
+  }
+
+  return results;
+}
+
+void
+PrintDist(const CatDist & dist, std::ostream & out) {
+  if (dist.empty()) return;
+
+  float lastMaxElem = std::numeric_limits<float>::max();
+  const int topElems = 3;
+  std::set<int> emittedElems;
+  for (int i = 0; i < std::min<int>(dist.size(), topElems); ++i) {
+    int topId = -1;
+    float maxElem = dist[0];
+    for (int j = 0; j < dist.size(); ++j) {
+      if (dist[j] >= lastMaxElem) continue;
+      if (topId >= 0 && (dist[j] < maxElem)) continue;
+      if (emittedElems.count(j)) continue; // printed that one before
+
+      topId = j;
+      maxElem = dist[j];
+    }
+
+    assert(topId >= 0);
+    emittedElems.insert(topId);
+    lastMaxElem = maxElem;
+
+    out << topId << " : " << maxElem;
+    if (i + 1 < topElems) out << "|";
+  }
+}
+
+void
+ResultDist::print(std::ostream & out) const {
+  out << "Res {rule="; PrintDist(ruleDist, out); out << ", target="; PrintDist(targetDist, out); out << "}\n";
+}
+
+void
+ResultDist::dump() const { print(std::cerr); }
 
 } // namespace apo

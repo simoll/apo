@@ -223,7 +223,7 @@ ModelTest() {
   const int numBatchSteps = 4;
   const int numEpochs = 10000;
 
-#if 1
+#if 0
   std::cout << "Training:\n";
   for (int epoch = 0; epoch < numEpochs; ++epoch) {
     double fracCorrect = model.train(progVec, results, numBatchSteps);
@@ -248,7 +248,8 @@ ModelTest() {
     progVec.push_back(P);
   }
 
-  ResultVec predicted = model.infer(progVec);
+#if 0
+  ResultVec predicted = model.infer_likely(progVec);
 
   int hits = 0;
   for (int i = 0; i < numSamples; ++i) {
@@ -258,6 +259,14 @@ ModelTest() {
   double pCorrect = hits / (double) numSamples;
 
   std::cout << "Validated: " << pCorrect << "\n";
+#else
+  ResultDistVec predicted = model.infer_dist(progVec);
+
+  for (int i = 0; i < numSamples; ++i) {
+    predicted[i].dump();
+  }
+  abort();
+#endif
 }
 
 int main(int argc, char ** argv) {
