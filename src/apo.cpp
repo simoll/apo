@@ -1,7 +1,11 @@
-#include "apo.h"
-#include "ml.h"
-#include "parser.h"
-#include "program.h"
+#include "apo/apo.h"
+#include "apo/ml.h"
+#include "apo/parser.h"
+#include "apo/program.h"
+#include "apo/mutator.h"
+#include "apo/extmath.h"
+
+#include <vector>
 
 using namespace apo;
 
@@ -269,8 +273,222 @@ ModelTest() {
 #endif
 }
 
+// optimization recipe
+
+int
+GetProgramScore(const Program & P) {
+  return P.size();
+}
+
+static
+ProgramVec
+Clone(const ProgramVec & progVec) {
+  ProgramVec cloned;
+  cloned.reserve(progVec.size());
+  for (const auto * P : progVec) {
+    cloned.push_back(new Program(*P));
+  }
+  return cloned;
+}
+
+// optimize the given program @P using @model (or a uniform random rule application using @maxDist)
+// maximal derivation length is @maxDist
+// will return the sequence to the best-seen program (even if the model decides to go on)
+struct MonteCarloOptimizer {
+  RuleVec & rules;
+  Model & model;
+
+  int maxGenLen;
+  Mutator mut;
+
+  MonteCarloOptimizer(RuleVec & _rules, Model & _model)
+  : rules(_rules)
+  , model(_model)
+  , maxGenLen(model.max_Time - model.num_Params - 1)
+  , mut(rules, 0.1) // greedy shrinking mutator
+  {}
+
+
+  bool
+  tryApplyModel(Program & P, Rewrite & rewrite, ResultDist & res, bool signalsStop) {
+  // sample a random rewrite at a random location (product of rule and target distributions)
+    std::uniform_real_distribution<float> pRand(0, 1.0);
+
+    int ruleId = SampleCategoryDistribution(res.ruleDist, pRand(randGen));
+    int targetId = SampleCategoryDistribution(res.ruleDist, pRand(randGen));
+
+    if (ruleId == 0) {
+      // magic STOP rule
+      signalsStop = true;
+      return true;
+    }
+
+  // translate to internal rule representation
+    int ruleListIdx = (ruleId - 1) / 2;
+    bool matchLeft = (ruleId - 1) % 2 == 0;
+
+  // Otw, rely on the mutator to do the job
+    return mut.tryApply(P, targetId, ruleListIdx, matchLeft);
+  }
+
+   struct Derivation {
+     int bestScore;
+     int shortestDerivation;
+
+     Derivation(const Program & origP)
+     : bestScore(GetProgramScore(origP))
+     , shortestDerivation(0)
+     {}
+
+     void dump() const {
+       std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
+     }
+   };
+
+  // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
+  std::vector<Derivation>
+  searchDerivations(const ProgramVec & progVec, double pRandom, int maxDist) {
+    const int numSamples = progVec.size();
+    std::uniform_real_distribution<float> ruleRand(0, 1);
+
+    std::vector<Derivation> states; // thread state
+    for (int i = 0; i < progVec.size(); ++i) {
+      states.emplace_back(*progVec[i]);
+    }
+
+#define IF_DEBUG_DER if (false)
+
+    // number of derivation walks
+    const int numRounds = 1000;
+    for (int r = 0; r < numRounds; ++r) {
+
+      // re-start from initial program
+      ProgramVec roundProgs = Clone(progVec);
+
+      // generate a new derivation sequence
+      for (int derStep = 0; derStep < maxDist; ++derStep) {
+
+        // query model rewrite probabilities
+        ResultDistVec modelRewriteDist = model.infer_dist(roundProgs);
+
+        int frozen = 0;
+
+        #pragma omp parallel reduction(frozen:+)
+        for (int t = 0; t < numSamples; ++t) {
+          // freeze if derivation exceeds model
+          if (roundProgs[t]->size() >= model.max_Time) {
+            ++frozen;
+            continue;
+          }
+
+          IF_DEBUG_DER if (derStep == 0) {
+            std::cerr << "Initial prog " << t << ":\n";
+            roundProgs[t]->dump();
+          }
+
+        // pick & apply a rewrite
+          Rewrite rewrite;
+          bool success = false;
+          bool signalsStop = false;
+
+        // loop until rewrite succeeds (or stop)
+          while (!signalsStop && !success) {
+            bool uniRule;
+            #pragma omp ordered
+            uniRule = ruleRand(randGen) <= pRandom;
+
+            bool signalsStop = false;
+
+            if (uniRule) {
+              // uniform random rewrite
+              rewrite = mut.mutate(*roundProgs[t], 1);
+              IF_DEBUG_DER {
+                std::cerr << "after random rewrite!\n";
+                roundProgs[t]->dump();
+              }
+              success = true; // mutation always succeeeds
+              signalsStop = false;
+            } else {
+              // learned rewrite distribution
+              success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
+            }
+          }
+
+          if (signalsStop) break;
+
+        // derived program to large for model -> freeze
+          if (roundProgs[t]->size() >= model.max_Time) {
+            ++frozen;
+            continue;
+          }
+
+        // Otw, update incumbent
+          // mutated program
+          int currScore = GetProgramScore(*roundProgs[t]);
+          if (states[t].bestScore < currScore) continue;
+
+          if ((states[t].bestScore > currScore) || // found a better candidate program
+              (states[t].shortestDerivation > derStep) // reached known best program with shorter derivation
+          ) {
+            states[t].bestScore = currScore;
+            states[t].shortestDerivation = derStep + 1;
+          }
+        }
+
+        if (frozen == numSamples) {
+          break; // all frozen -> early exit
+        }
+      }
+    }
+
+#undef IF_DEBUG_DER
+    return states;
+  }
+};
+
+
+
+
+void
+MonteCarloTest() {
+  Model model("build/apo_graph.pb", "model.conf");
+  auto rules = BuildRules();
+  MonteCarloOptimizer montOpt(rules, model);
+
+// generate sample programs
+  ProgramVec progVec;
+
+  int genLen = 2; //model.max_Time - model.num_Params - 1;
+  assert(genLen > 0 && "can not generate program within constraints");
+  RPG rpg(rules, model.num_Params);
+
+// synthesize inputs
+  const int numSamples = model.batch_size;
+  std::cout << "Generating " << numSamples << " programs..\n";
+
+  Mutator expMut(rules, 1.0); // expanding rewriter
+
+  for (int i = 0; i < numSamples; ++i) {
+    auto * P = rpg.generate(genLen);
+    assert(P->size() < model.max_Time);
+    progVec.push_back(P);
+
+    expMut.mutate(*P, 1); // mutate at least once
+  }
+
+  auto derVec = montOpt.searchDerivations(progVec, 1.0, 1);
+  for (int i = 0; i < progVec.size(); ++i) {
+    const auto & der = derVec[i];
+    const auto & P = *progVec[i];
+    P.dump();
+    der.dump(); std::cerr << "\n";
+    std::cerr << "\n";
+  }
+  abort();
+}
+
 int main(int argc, char ** argv) {
-  ModelTest();
+  MonteCarloTest();
   return 0;
 
   RunTests();

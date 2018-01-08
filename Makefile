@@ -5,7 +5,8 @@ SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
 
 
-INC= -Isrc/ \
+INC=-Isrc/ \
+    -Iinclude \
     -I${TFLOW}/include \
     -I${TFLOW}/include/external/nsync/public \
     -I$(TFLOW)/tensorflow/contrib/makefile/downloads/protobuf/src
@@ -23,7 +24,9 @@ CFLAGS=${INC}
 
 PYTHON=python3
 
-CXX=clang++ -std=c++14 -O0 -g -Isrc/ #-fsanitize=address
+OPTFLAGS=-O3 -DNDEBUG -g
+
+CXX=clang++ -std=c++14 -Isrc/ #-fsanitize=address
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 

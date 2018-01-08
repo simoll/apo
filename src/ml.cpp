@@ -1,15 +1,15 @@
-#include "ml.h"
+#include "apo/ml.h"
 
-#include "parser.h"
-#include "extmath.h"
-#include "config.h"
+#include "apo/parser.h"
+#include "apo/extmath.h"
+#include "apo/config.h"
 
 
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_init.h"
-#include <limits>
 
+#include <limits>
 #include <cassert>
 #include <string>
 
@@ -318,34 +318,6 @@ Model::infer_dist(const ProgramVec& progs) {
   }
 
   return results;
-}
-
-void
-PrintDist(const CatDist & dist, std::ostream & out) {
-  if (dist.empty()) return;
-
-  float lastMaxElem = std::numeric_limits<float>::max();
-  const int topElems = 3;
-  std::set<int> emittedElems;
-  for (int i = 0; i < std::min<int>(dist.size(), topElems); ++i) {
-    int topId = -1;
-    float maxElem = dist[0];
-    for (int j = 0; j < dist.size(); ++j) {
-      if (dist[j] >= lastMaxElem) continue;
-      if (topId >= 0 && (dist[j] < maxElem)) continue;
-      if (emittedElems.count(j)) continue; // printed that one before
-
-      topId = j;
-      maxElem = dist[j];
-    }
-
-    assert(topId >= 0);
-    emittedElems.insert(topId);
-    lastMaxElem = maxElem;
-
-    out << topId << " : " << maxElem;
-    if (i + 1 < topElems) out << "|";
-  }
 }
 
 void
