@@ -406,7 +406,7 @@ struct MonteCarloOptimizer {
 
         int frozen = 0;
 
-        #pragma omp parallel for
+        #pragma omp parallel for reduction(+:frozen)
         for (int t = 0; t < numSamples; ++t) {
           // freeze if derivation exceeds model
           if (roundProgs[t]->size() > model.max_Time) {
