@@ -148,8 +148,8 @@ struct Batch {
   , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
   , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.max_Time}))
   , length_feed(DT_INT32,  TensorShape({model.batch_size}))
-  , rule_feed(DT_INT32,  TensorShape({model.batch_size}))
-  , target_feed(DT_INT32,  TensorShape({model.batch_size}))
+  , rule_feed(DT_FLOAT,  TensorShape({model.batch_size, model.num_Rules}))
+  , target_feed(DT_FLOAT,  TensorShape({model.batch_size, model.max_Time}))
   {}
 
   void encode_Program(int batch_id, const Program & prog) {
@@ -174,11 +174,15 @@ struct Batch {
     length_Mapped(batch_id) = prog.size();
   }
 
-  void encode_Result(int batch_id, const Result & result) {
-    auto rule_Mapped = rule_feed.tensor<int, 1>();
-    auto target_Mapped = target_feed.tensor<int, 1>();
-    rule_Mapped(batch_id) = result.rule;
-    target_Mapped(batch_id) = result.target;
+  void encode_Result(int batch_id, const ResultDist & result) {
+    auto rule_Mapped = rule_feed.tensor<float, 2>();
+    auto target_Mapped = target_feed.tensor<float, 2>();
+    for (int t = 0; t < result.targetDist.size(); ++t) {
+      target_Mapped(batch_id, t) = result.targetDist[t];
+    }
+    for (int r = 0; r < result.ruleDist.size(); ++r) {
+      rule_Mapped(batch_id, r) = result.ruleDist[r];
+    }
   }
 
   FeedDict
@@ -195,6 +199,54 @@ struct Batch {
   }
 };
 
+// train model on a batch of programs (returns loss)
+double
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps) {
+  int num_Samples = progs.size();
+  assert(results.size() == num_Samples);
+
+  double avgCorrect = 0.0;
+  Batch batch(*this);
+
+  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    for (int i = 0; i < batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      batch.encode_Program(i, P);
+      batch.encode_Result(i, results[s + i]);
+    }
+
+    // The session will initialize the outputs
+    std::vector<tensorflow::Tensor> outputs;
+
+    // std::cout << " Training on batch " << s << "\n";
+    for (int i = 0; i < num_steps; ++i) {
+      outputs.clear();
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
+      // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
+      // writer.add_summary(summary, i)
+    }
+
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pCorrect_op"}, {}, &outputs) );
+    // writer.add_summary(summary, i)
+    auto pCorrect = outputs[0].scalar<float>()(0);
+    // std::cout << loss_out << "\n";
+    avgCorrect += (double) pCorrect;
+  }
+
+  // Grab the first output (we only evaluated one graph node: "c")
+  // and convert the node to a scalar representation.
+
+  // (There are similar methods for vectors and matrices here:
+  // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/public/tensor.h)
+
+  // Print the results
+  // std::cout << output_c() << "\n"; // 30
+
+  int numBatches = num_Samples / batch_size;
+  return avgCorrect / (double) numBatches;
+}
+
+#if 0
 double
 Model::train(const ProgramVec& progs, const std::vector<Result>& results, int num_steps) {
   int num_Samples = progs.size();
@@ -240,6 +292,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
   int numBatches = num_Samples / batch_size;
   return avgCorrect / (double) numBatches;
 }
+#endif
 
 ResultVec
 Model::infer_likely(const ProgramVec& progs) {
@@ -336,6 +389,17 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   return results;
 }
 
+ResultDist
+Model::createStopResult() const {
+  auto dist = createEmptyResult();
+  dist.ruleDist[0] = 1.0;
+  dist.targetDist[0] = 1.0; // FIXME target-loss is meaningless for STOP rule
+  return dist;
+}
+
+ResultDist
+Model::createEmptyResult() const { return ResultDist(num_Rules, max_Time); }
+
 void
 ResultDist::print(std::ostream & out) const {
   out << "Res {rule="; PrintDist(ruleDist, out); out << ", target="; PrintDist(targetDist, out); out << "}\n";
@@ -343,5 +407,12 @@ ResultDist::print(std::ostream & out) const {
 
 void
 ResultDist::dump() const { print(std::cerr); }
+
+void
+ResultDist::normalize() {
+  Normalize(ruleDist);
+  Normalize(targetDist);
+}
+
 
 } // namespace apo

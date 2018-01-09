@@ -295,6 +295,7 @@ Clone(const ProgramVec & progVec) {
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
 struct MonteCarloOptimizer {
+#define IF_DEBUG_MC IF_DEBUG
   RuleVec & rules;
   Model & model;
 
@@ -315,7 +316,7 @@ struct MonteCarloOptimizer {
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
     int ruleId = SampleCategoryDistribution(res.ruleDist, pRand(randGen));
-    int targetId = SampleCategoryDistribution(res.ruleDist, pRand(randGen));
+    int targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen));
 
     if (ruleId == 0) {
       // magic STOP rule
@@ -343,7 +344,20 @@ struct MonteCarloOptimizer {
      void dump() const {
        std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
      }
+
+     bool betterThan(const Derivation & o) const {
+       if (bestScore < o.bestScore) {
+         return true;
+       } else if (bestScore == o.bestScore && (shortestDerivation < o.shortestDerivation)) {
+         return true;
+       }
+       return false;
+     }
+
+     bool operator== (const Derivation& o) const { return bestScore == o.bestScore && shortestDerivation == o.shortestDerivation; }
+     bool operator!= (const Derivation& o) const { return !(*this == o); }
    };
+   using DerivationVec = std::vector<Derivation>;
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   std::vector<Derivation>
@@ -445,6 +459,132 @@ struct MonteCarloOptimizer {
 #undef IF_DEBUG_DER
     return states;
   }
+
+  using CompactedRewrites = const std::vector<std::pair<int, Rewrite>>;
+
+  // convert detected derivations to refernce distributions
+  void
+  encodeBestDerivation(ResultDistVec & refResultVec, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const {
+  // find best-possible rewrite
+    Derivation bestDer = derivations[startIdx];
+    for (int i = startIdx + 1;
+         i < rewrites.size() && (rewrites[i].first == progIdx);
+         ++i)
+    {
+      const auto & der = derivations[i];
+      if (der.betterThan(bestDer)) { bestDer = der; }
+    }
+
+  // activate all positions with best rewrites
+    for (int i = startIdx + 1;
+         i < rewrites.size() && (rewrites[i].first == progIdx);
+         ++i)
+    {
+      if (derivations[i] != bestDer) { continue; }
+      const auto & rew = rewrites[i].second;
+      int ruleEnumId = rew.getEnumId();
+      refResultVec[progIdx].targetDist[rew.pc] += 1.0;
+      refResultVec[progIdx].ruleDist[ruleEnumId] += 1.0;
+    }
+  }
+
+  void
+  populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const ProgramVec & progVec) const {
+    int rewriteIdx = 0;
+    int nextSampleWithRewrite = rewrites[rewriteIdx].first;
+    for (int s = 0; s < progVec.size(); ++s) {
+      // program without applicable rewrites
+      if (s < nextSampleWithRewrite) {
+        refResults[s] = model.createStopResult();
+        continue;
+      }
+
+      // convert to a reference distribution
+      encodeBestDerivation(refResults, derivations, rewrites, rewriteIdx, s);
+
+      // advance to next progam with rewrites
+      ++rewriteIdx;
+      if (rewriteIdx >= rewrites.size()) {
+        nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
+      } else {
+        nextSampleWithRewrite = rewrites[rewriteIdx].first; // program with applicable rewrite in sight
+      }
+    }
+
+    // normalize distributions
+    for (int s = 0; s < progVec.size(); ++s) {
+      auto & result = refResults[s];
+      result.normalize();
+      IF_DEBUG_MC {
+        std::cerr << "\n Sample " << s << ":\n";
+        progVec[s]->dump();
+        result.dump();
+      }
+    }
+  }
+
+  ProgramVec
+  sampleActions(const ProgramVec & roundProgs, ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, bool & allStop) {
+    allStop = true;
+    std::uniform_real_distribution<float> pRand(0, 1.0);
+
+    ProgramVec actionProgs;
+
+    int rewriteIdx = 0;
+    int nextSampleWithRewrite = rewrites[rewriteIdx].first;
+    for (int s = 0; s < refResults.size(); ++s) {
+      if (s < nextSampleWithRewrite) {
+        // no rewrite available -> STOP
+        actionProgs.push_back(roundProgs[s]);
+        continue;
+      }
+
+      // Otw, sample an action
+      bool hit = false;
+      do {
+        int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen));
+        int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen));
+
+        // try to apply the action
+        if (ruleEnumId > 0) {
+          // scan through legal actions until hit
+          for (int i = rewriteIdx;
+              i < rewrites.size() && rewrites[i].first == s;
+              ++i)
+          {
+            if ((rewrites[i].second.pc == targetId) &&
+                (rewrites[i].second.getEnumId() == ruleEnumId)
+            ) {
+              actionProgs.push_back(nextProgs[i]);
+              hit = true;
+              break;
+            }
+          }
+
+          // proper action
+          allStop = false;
+        } else {
+          // STOP action
+          actionProgs.push_back(roundProgs[s]);
+          hit = true;
+          break;
+        }
+      } while (!hit);
+
+      // advance to next progam with rewrites
+      ++rewriteIdx;
+      if (rewriteIdx >= rewrites.size()) {
+        nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
+      } else {
+        nextSampleWithRewrite = rewrites[rewriteIdx].first; // program with applicable rewrite in sight
+      }
+    }
+
+    assert(actionProgs.size() == nextProgs.size());
+    return actionProgs;
+  }
+
+#undef IF_DEBUG_MV
 };
 
 
@@ -480,13 +620,14 @@ MonteCarloTest() {
   }
 
 // explore all actions from current program
+  // TODO factor out into MCOptimizer
   const int mcDerivationSteps = 3;
   const int maxExplorationDepth = 3;
 
-  for (int depth = 0; depth < mvDerivationSteps; ++depth) {
+  for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
-  // compute all possible deriable programs
-    std::vector<std::pair<int, Rewrite>> nextProgs;
+  // compute all one-step derivations
+    std::vector<std::pair<int, Rewrite>> rewrites;
     ProgramVec nextProgs;
 
     #pragma omp parallel
@@ -496,10 +637,8 @@ MonteCarloTest() {
           for (int pc = 0; pc < progVec[t]->size(); ++pc) {
             bool leftMatch = (bool) j;
 
-            int ruleEnumId = 1 + 2 * r + j;
-
             auto * clonedProg = new Program(*progVec[t]);
-            if (!mut.tryApply(*clonedProg, pc, r, leftMatch)) {
+            if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
               // TODO clone after match (or render into copy)
               delete clonedProg;
               continue;
@@ -509,7 +648,7 @@ MonteCarloTest() {
             #pragma omp ordered
             {
               nextProgs.push_back(clonedProg);
-              nextProgs.emplace_back(t, Rewrite(pc, ruleEnumId));
+              rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
             }
           }
         }
@@ -517,23 +656,24 @@ MonteCarloTest() {
     }
 
   // best-effort search for optimal program
-    auto derVec = montOpt.searchDerivations(progVec, 1.0, maxExplorationDepth);
+    const double pRandom = 1.0; // probability of ignoring the model for inference
+    auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth);
 
-  // TODO decode reference ResultDistVec from detected derivations
+  // decode reference ResultDistVec from detected derivations
+    ResultDistVec refResults;
+    montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
 
-  // TODO train model
+  // train model
+    const int batchSteps = 10;
+    double loss = model.train_dist(progVec, refResults, batchSteps);
+    std::cerr << "Loss at " << depth << "\n";
 
-  // TODO advance to next program (set current prog to chosen nextProg -> continue)
+  // pick an action per program and advance
+    bool allStop;
+    progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
+
+    if (allStop) break; // early exit if no progress was made
   }
-
-  for (int i = 0; i < progVec.size(); ++i) {
-    const auto & der = derVec[i];
-    const auto & P = *progVec[i];
-    P.dump();
-    der.dump(); std::cerr << "\n";
-    std::cerr << "\n";
-  }
-  abort();
 }
 
 int main(int argc, char ** argv) {

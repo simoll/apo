@@ -276,14 +276,17 @@ with tf.Session() as sess:
 
     ### reference input & training ###
     # reference input #
-    rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
-    target_in = tf.placeholder(tf.int32, [batch_size], name="target_in")
+    rule_in = tf.placeholder(data_type(), [batch_size, num_Rules], name="rule_in")
+    target_in = tf.placeholder(data_type(), [batch_size, max_Time], name="target_in")
 
     # training #
-    ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
-    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=rule_logits, dim=-1)
-    ref_target = tf.one_hot(target_in, axis=-1, depth=max_Time)
-    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_target, logits=target_logits, dim=-1)
+    # ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
+    # rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=rule_logits, dim=-1)
+    # ref_target = tf.one_hot(target_in, axis=-1, depth=max_Time)
+    # target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_target, logits=target_logits, dim=-1)
+
+    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=rule_in, logits=rule_logits, dim=-1)
+    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1)
 
     all_losses = [rule_loss, target_loss]
     loss = tf.reduce_mean(all_losses, name="loss")
@@ -292,19 +295,19 @@ with tf.Session() as sess:
     # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-    train_op = optimizer.minimize(
+    train_dist_op = optimizer.minimize(
         loss=loss,
         global_step=tf.train.get_global_step(),
-        name="train_op")
+        name="train_dist_op")
 
     ### prob of getting the cout right (pCorrect_op)  ###
 
     # def equals_fn(x,y):
     #   return 1 if x == y else 0
 
-    matched_rule = tf.cast(tf.equal(pred_rule, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
-    matched_target = tf.cast(tf.equal(pred_target, target_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
-    pCorrect = tf.reduce_mean([matched_rule, matched_target], name="pCorrect_op")
+    # matched_rule = tf.cast(tf.equal(pred_rule, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
+    # matched_target = tf.cast(tf.equal(pred_target, target_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
+    # pCorrect = tf.reduce_mean([matched_rule, matched_target], name="pCorrect_op")
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
