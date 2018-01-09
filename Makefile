@@ -3,6 +3,7 @@ TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
 SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
+HEADERS=$(wildcard apo/*.h) $(wildcard apo/*/*.h)
 
 
 INC=-Isrc/ \
@@ -28,18 +29,18 @@ PYTHON=python3
 # OPTFLAGS=-O3 -DNDEBUG -g
 OPTFLAGS=-O0 -g -fsanitize=address
 
-CXX=clang++ -std=c++14 ${OPTFLAGS} -Isrc/ 
+CXX=clang++ -std=c++14 ${OPTFLAGS}
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 
 apo: $(OBJECTS) build/apo_graph.pb Makefile
 	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
 
-build/%.o: src/%.cpp Makefile
+build/%.o: src/%.cpp Makefile $(HEADERS)
 	mkdir -p $(dir $@)
 	$(CXX) ${CFLAGS} $< -c -o $@ 
 
-build/apo_graph.pb: src/model.py model.conf
+build/apo_graph.pb: src/model.py model.conf $(HEADERS)
 	$(PYTHON) src/model.py
 
 .PHONY: clean

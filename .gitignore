@@ -1,4 +1,4 @@
-apo
+./apo
 **/*.swp
 **/*.swo
 build/*
