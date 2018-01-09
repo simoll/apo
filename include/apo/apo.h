@@ -378,7 +378,7 @@ struct RPG {
         std::uniform_int_distribution<int> opRand(0, unused.size() - 1 + allowPeek);
 
         // pick element from unused vector
-        int idx = opRand(randGen);
+        int idx = opRand(randGen());
         // std::cerr << "UNUED ID " << idx << "\n";
         assert(idx >= 0);
         if (idx < unused.size()) {
@@ -443,10 +443,10 @@ struct RPG {
       bool forceOperand = length - i < S.num_Unused();
 
       if (!forceOperand && // hard criterion to avoid dead code
-          (S.empty() || (constantRand(randGen) <= pConstant))) { // soft preference criterion
+          (S.empty() || (constantRand(randGen()) <= pConstant))) { // soft preference criterion
         // random constant
         std::uniform_int_distribution<int> constIdxRand(0, constVec.size() - 1);
-        int idx = constIdxRand(randGen);
+        int idx = constIdxRand(randGen());
         P.push(build_const(constVec[idx]));
 
       } else {
@@ -455,7 +455,7 @@ struct RPG {
         int endBin = (int) OpCode::End_Binary;
 
         std::uniform_int_distribution<int> ocRand(beginBin, endBin);
-        OpCode oc = (OpCode) ocRand(randGen);
+        OpCode oc = (OpCode) ocRand(randGen());
         int distToLimit = length - 1 - i;
         int firstOp = S.acquireOperand(distToLimit);
         int sndOp = S.acquireOperand(distToLimit);
@@ -490,7 +490,7 @@ struct RandExecutor {
     for (int s = 0; s < numSets; ++s) {
       DataVec params;
       for (int i = 0; i< numParams; ++i) {
-        params.push_back(argRand(randGen));
+        params.push_back(argRand(randGen()));
       }
       paramSets.push_back(params);
     }

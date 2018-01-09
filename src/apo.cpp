@@ -321,12 +321,12 @@ struct MonteCarloOptimizer {
   // sample a random rewrite at a random location (product of rule and target distributions)
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
-    int ruleEnumId = SampleCategoryDistribution(res.ruleDist, pRand(randGen));
+    int ruleEnumId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
 
     int targetId;
     do {
       // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
-      targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen));
+      targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
     } while (targetId + 1 >= P.size());
 
 
@@ -406,6 +406,7 @@ struct MonteCarloOptimizer {
 
         int frozen = 0;
 
+        #pragma omp parallel for
         for (int t = 0; t < numSamples; ++t) {
           // freeze if derivation exceeds model
           if (roundProgs[t]->size() > model.max_Time) {
@@ -426,7 +427,7 @@ struct MonteCarloOptimizer {
         // loop until rewrite succeeds (or stop)
           while (!signalsStop && !success) {
             bool uniRule;
-            uniRule = !useModel || (ruleRand(randGen) <= pRandom);
+            uniRule = !useModel || (ruleRand(randGen()) <= pRandom);
 
             bool signalsStop = false;
 
@@ -445,7 +446,7 @@ struct MonteCarloOptimizer {
             }
           }
 
-          if (signalsStop) break;
+          if (signalsStop) continue;
 
         // derived program to large for model -> freeze
           if (roundProgs[t]->size() >= model.max_Time) {
@@ -585,8 +586,8 @@ struct MonteCarloOptimizer {
       const int numRetries = 100;
       bool hit = false;
       for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
-        int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen));
-        int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen));
+        int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen()));
+        int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen()));
 
         IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
         // try to apply the action
@@ -690,11 +691,12 @@ MonteCarloTest() {
     ProgramVec progVec(numSamples, nullptr);
 
     std::cout << "Generating " << numSamples << " programs..\n";
+    #pragma omp parallel for
     for (int i = 0; i < numSamples; ++i) {
       auto * P = rpg.generate(genLen);
       assert(P->size() < model.max_Time);
 
-      int mutSteps = mutRand(randGen);
+      int mutSteps = mutRand(randGen());
       expMut.mutate(*P, mutSteps); // mutate at least once
 
       progVec[i] = std::shared_ptr<Program>(P);
@@ -722,6 +724,7 @@ MonteCarloTest() {
 
   // explore all actions from current program
 
+    std::cout << "Processing...\n";
     for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
     // compute all one-step derivations
@@ -731,7 +734,7 @@ MonteCarloTest() {
       rewrites.reserve(preAllocFactor * progVec.size());
       nextProgs.reserve(preAllocFactor * progVec.size());
 
-      #pragma omp parallel
+      // #pragma omp parallel for ordered
       for (int t = 0; t < progVec.size(); ++t) {
         for (int r = 0; r < rules.size(); ++r) {
           for (int j = 0; j < 2; ++j) {
@@ -746,7 +749,7 @@ MonteCarloTest() {
               }
 
               // compact list of programs resulting from a single action
-              #pragma omp ordered
+              // #pragma omp ordered
               {
                 nextProgs.emplace_back(clonedProg);
                 rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
@@ -796,6 +799,8 @@ MonteCarloTest() {
 }
 
 int main(int argc, char ** argv) {
+  InitRandom();
+
   MonteCarloTest();
   return 0;
 

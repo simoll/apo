@@ -3,6 +3,9 @@
 
 #include <random>
 
-extern std::mt19937 randGen;
+void InitRandom();
+
+// thread safe random number generator
+std::mt19937 & randGen();
 
 #endif // APO_SHARED_H
