@@ -655,7 +655,7 @@ MonteCarloTest() {
 // PARAMETERS (TODO factor out)
   // TODO factor out into MCOptimizer
 // random program options
-  const int numSamples = model.batch_size;
+  const int numSamples = model.batch_size * 128;
   int genLen = 3; //model.max_Time - model.num_Params - 1; // stub len
   const int maxMutations = 3; // max number of program mutations
   const double pExpand = 0.7; // mutator expansion ratio
