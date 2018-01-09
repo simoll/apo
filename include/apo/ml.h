@@ -34,7 +34,6 @@ struct Result {
   int target; // target index (match root)
 };
 
-using ProgramVec = std::vector<Program*>;
 using ResultVec = std::vector<Result>;
 using ResultDistVec = std::vector<ResultDist>;
 

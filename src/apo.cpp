@@ -205,12 +205,12 @@ ModelTest() {
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
     assert(P->size() < model.max_Time);
-    progVec.push_back(P);
+    progVec.emplace_back(P);
   }
 
 // reference results
   ResultVec results;
-  for (const auto * P : progVec) {
+  for (const auto & P : progVec) {
     int likelyRule = MostLikely(*P, rules);
     results.push_back(Result{likelyRule, 0});
   }
@@ -249,7 +249,7 @@ ModelTest() {
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
     assert(P->size() < model.max_Time);
-    progVec.push_back(P);
+    progVec.emplace_back(P);
   }
 
 #if 0
@@ -285,8 +285,8 @@ ProgramVec
 Clone(const ProgramVec & progVec) {
   ProgramVec cloned;
   cloned.reserve(progVec.size());
-  for (const auto * P : progVec) {
-    cloned.push_back(new Program(*P));
+  for (const auto & P : progVec) {
+    cloned.emplace_back(new Program(*P));
   }
   return cloned;
 }
@@ -295,7 +295,9 @@ Clone(const ProgramVec & progVec) {
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
 struct MonteCarloOptimizer {
-#define IF_DEBUG_MC IF_DEBUG
+#define IF_DEBUG_MC if (false)
+
+
   // IF_DEBUG
   RuleVec & rules;
   Model & model;
@@ -303,11 +305,14 @@ struct MonteCarloOptimizer {
   int maxGenLen;
   Mutator mut;
 
-  MonteCarloOptimizer(RuleVec & _rules, Model & _model)
+  int numOptRounds;
+
+  MonteCarloOptimizer(RuleVec & _rules, Model & _model, int _numOptRounds)
   : rules(_rules)
   , model(_model)
   , maxGenLen(model.max_Time - model.num_Params - 1)
   , mut(rules, 0.1) // greedy shrinking mutator
+  , numOptRounds(_numOptRounds)
   {}
 
 
@@ -388,8 +393,7 @@ struct MonteCarloOptimizer {
     if (useModel) initialProgDist = model.infer_dist(progVec, true);
 
     // number of derivation walks
-    const int numRounds = 100;
-    for (int r = 0; r < numRounds; ++r) {
+    for (int r = 0; r < numOptRounds; ++r) {
 
       // re-start from initial program
       ProgramVec roundProgs = Clone(progVec);
@@ -578,7 +582,7 @@ struct MonteCarloOptimizer {
       }
 
       // Otw, sample an action
-      const int numRetries = 10;
+      const int numRetries = 100;
       bool hit = false;
       for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
         int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen));
@@ -647,133 +651,148 @@ void
 MonteCarloTest() {
   Model model("build/apo_graph.pb", "model.conf");
   auto rules = BuildRules();
-  MonteCarloOptimizer montOpt(rules, model);
 
 // PARAMETERS (TODO factor out)
   // TODO factor out into MCOptimizer
-// mc search options
-  const int mcDerivationSteps = 3; // number of derivations
-  const int maxExplorationDepth = 3; // best-effort search depth
-  const double pRandom = 1.0; // probability of ignoring the model for inference
-
 // random program options
   const int numSamples = model.batch_size;
-  int genLen = 2; //model.max_Time - model.num_Params - 1; // stub len
+  int genLen = 3; //model.max_Time - model.num_Params - 1; // stub len
   const int maxMutations = 3; // max number of program mutations
   const double pExpand = 0.7; // mutator expansion ratio
+
+// mc search options
+  const int mcDerivationSteps = 3; // number of derivations
+  const int maxExplorationDepth = maxMutations + 1; // best-effort search depth
+  const double pRandom = 1.0; // probability of ignoring the model for inference
+
+  const int numOptRounds = 100;
 
 // training
   const int batchTrainSteps = 10;
 
+// number of simulation batches
+  const int numGames = 100;
+
+  MonteCarloOptimizer montOpt(rules, model, numOptRounds);
+
 // generate sample programs
-  ProgramVec progVec(numSamples, nullptr);
 
   assert(genLen > 0 && "can not generate program within constraints");
   RPG rpg(rules, model.num_Params);
 
 // generate randomly mutated programs
-  std::cout << "Generating " << numSamples << " programs..\n";
 
   Mutator expMut(rules, pExpand); // expanding rewriter
   std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
 
-  for (int i = 0; i < numSamples; ++i) {
-    auto * P = rpg.generate(genLen);
-    assert(P->size() < model.max_Time);
+  for (int g = 0; g < numGames; ++g) {
+    std::cout << "-- Simulation round " << g << " --\n";
+    ProgramVec progVec(numSamples, nullptr);
 
-    int mutSteps = mutRand(randGen);
-    expMut.mutate(*P, mutSteps); // mutate at least once
+    std::cout << "Generating " << numSamples << " programs..\n";
+    for (int i = 0; i < numSamples; ++i) {
+      auto * P = rpg.generate(genLen);
+      assert(P->size() < model.max_Time);
 
-    progVec[i] = P;
+      int mutSteps = mutRand(randGen);
+      expMut.mutate(*P, mutSteps); // mutate at least once
 
-    IF_DEBUG {
-      std::cerr << "P " << i << ":\n";
-      P->dump();
-    }
-  }
+      progVec[i] = std::shared_ptr<Program>(P);
 
 #if 0
-  // sanity check
-  auto derVec = montOpt.searchDerivations(progVec, pRandom, maxExplorationDepth);
-  IF_DEBUG {
-    std::cerr << "Best derivations:\n";
-    for (int i = 1; i < derVec.size(); ++i) {
-      derVec[i].dump();
-      progVec[i]->dump();
-      std::cerr << "\n";
-    }
-  }
-#endif
-
-// explore all actions from current program
-
-  for (int depth = 0; depth < mcDerivationSteps; ++depth) {
-
-  // compute all one-step derivations
-    std::vector<std::pair<int, Rewrite>> rewrites;
-    ProgramVec nextProgs;
-
-    #pragma omp parallel
-    for (int t = 0; t < progVec.size(); ++t) {
-      for (int r = 0; r < rules.size(); ++r) {
-        for (int j = 0; j < 2; ++j) {
-          for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
-            bool leftMatch = (bool) j;
-
-            auto * clonedProg = new Program(*progVec[t]);
-            if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
-              // TODO clone after match (or render into copy)
-              delete clonedProg;
-              continue;
-            }
-
-            // compact list of programs resulting from a single action
-            #pragma omp ordered
-            {
-              nextProgs.push_back(clonedProg);
-              rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
-            }
-          }
-        }
+      IF_DEBUG {
+        std::cerr << "P " << i << ":\n";
+        P->dump();
       }
+#endif
     }
 
-  // best-effort search for optimal program
-    auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth);
-
 #if 0
+    // sanity check
+    auto derVec = montOpt.searchDerivations(progVec, pRandom, maxExplorationDepth);
     IF_DEBUG {
       std::cerr << "Best derivations:\n";
-      for (int i = 0; i < derVec.size(); ++i) {
+      for (int i = 1; i < derVec.size(); ++i) {
         derVec[i].dump();
-        nextProgs[i]->dump();
+        progVec[i]->dump();
         std::cerr << "\n";
       }
     }
 #endif
 
-  // decode reference ResultDistVec from detected derivations
-    ResultDistVec refResults;
-    montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+  // explore all actions from current program
 
-  // train model
-    double loss = model.train_dist(progVec, refResults, batchTrainSteps);
-    std::cerr << "Loss at " << depth << " : " << loss << "\n";
+    for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
-  // pick an action per program and advance
-    bool allStop;
-    progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
-    // TODO delete unused program objects
+    // compute all one-step derivations
+      std::vector<std::pair<int, Rewrite>> rewrites;
+      ProgramVec nextProgs;
+      const int preAllocFactor = 16;
+      rewrites.reserve(preAllocFactor * progVec.size());
+      nextProgs.reserve(preAllocFactor * progVec.size());
 
-    if (allStop) break; // early exit if no progress was made
-  }
+      #pragma omp parallel
+      for (int t = 0; t < progVec.size(); ++t) {
+        for (int r = 0; r < rules.size(); ++r) {
+          for (int j = 0; j < 2; ++j) {
+            for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
+              bool leftMatch = (bool) j;
 
-#if 1
-  for (int i = 0; i < progVec.size(); ++i) {
-    std::cerr << "Optimized program " << i << ":\n";
-    progVec[i]->dump();
-  }
+              auto * clonedProg = new Program(*progVec[t]);
+              if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
+                // TODO clone after match (or render into copy)
+                delete clonedProg;
+                continue;
+              }
+
+              // compact list of programs resulting from a single action
+              #pragma omp ordered
+              {
+                nextProgs.emplace_back(clonedProg);
+                rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
+              }
+            }
+          }
+        }
+      }
+
+    // best-effort search for optimal program
+      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth);
+
+#if 0
+      IF_DEBUG {
+        std::cerr << "Best derivations:\n";
+        for (int i = 0; i < derVec.size(); ++i) {
+          derVec[i].dump();
+          nextProgs[i]->dump();
+          std::cerr << "\n";
+        }
+      }
 #endif
+
+    // decode reference ResultDistVec from detected derivations
+      ResultDistVec refResults;
+      montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+
+    // train model
+      double loss = model.train_dist(progVec, refResults, batchTrainSteps);
+      std::cerr << "Loss at " << depth << " : " << loss << "\n";
+
+    // pick an action per program and advance
+      bool allStop;
+      progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
+      // FIXME delete unused program objects
+
+      if (allStop) break; // early exit if no progress was made
+    }
+
+#if 0
+    for (int i = 0; i < progVec.size(); ++i) {
+      std::cerr << "Optimized program " << i << ":\n";
+      progVec[i]->dump();
+    }
+#endif
+  }
 }
 
 int main(int argc, char ** argv) {

@@ -8,6 +8,8 @@
 #include <functional>
 #include <iostream>
 
+#include <memory>
+
 namespace apo {
 
 enum class OpCode : int16_t {
@@ -449,6 +451,7 @@ Evaluate(const Program & prog, const std::vector<data_t> & params) {
   return state[prog.getReturnIndex()];
 }
 
+using ProgramVec = std::vector<std::shared_ptr<Program>>;
 
 } // namespace apo
 
