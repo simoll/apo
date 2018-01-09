@@ -3,7 +3,7 @@ TFLOW=/usr/lib/python3.6/site-packages/tensorflow
 
 SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
-HEADERS=$(wildcard apo/*.h) $(wildcard apo/*/*.h)
+HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
 
 INC=-Isrc/ \
