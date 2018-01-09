@@ -205,7 +205,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
 
-  double avgCorrect = 0.0;
+  double avgLoss = 0.0;
   Batch batch(*this);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
@@ -226,11 +226,11 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
       // writer.add_summary(summary, i)
     }
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pCorrect_op"}, {}, &outputs) );
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
     // writer.add_summary(summary, i)
-    auto pCorrect = outputs[0].scalar<float>()(0);
+    auto pLoss = outputs[0].scalar<float>()(0);
     // std::cout << loss_out << "\n";
-    avgCorrect += (double) pCorrect;
+    avgLoss += (double) pLoss;
   }
 
   // Grab the first output (we only evaluated one graph node: "c")
@@ -243,7 +243,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   // std::cout << output_c() << "\n"; // 30
 
   int numBatches = num_Samples / batch_size;
-  return avgCorrect / (double) numBatches;
+  return avgLoss / (double) numBatches;
 }
 
 #if 0
