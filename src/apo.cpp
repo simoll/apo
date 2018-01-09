@@ -30,7 +30,7 @@ TestGenerators() {
   const int numSets = 3;
   RandExecutor Exec(numParams, numSets);
   Mutator mut(rules, pExpand);
-  const int numRounds = 10000;
+  const int numRounds = 100;
   for (int i = 0; i < numRounds; ++i) {
     Program * P = rpg.generate(stubLen);
 
@@ -296,6 +296,7 @@ Clone(const ProgramVec & progVec) {
 // will return the sequence to the best-seen program (even if the model decides to go on)
 struct MonteCarloOptimizer {
 #define IF_DEBUG_MC IF_DEBUG
+  // IF_DEBUG
   RuleVec & rules;
   Model & model;
 
@@ -387,7 +388,7 @@ struct MonteCarloOptimizer {
     if (useModel) initialProgDist = model.infer_dist(progVec, true);
 
     // number of derivation walks
-    const int numRounds = 1000;
+    const int numRounds = 100;
     for (int r = 0; r < numRounds; ++r) {
 
       // re-start from initial program
@@ -471,6 +472,7 @@ struct MonteCarloOptimizer {
   void
   encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const {
   // find best-possible rewrite
+    assert(startIdx < derivations.size());
     Derivation bestDer = derivations[startIdx];
     for (int i = startIdx + 1;
          i < rewrites.size() && (rewrites[i].first == progIdx);
@@ -480,7 +482,7 @@ struct MonteCarloOptimizer {
       if (der.betterThan(bestDer)) { bestDer = der; }
     }
 
-    IF_DEBUG_MC { std::cerr << "-> best "; bestDer.dump(); std::cerr << "\n"; }
+    IF_DEBUG_MC { std::cerr << progIdx << " -> best "; bestDer.dump(); std::cerr << "\n"; }
 
   // activate all positions with best rewrites
     bool noBestDerivation = true;
@@ -522,8 +524,9 @@ struct MonteCarloOptimizer {
       // convert to a reference distribution
       encodeBestDerivation(refResults[s], derivations, rewrites, rewriteIdx, s);
 
-      // advance to next progam with rewrites
-      ++rewriteIdx;
+      // skip to next progam with rewrites
+      for (;rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {}
+
       if (rewriteIdx >= rewrites.size()) {
         nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
       } else {
@@ -549,6 +552,7 @@ struct MonteCarloOptimizer {
   // sample a target based on the reference distributions
   ProgramVec
   sampleActions(const ProgramVec & roundProgs, ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, bool & allStop) {
+#define IF_DEBUG_SAMPLE if (true)
     allStop = true;
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -566,12 +570,13 @@ struct MonteCarloOptimizer {
       }
 
       // Otw, sample an action
+      const int numRetries = 10;
       bool hit = false;
-      do {
+      for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
         int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen));
         int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen));
 
-        IF_DEBUG { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
+        IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
         // try to apply the action
         if (ruleEnumId > 0) {
           // scan through legal actions until hit
@@ -597,10 +602,21 @@ struct MonteCarloOptimizer {
           hit = true;
           break;
         }
-      } while (!hit);
+      }
+
+      // could not hit
+      if (!hit) {
+        std::cerr << "---- Could not sample action!!! -----\n";
+        roundProgs[s]->dump();
+        refResults[s].dump();
+        abort(); // this should never happen
+
+        actionProgs.push_back(roundProgs[s]); // soft failure
+      }
 
       // advance to next progam with rewrites
-      ++rewriteIdx;
+      for (;rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {}
+
       if (rewriteIdx >= rewrites.size()) {
         nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
       } else {
@@ -610,6 +626,7 @@ struct MonteCarloOptimizer {
 
     assert(actionProgs.size() == roundProgs.size());
     return actionProgs;
+#undef IF_DEBUG_SAMPLE
   }
 
 #undef IF_DEBUG_MV
@@ -626,31 +643,45 @@ MonteCarloTest() {
 
 // PARAMETERS (TODO factor out)
   // TODO factor out into MCOptimizer
+// mc search options
   const int mcDerivationSteps = 3; // number of derivations
   const int maxExplorationDepth = 3; // best-effort search depth
   const double pRandom = 1.0; // probability of ignoring the model for inference
 
-// generate sample programs
-  ProgramVec progVec;
+// random program options
+  const int numSamples = model.batch_size;
+  int genLen = 2; //model.max_Time - model.num_Params - 1; // stub len
+  const int maxMutations = 3; // max number of program mutations
+  const double pExpand = 0.7; // mutator expansion ratio
 
-  int genLen = 2; //model.max_Time - model.num_Params - 1;
+// training
+  const int batchTrainSteps = 10;
+
+// generate sample programs
+  ProgramVec progVec(numSamples, nullptr);
+
   assert(genLen > 0 && "can not generate program within constraints");
   RPG rpg(rules, model.num_Params);
 
 // generate randomly mutated programs
-  const int numSamples = model.batch_size;
   std::cout << "Generating " << numSamples << " programs..\n";
 
-  const int maxMutations = 3;
-  Mutator expMut(rules, .7); // expanding rewriter
+  Mutator expMut(rules, pExpand); // expanding rewriter
+  std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
+
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
     assert(P->size() < model.max_Time);
-    progVec.push_back(P);
 
-    std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
     int mutSteps = mutRand(randGen);
     expMut.mutate(*P, mutSteps); // mutate at least once
+
+    progVec[i] = P;
+
+    IF_DEBUG {
+      std::cerr << "P " << i << ":\n";
+      P->dump();
+    }
   }
 
 #if 0
@@ -658,13 +689,12 @@ MonteCarloTest() {
   auto derVec = montOpt.searchDerivations(progVec, pRandom, maxExplorationDepth);
   IF_DEBUG {
     std::cerr << "Best derivations:\n";
-    for (int i = 0; i < derVec.size(); ++i) {
+    for (int i = 1; i < derVec.size(); ++i) {
       derVec[i].dump();
       progVec[i]->dump();
       std::cerr << "\n";
     }
   }
-  abort();
 #endif
 
 // explore all actions from current program
@@ -703,7 +733,7 @@ MonteCarloTest() {
   // best-effort search for optimal program
     auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth);
 
-#if 1
+#if 0
     IF_DEBUG {
       std::cerr << "Best derivations:\n";
       for (int i = 0; i < derVec.size(); ++i) {
@@ -719,8 +749,7 @@ MonteCarloTest() {
     montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
 
   // train model
-    const int batchSteps = 10;
-    double loss = model.train_dist(progVec, refResults, batchSteps);
+    double loss = model.train_dist(progVec, refResults, batchTrainSteps);
     std::cerr << "Loss at " << depth << " : " << loss << "\n";
 
   // pick an action per program and advance
@@ -730,6 +759,13 @@ MonteCarloTest() {
 
     if (allStop) break; // early exit if no progress was made
   }
+
+#if 1
+  for (int i = 0; i < progVec.size(); ++i) {
+    std::cerr << "Optimized program " << i << ":\n";
+    progVec[i]->dump();
+  }
+#endif
 }
 
 int main(int argc, char ** argv) {
