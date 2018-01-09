@@ -415,4 +415,12 @@ ResultDist::normalize() {
 }
 
 
+bool
+ResultDist::isStop() const {
+  if (ruleDist[0] != 1.0) return false;
+  if (targetDist[0] != 1.0) return false;
+  return true;
+}
+
+
 } // namespace apo

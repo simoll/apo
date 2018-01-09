@@ -312,7 +312,7 @@ struct MonteCarloOptimizer {
 
 
   bool
-  tryApplyModel(Program & P, Rewrite & rewrite, ResultDist & res, bool signalsStop) {
+  tryApplyModel(Program & P, Rewrite & rewrite, ResultDist & res, bool & signalsStop) {
   // sample a random rewrite at a random location (product of rule and target distributions)
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -470,16 +470,23 @@ struct MonteCarloOptimizer {
 
   // convert detected derivations to refernce distributions
   void
-  encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const {
+  encodeBestDerivation(ResultDist & refResult, Derivation baseDer, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const {
   // find best-possible rewrite
     assert(startIdx < derivations.size());
-    Derivation bestDer = derivations[startIdx];
-    for (int i = startIdx + 1;
+    bool noBetterDerivation = true;
+    Derivation bestDer = baseDer;
+    for (int i = startIdx;
          i < rewrites.size() && (rewrites[i].first == progIdx);
          ++i)
     {
       const auto & der = derivations[i];
-      if (der.betterThan(bestDer)) { bestDer = der; }
+      if (der.betterThan(bestDer)) { noBetterDerivation = false; bestDer = der; }
+    }
+
+    if (noBetterDerivation) {
+      // no way to improve over STOP
+      refResult = model.createStopResult();
+      return;
     }
 
     IF_DEBUG_MC { std::cerr << progIdx << " -> best "; bestDer.dump(); std::cerr << "\n"; }
@@ -522,7 +529,7 @@ struct MonteCarloOptimizer {
       }
 
       // convert to a reference distribution
-      encodeBestDerivation(refResults[s], derivations, rewrites, rewriteIdx, s);
+      encodeBestDerivation(refResults[s], Derivation(*progVec[s]), derivations, rewrites, rewriteIdx, s);
 
       // skip to next progam with rewrites
       for (;rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {}
@@ -543,8 +550,9 @@ struct MonteCarloOptimizer {
       IF_DEBUG_MC {
         std::cerr << "\n Sample " << s << ":\n";
         progVec[s]->dump();
-        std::cerr << "Normalized distribution:\n";
-        result.dump();
+        std::cerr << "Result ";
+        if (result.isStop()) std::cerr << "STOP!\n";
+        else result.dump();
       }
     }
   }
@@ -552,7 +560,7 @@ struct MonteCarloOptimizer {
   // sample a target based on the reference distributions
   ProgramVec
   sampleActions(const ProgramVec & roundProgs, ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, bool & allStop) {
-#define IF_DEBUG_SAMPLE if (true)
+#define IF_DEBUG_SAMPLE if (false)
     allStop = true;
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -562,7 +570,7 @@ struct MonteCarloOptimizer {
     int rewriteIdx = 0;
     int nextSampleWithRewrite = rewrites.empty() ? std::numeric_limits<int>::max() : rewrites[rewriteIdx].first;
     for (int s = 0; s < refResults.size(); ++s) {
-      IF_DEBUG { std::cerr << "ACTION: " << actionProgs.size() << "\n"; }
+      IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << actionProgs.size() << "\n"; }
       if (s < nextSampleWithRewrite) {
         // no rewrite available -> STOP
         actionProgs.push_back(roundProgs[s]);

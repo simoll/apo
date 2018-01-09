@@ -26,6 +26,7 @@ struct ResultDist {
   void normalize();
   void print(std::ostream & out) const;
   void dump() const;
+  bool isStop() const;
 };
 
 struct Result {
