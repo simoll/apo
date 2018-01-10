@@ -446,7 +446,7 @@ MonteCarloTest() {
 // mc search options
   const int mcDerivationSteps = 1; // number of derivations
   const int maxExplorationDepth = maxMutations + 1; // best-effort search depth
-  const double pRandom = 0.5; // probability of ignoring the model for inference
+  const double pRandom = 1.0; // probability of ignoring the model for inference
   const int numOptRounds = 50; // number of optimization retries
 
 // training
