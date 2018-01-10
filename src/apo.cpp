@@ -672,7 +672,7 @@ MonteCarloTest() {
   const int batchTrainSteps = 10;
 
 // number of simulation batches
-  const int numGames = 1000;
+  const int numGames = 10000;
 
   MonteCarloOptimizer montOpt(rules, model, numOptRounds);
 
@@ -687,14 +687,15 @@ MonteCarloTest() {
   std::uniform_int_distribution<int> mutRand(0, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-  const int logInterval = 50;
+  const int logInterval = 100;
+  const int dotStep = logInterval / 10;
 
   for (int g = 0; g < numGames; ++g) {
     bool loggedRound = (g % logInterval == 0);
     if (loggedRound) {
       std::cerr << "\nRound " << g << ":\n";
     } else {
-      std::cerr << ".";
+      if (g % dotStep == 0) { std::cerr << "."; }
     }
 
     ProgramVec progVec(numSamples, nullptr);
