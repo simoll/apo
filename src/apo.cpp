@@ -657,15 +657,16 @@ MonteCarloTest() {
   // TODO factor out into MCOptimizer
 // random program options
   const int numSamples = model.batch_size;
-  int genLen = 1; //model.prog_length - model.num_Params - 1; // stub len
-  const int maxMutations = 1; // max number of program mutations
+  const int minStubLen = 2; // minimal progrm stub len (excluding params and return)
+  const int maxStubLen = 8; // maximal program stub len (excluding params and return)
+  const int maxMutations = 3; // max number of program mutations
   const double pExpand = 0.7; // mutator expansion ratio
 
 // mc search options
-  const int mcDerivationSteps = 1; // number of derivations
+  const int mcDerivationSteps = 3; // number of derivations
   const int maxExplorationDepth = maxMutations + 1; // best-effort search depth
   const double pRandom = 1.0; // probability of ignoring the model for inference
-  const int numOptRounds = 30; // number of optimization retries
+  const int numOptRounds = 50; // number of optimization retries
 
 // training
   const int batchTrainSteps = 10;
@@ -677,13 +678,14 @@ MonteCarloTest() {
 
 // generate sample programs
 
-  assert(genLen > 0 && "can not generate program within constraints");
+  assert(minStubLen > 0 && "can not generate program within constraints");
   RPG rpg(rules, model.num_Params);
 
 // generate randomly mutated programs
 
   Mutator expMut(rules, pExpand); // expanding rewriter
-  std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
+  std::uniform_int_distribution<int> mutRand(0, maxMutations);
+  std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
   const int logInterval = 50;
 
@@ -700,12 +702,12 @@ MonteCarloTest() {
     // std::cout << "Generating " << numSamples << " programs..\n";
     #pragma omp parallel for
     for (int i = 0; i < numSamples; ++i) {
-      auto * P = rpg.generate(genLen);
-      assert(P->size() <= model.prog_length);
-
+      int stubLen = stubRand(randGen());
       int mutSteps = mutRand(randGen());
-      expMut.mutate(*P, mutSteps); // mutate at least once
 
+      auto * P = rpg.generate(stubLen);
+      assert(P->size() <= model.prog_length);
+      expMut.mutate(*P, mutSteps); // mutate at least once
       progVec[i] = std::shared_ptr<Program>(P);
 
 #if 0
