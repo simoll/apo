@@ -63,13 +63,13 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
 // parse shared configuration
   {
       Parser confParser(configFile);
-      max_Time = confParser.get<int>("max_Time");
+      prog_length = confParser.get<int>("prog_length");
       num_Params = confParser.get<int>("num_Params");
       batch_size = confParser.get<int>("batch_size");
       num_Rules = confParser.get<int>("num_Rules");
   }
 
-  std::cerr << "Model (apo). max_Time=" << max_Time << ", num_Params=" << num_Params << ", batch_size=" << batch_size << ", num_Rules=" << num_Rules << "\n";
+  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", batch_size=" << batch_size << ", num_Rules=" << num_Rules << "\n";
 
 // build Graph
   // Read in the protobuf graph we exported
@@ -144,28 +144,29 @@ struct Batch {
 
   Batch(const Model & _model)
   : model(_model)
-  , oc_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
-  , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.max_Time}))
-  , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.max_Time}))
+  , oc_feed(DT_INT32, TensorShape({model.batch_size, model.prog_length}))
+  , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.prog_length}))
+  , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.prog_length}))
   , length_feed(DT_INT32,  TensorShape({model.batch_size}))
   , rule_feed(DT_FLOAT,  TensorShape({model.batch_size, model.num_Rules}))
-  , target_feed(DT_FLOAT,  TensorShape({model.batch_size, model.max_Time}))
+  , target_feed(DT_FLOAT,  TensorShape({model.batch_size, model.prog_length}))
   {}
 
   void encode_Program(int batch_id, const Program & prog) {
+    assert(0 <= batch_id && batch_id < model.batch_size);
     auto oc_Mapped = oc_feed.tensor<int, 2>();
     auto firstOp_Mapped = firstOp_feed.tensor<int, 2>();
     auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
     auto length_Mapped = length_feed.tensor<int, 1>();
 
-    assert((prog.size() <= model.max_Time) && "program size exceeds model limits");
+    assert((prog.size() <= model.prog_length) && "program size exceeds model limits");
 
     for (int t = 0; t < prog.size(); ++t) {
       oc_Mapped(batch_id, t) = model.encodeOpCode(prog.code[t]);
       firstOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 0);
       sndOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 1);
     }
-    for (int t = prog.size(); t < model.max_Time; ++t) {
+    for (int t = prog.size(); t < model.prog_length; ++t) {
       oc_Mapped(batch_id, t) = 0;
       firstOp_Mapped(batch_id, t) = 0;
       sndOp_Mapped(batch_id, t) = 0;
@@ -175,6 +176,7 @@ struct Batch {
   }
 
   void encode_Result(int batch_id, const ResultDist & result) {
+    assert(0 <= batch_id && batch_id < model.batch_size);
     auto rule_Mapped = rule_feed.tensor<float, 2>();
     auto target_Mapped = target_feed.tensor<float, 2>();
     for (int t = 0; t < result.targetDist.size(); ++t) {
@@ -201,7 +203,7 @@ struct Batch {
 
 // train model on a batch of programs (returns loss)
 double
-Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps) {
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
 
@@ -226,9 +228,11 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
       // writer.add_summary(summary, i)
     }
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
-    // writer.add_summary(summary, i)
-    auto pLoss = outputs[0].scalar<float>()(0);
+    float pLoss = 0.0;
+    if (computeLoss) {
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
+      pLoss = outputs[0].scalar<float>()(0);
+    }
     // std::cout << loss_out << "\n";
     avgLoss += (double) pLoss;
   }
@@ -342,7 +346,7 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     bool allEmpty = true;
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
-      if (P.size() > max_Time) {
+      if (P.size() > prog_length) {
         batch.encode_Program(i, emptyP);
       } else {
         allEmpty = false;
@@ -398,7 +402,7 @@ Model::createStopResult() const {
 }
 
 ResultDist
-Model::createEmptyResult() const { return ResultDist(num_Rules, max_Time); }
+Model::createEmptyResult() const { return ResultDist(num_Rules, prog_length); }
 
 void
 ResultDist::print(std::ostream & out) const {

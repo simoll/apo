@@ -50,7 +50,7 @@ if DummyRun:
     num_Params = 5
 
     # maximal program length
-    max_Time = 3
+    prog_length = 3
 
     # number of re-write rules
     num_Rules = 17
@@ -80,7 +80,7 @@ else:
     batch_size = int(conf["batch_size"])
 
     # maximal program len
-    max_Time = int(conf["max_Time"])
+    prog_length = int(conf["prog_length"])
 
     # maximal number of parameters
     num_Params = int(conf["num_Params"])
@@ -88,20 +88,20 @@ else:
     # number of re-write rules
     num_Rules = int(conf["num_Rules"]) #, 17
 
-    print("Model (construct). max_Time={}, num_Params={}, batch_size={}, num_Rules={}".format(max_Time, num_Params, batch_size, num_Rules))
+    print("Model (construct). prog_length={}, num_Params={}, batch_size={}, num_Rules={}".format(prog_length, num_Params, batch_size, num_Rules))
 # input feed
 
 # number of instructions in the program
 length_data = tf.placeholder(tf.int32, [batch_size], name="length_data")
 
 # opCode per instruction
-oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_data")
+oc_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="oc_data")
 
 # first operand index per instruction
-firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_data")
+firstOp_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="firstOp_data")
 
 # second operand index per instruction
-sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_data")
+sndOp_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="sndOp_data")
 
 
 
@@ -160,87 +160,81 @@ with tf.Session() as sess:
         make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
       # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
 
-    # instantiate
-    if num_layers > 1:
-      cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_layers)], state_is_tuple=True)
-    else:
-      cell = make_cell()
 
-    initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+    initial_outputs = outputs
     
     ### network setup ###
-    UseRDN=True
+    UseRDN=True # RDNs are broken...
     if UseRDN:   # Recursive Dag Network
         # TODO document
-        state = initial_state
         with tf.variable_scope("DAG"): 
-          last_output = tf.zeros([batch_size, state_size], dtype=data_type())
-          last_state = initial_state
+          for l in range(num_layers):
+            if l == 0:
+              # apply LSTM to opCodes
+              inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
+            else:
+              # DEBUG
+              # inputs = outputs
+              # pass
 
-          for time_step in range(max_Time):
-            if time_step > 0: tf.get_variable_scope().reuse_variables()
+              # last iteration output states
+              sequence = [tf.zeros([batch_size, state_size], dtype=data_type())] * (1 + num_Params) + outputs
+              print(sequence)
 
-            with tf.variable_scope("time_{}".format(time_step)): # Recursive Dag Network
-                # fetch current inputs
-                with tf.variable_scope("inputs"):
-                    with tf.variable_scope("opCode"):
-                        op_code = oc_inputs[:, time_step, :] # [batch_size x state_size]
-                        flat_oc = tf.reshape(op_code, [batch_size, -1])
+              # next layer inputs to assemble
+              inputs=[]
+              for time_step in range(prog_length):
+                # if time_step > 0: tf.get_variable_scope().reuse_variables()
 
+                  # fetch current inputs
+                  with tf.variable_scope("inputs"):
                     # gather first operand outputs
                     with tf.variable_scope("firstOp"):
-                        first_tensor = tf.gather(outputs, firstOp_data[:, time_step])
-                        flat_first = tf.reshape(first_tensor, [batch_size, -1])
+                      red_first = tf.gather(sequence, firstOp_data[:, time_step]) # batch_size adds redundant batch_size
+                      flat_first = red_first[0]
 
                     # gather second operand outputs
                     with tf.variable_scope("sndOp"):
-                        snd_tensor = tf.gather(outputs, sndOp_data[:, time_step])
-                        flat_snd = tf.reshape(snd_tensor, [batch_size, -1])
+                      red_snd = tf.gather(sequence, sndOp_data[:, time_step]) # gather adds redundant batch_size
+                      flat_snd = red_snd[0]
 
                     # merge into joined input 
-                    time_input = tf.concat([flat_oc, flat_first, flat_snd], axis=1,name="seq_input")
+                    time_input = tf.concat([outputs[time_step], flat_first, flat_snd], axis=1, name="seq_input")
+                    inputs.append(time_input)
 
-                if Debug:
-                    print("op_code: {}".format(op_code.get_shape()))
-                    print("first_tensor: {}".format(first_tensor.get_shape()))
-                    print("snd_tensor: {}".format(snd_tensor.get_shape()))
 
-                if Debug:
-                    print("flat_oc: {}".format(flat_oc.get_shape()))
-                    print("flat_first: {}".format(flat_first.get_shape()))
-                    print("flat_snd: {}".format(flat_snd.get_shape()))
+            with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
+              print("Input at layer {}".format(l))
+              print(inputs)
+              cell = make_cell()
+              initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+              outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
+            # last_output_size = tf.dim_size(outputs[0], 0)
 
-                if Debug:
-                    print("time_inp: {}".format(time_input.get_shape()))
+        # last layer output state
+        net_out = state.c
 
-                # invoke cell
-                (next_output, next_state) = cell(time_input, last_state)
-                
-                # filter condition (suspend after sequence has ended)
-                cond = time_step < length_data
-
-                # suspend RNN after sequence end (zero output, copy hidden state)
-                # filter cell_output
-                cell_output = tf.where(cond, next_output, last_output)
-                last_output = cell_output
-                
-                # filter the state tuple
-                def copy_fn(a,b):
-                  return tf.where(cond, a, b)
-                state = nest.map_structure(copy_fn, next_state, last_state)
-                last_state = state
-
-                outputs.append(cell_output)
     else:
+        # multi layer cell
+        if num_layers > 1:
+          cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_layers)], state_is_tuple=True)
+        else:
+          cell = make_cell()
+
+        initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+
         # use a plain LSTM
-        inputs = tf.unstack(oc_inputs, num=max_Time, axis=1)
+        inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
         outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
         last_output = outputs[-1]
+        if num_layers > 1:
+          net_out = tf.reshape(state[-1].c, [batch_size, -1])
+        else:
+          net_out = state.c
 
     # fold hidden layer to decision bits
-    net_out = tf.reshape(state[-1].c, [batch_size, -1])
     rule_logits = tf.layers.dense(inputs=net_out, units=num_Rules)
-    target_logits = tf.layers.dense(inputs=net_out, units=max_Time) # TODO use ptr-net instead
+    target_logits = tf.layers.dense(inputs=net_out, units=prog_length) # TODO use ptr-net instead
 
     ## predictions ##
     # distributions
@@ -277,7 +271,7 @@ with tf.Session() as sess:
     ### reference input & training ###
     # reference input #
     rule_in = tf.placeholder(data_type(), [batch_size, num_Rules], name="rule_in")
-    target_in = tf.placeholder(data_type(), [batch_size, max_Time], name="target_in")
+    target_in = tf.placeholder(data_type(), [batch_size, prog_length], name="target_in")
 
     # training #
     # ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)

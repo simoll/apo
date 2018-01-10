@@ -195,16 +195,16 @@ ModelTest() {
   auto rules = BuildRules();
   RPG rpg(rules, model.num_Params);
 
-  int genLen = model.max_Time - model.num_Params - 1;
+  int genLen = model.prog_length - model.num_Params - 2;
   assert(genLen > 0 && "can not generate program within constraints");
 
 // synthesize inputs
-  const int numSamples = model.batch_size * 64;
+  const int numSamples = model.batch_size * 4;
   std::cout << "Generating " << numSamples << " programs..\n";
 
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
-    assert(P->size() < model.max_Time);
+    assert(P->size() <= model.prog_length);
     progVec.emplace_back(P);
   }
 
@@ -248,7 +248,7 @@ ModelTest() {
 
   for (int i = 0; i < numSamples; ++i) {
     auto * P = rpg.generate(genLen);
-    assert(P->size() < model.max_Time);
+    assert(P->size() <= model.prog_length);
     progVec.emplace_back(P);
   }
 
@@ -310,7 +310,7 @@ struct MonteCarloOptimizer {
   MonteCarloOptimizer(RuleVec & _rules, Model & _model, int _numOptRounds)
   : rules(_rules)
   , model(_model)
-  , maxGenLen(model.max_Time - model.num_Params - 1)
+  , maxGenLen(model.prog_length - model.num_Params - 1)
   , mut(rules, 0.1) // greedy shrinking mutator
   , numOptRounds(_numOptRounds)
   {}
@@ -409,7 +409,7 @@ struct MonteCarloOptimizer {
         #pragma omp parallel for reduction(+:frozen)
         for (int t = 0; t < numSamples; ++t) {
           // freeze if derivation exceeds model
-          if (roundProgs[t]->size() > model.max_Time) {
+          if (roundProgs[t]->size() >= model.prog_length) {
             ++frozen;
             continue;
           }
@@ -449,7 +449,7 @@ struct MonteCarloOptimizer {
           if (signalsStop) continue;
 
         // derived program to large for model -> freeze
-          if (roundProgs[t]->size() >= model.max_Time) {
+          if (roundProgs[t]->size() > model.prog_length) {
             ++frozen;
             continue;
           }
@@ -656,23 +656,22 @@ MonteCarloTest() {
 // PARAMETERS (TODO factor out)
   // TODO factor out into MCOptimizer
 // random program options
-  const int numSamples = model.batch_size * 128;
-  int genLen = 3; //model.max_Time - model.num_Params - 1; // stub len
-  const int maxMutations = 3; // max number of program mutations
+  const int numSamples = model.batch_size;
+  int genLen = 1; //model.prog_length - model.num_Params - 1; // stub len
+  const int maxMutations = 1; // max number of program mutations
   const double pExpand = 0.7; // mutator expansion ratio
 
 // mc search options
-  const int mcDerivationSteps = 3; // number of derivations
+  const int mcDerivationSteps = 1; // number of derivations
   const int maxExplorationDepth = maxMutations + 1; // best-effort search depth
   const double pRandom = 1.0; // probability of ignoring the model for inference
-
-  const int numOptRounds = 100;
+  const int numOptRounds = 30; // number of optimization retries
 
 // training
   const int batchTrainSteps = 10;
 
 // number of simulation batches
-  const int numGames = 100;
+  const int numGames = 1000;
 
   MonteCarloOptimizer montOpt(rules, model, numOptRounds);
 
@@ -686,15 +685,23 @@ MonteCarloTest() {
   Mutator expMut(rules, pExpand); // expanding rewriter
   std::uniform_int_distribution<int> mutRand(0, maxMutations); // FIXME geometric distribution
 
+  const int logInterval = 50;
+
   for (int g = 0; g < numGames; ++g) {
-    std::cout << "-- Simulation round " << g << " --\n";
+    bool loggedRound = (g % logInterval == 0);
+    if (loggedRound) {
+      std::cerr << "\nRound " << g << ":\n";
+    } else {
+      std::cerr << ".";
+    }
+
     ProgramVec progVec(numSamples, nullptr);
 
-    std::cout << "Generating " << numSamples << " programs..\n";
+    // std::cout << "Generating " << numSamples << " programs..\n";
     #pragma omp parallel for
     for (int i = 0; i < numSamples; ++i) {
       auto * P = rpg.generate(genLen);
-      assert(P->size() < model.max_Time);
+      assert(P->size() <= model.prog_length);
 
       int mutSteps = mutRand(randGen());
       expMut.mutate(*P, mutSteps); // mutate at least once
@@ -724,7 +731,6 @@ MonteCarloTest() {
 
   // explore all actions from current program
 
-    std::cout << "Processing...\n";
     for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
     // compute all one-step derivations
@@ -778,8 +784,11 @@ MonteCarloTest() {
       montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
 
     // train model
-      double loss = model.train_dist(progVec, refResults, batchTrainSteps);
-      std::cerr << "Loss at " << depth << " : " << loss << "\n";
+      double loss = model.train_dist(progVec, refResults, batchTrainSteps, logInterval);
+
+      if (loggedRound) {
+        std::cerr << "Loss at " << depth << " : " << loss << "\n";
+      }
 
     // pick an action per program and advance
       bool allStop;

@@ -49,7 +49,7 @@ class Model {
   // TODO read from shared config file
 public:
   int batch_size; // = 4;
-  int max_Time; // = 4;
+  int prog_length; // = 4;
   int num_Params; // = 5;
   int num_Rules;
   const int max_Operands = 2;
@@ -58,7 +58,7 @@ public:
   int encodeOperand(const Statement & stat, node_t opIdx) const;
   int encodeOpCode(const Statement & stat) const;
 
-  ResultDist createResultDist() { return ResultDist(num_Rules, max_Time + 1); }
+  ResultDist createResultDist() { return ResultDist(num_Rules, prog_length); }
 
 public:
   Model(const std::string & fileName, const std::string & configFile);
@@ -67,7 +67,7 @@ public:
   // double train(const ProgramVec& progs, const ResultVec& results, int num_steps);
 
   // train model on a batch of programs (returns loss)
-  double train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps);
+  double train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss);
 
   // most likely selection
   ResultVec infer_likely(const ProgramVec& progs);
