@@ -30,7 +30,7 @@ SampleCategoryDistribution(CatDist & catDist, double p) {
     double catInterval = catDist[e];
     catBase = lastCatBase + catInterval;
     if (p > catBase) continue; // skip rule. Otw, sample pos is inside target range for this rule
-    if (lastCatBase + EPS >= catBase) continue; // skip empty intervals
+    if (lastCatBase >= catBase) continue; // skip empty intervals
     assert(p >= lastCatBase);
     return e;
   }
