@@ -10,15 +10,6 @@ def data_type():
 # learning rate
 learning_rate = 0.001
 
-# number of scalar cells in the LSTM
-state_size = 64
-
-# op code embedding size
-embed_size = 32
-
-# stacked cells
-num_layers = 2
-
 
 ### OpCode model ###
 # op code encoding
@@ -55,6 +46,15 @@ if DummyRun:
     # number of re-write rules
     num_Rules = 17
 
+    # number of scalar cells in the LSTM
+    state_size = 64
+    
+    # op code embedding size
+    embed_size = 32
+    
+    # stacked cells
+    num_layers = 2
+
     # some test data
     # 0 == dummy
     # 1 == param 1
@@ -87,6 +87,15 @@ else:
 
     # number of re-write rules
     num_Rules = int(conf["num_Rules"]) #, 17
+
+    # number of scalar cells in the LSTM
+    state_size = int(conf["state_size"]) #64
+    
+    # op code embedding size
+    embed_size = int(conf["embed_size"]) #32
+    
+    # stacked cells
+    num_layers = int(conf["num_layers"]) #2
 
     print("Model (construct). prog_length={}, num_Params={}, batch_size={}, num_Rules={}".format(prog_length, num_Params, batch_size, num_Rules))
 # input feed
@@ -179,7 +188,7 @@ with tf.Session() as sess:
 
               # last iteration output states
               sequence = [tf.zeros([batch_size, state_size], dtype=data_type())] * (1 + num_Params) + outputs
-              print(sequence)
+              # print(sequence)
 
               # next layer inputs to assemble
               inputs=[]
@@ -204,8 +213,8 @@ with tf.Session() as sess:
 
 
             with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
-              print("Input at layer {}".format(l))
-              print(inputs)
+              # print("Input at layer {}".format(l))
+              # print(inputs)
               cell = make_cell()
               initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
               outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
