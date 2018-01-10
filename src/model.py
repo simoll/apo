@@ -7,9 +7,6 @@ def data_type():
 
 
 
-# learning rate
-learning_rate = 0.001
-
 
 ### OpCode model ###
 # op code encoding
@@ -76,9 +73,6 @@ if DummyRun:
 else:
     conf = parseConfig("model.conf")
 
-    # training batch size
-    batch_size = int(conf["batch_size"])
-
     # maximal program len
     prog_length = int(conf["prog_length"])
 
@@ -97,20 +91,24 @@ else:
     # stacked cells
     num_layers = int(conf["num_layers"]) #2
 
-    print("Model (construct). prog_length={}, num_Params={}, batch_size={}, num_Rules={}".format(prog_length, num_Params, batch_size, num_Rules))
+    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, num_layers={}".format(prog_length, num_Params, num_Rules, embed_size, num_layers))
 # input feed
 
+# training control parameter (has auto increment)
+global_step = tf.get_variable("global_step", initializer = 0, dtype=tf.int32, trainable=False)
+
 # number of instructions in the program
-length_data = tf.placeholder(tf.int32, [batch_size], name="length_data")
+length_data = tf.placeholder(tf.int32, [None], name="length_data")
+batch_size=tf.shape(length_data)[0]
 
 # opCode per instruction
-oc_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="oc_data")
+oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
 
 # first operand index per instruction
-firstOp_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="firstOp_data")
+firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
 
 # second operand index per instruction
-sndOp_data = tf.placeholder(tf.int32, [batch_size, prog_length], name="sndOp_data")
+sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
 
 
 
@@ -144,7 +142,7 @@ with tf.Session() as sess:
     # print(param_data.get_shape()) # [numParams x state_size]
     # print(param_batch.get_shape()) # [batch_size x numParams x state_size]
 
-    param_batch = tf.concat([[param_data] * batch_size], 1, name="concat_params")
+    param_batch = tf.reshape(tf.tile(param_data, [batch_size, 1]), [batch_size, num_Params, -1])
 
     if Debug:
         print("param_batch: {}".format(param_batch.get_shape()))
@@ -279,8 +277,8 @@ with tf.Session() as sess:
 
     ### reference input & training ###
     # reference input #
-    rule_in = tf.placeholder(data_type(), [batch_size, num_Rules], name="rule_in")
-    target_in = tf.placeholder(data_type(), [batch_size, prog_length], name="target_in")
+    rule_in = tf.placeholder(data_type(), [None, num_Rules], name="rule_in")
+    target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")
 
     # training #
     # ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
@@ -295,12 +293,20 @@ with tf.Session() as sess:
     loss = tf.reduce_mean(all_losses, name="loss")
     tf.summary.scalar('loss', loss)
 
+    # learning rate configuration
+    starter_learning_rate = 0.1
+    end_learning_rate = 0.0001
+    decay_steps = 10000
+    learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
+                                              decay_steps, end_learning_rate,
+                                              power=0.5, name="learning_rate")
+    
     # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
     train_dist_op = optimizer.minimize(
         loss=loss,
-        global_step=tf.train.get_global_step(),
+        global_step=global_step,
         name="train_dist_op")
 
     ### prob of getting the cout right (pCorrect_op)  ###

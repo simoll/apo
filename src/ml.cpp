@@ -65,11 +65,11 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
       Parser confParser(configFile);
       prog_length = confParser.get<int>("prog_length");
       num_Params = confParser.get<int>("num_Params");
-      batch_size = confParser.get<int>("batch_size");
+      max_batch_size = confParser.get<int>("batch_size");
       num_Rules = confParser.get<int>("num_Rules");
   }
 
-  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", batch_size=" << batch_size << ", num_Rules=" << num_Rules << "\n";
+  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", max_batch_size=" << max_batch_size << ", num_Rules=" << num_Rules << "\n";
 
 // build Graph
   // Read in the protobuf graph we exported
@@ -132,6 +132,8 @@ using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
 
 struct Batch {
   const Model & model;
+
+  int batch_size;
   // program emcoding
   Tensor oc_feed;
   Tensor firstOp_feed;
@@ -142,18 +144,31 @@ struct Batch {
   Tensor rule_feed;
   Tensor target_feed;
 
-  Batch(const Model & _model)
+  Batch(const Model & _model, int _batch_size)
   : model(_model)
-  , oc_feed(DT_INT32, TensorShape({model.batch_size, model.prog_length}))
-  , firstOp_feed(DT_INT32, TensorShape({model.batch_size, model.prog_length}))
-  , sndOp_feed(DT_INT32,   TensorShape({model.batch_size, model.prog_length}))
-  , length_feed(DT_INT32,  TensorShape({model.batch_size}))
-  , rule_feed(DT_FLOAT,  TensorShape({model.batch_size, model.num_Rules}))
-  , target_feed(DT_FLOAT,  TensorShape({model.batch_size, model.prog_length}))
+  , batch_size(_batch_size)
+  , oc_feed(DT_INT32, TensorShape({batch_size, model.prog_length}))
+  , firstOp_feed(DT_INT32, TensorShape({batch_size, model.prog_length}))
+  , sndOp_feed(DT_INT32,   TensorShape({batch_size, model.prog_length}))
+  , length_feed(DT_INT32,  TensorShape({batch_size}))
+  , rule_feed(DT_FLOAT,  TensorShape({batch_size, model.num_Rules}))
+  , target_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length}))
   {}
 
+  void resize(int new_size) {
+    if (new_size == batch_size) return;
+    batch_size = new_size;
+
+    oc_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
+    firstOp_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
+    sndOp_feed = Tensor(DT_INT32,   TensorShape({batch_size, model.prog_length}));
+    length_feed = Tensor(DT_INT32,  TensorShape({batch_size}));
+    rule_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.num_Rules}));
+    target_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length}));
+  }
+
   void encode_Program(int batch_id, const Program & prog) {
-    assert(0 <= batch_id && batch_id < model.batch_size);
+    // assert(0 <= batch_id && batch_id < model.batch_size);
     auto oc_Mapped = oc_feed.tensor<int, 2>();
     auto firstOp_Mapped = firstOp_feed.tensor<int, 2>();
     auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
@@ -176,7 +191,6 @@ struct Batch {
   }
 
   void encode_Result(int batch_id, const ResultDist & result) {
-    assert(0 <= batch_id && batch_id < model.batch_size);
     auto rule_Mapped = rule_feed.tensor<float, 2>();
     auto target_Mapped = target_feed.tensor<float, 2>();
     for (int t = 0; t < result.targetDist.size(); ++t) {
@@ -206,9 +220,11 @@ double
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
+  const int batch_size = max_batch_size;
+  assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
 
   double avgLoss = 0.0;
-  Batch batch(*this);
+  Batch batch(*this, max_batch_size);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
     for (int i = 0; i < batch_size; ++i) {
@@ -246,7 +262,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   // Print the results
   // std::cout << output_c() << "\n"; // 30
 
-  int numBatches = num_Samples / batch_size;
+  int numBatches = num_Samples / max_batch_size;
   return avgLoss / (double) numBatches;
 }
 
@@ -301,11 +317,12 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 ResultVec
 Model::infer_likely(const ProgramVec& progs) {
   int num_Samples = progs.size();
-  assert(num_Samples % batch_size == 0);
+  const int batch_size = max_batch_size;
+  assert((num_Samples % batch_size == 0) && "TODO implement varying sized batches");
 
   ResultVec results;
 
-  Batch batch(*this);
+  Batch batch(*this, batch_size);
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
@@ -335,15 +352,18 @@ Model::infer_likely(const ProgramVec& progs) {
 ResultDistVec
 Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   int num_Samples = progs.size();
-  assert(num_Samples % batch_size == 0);
-
   ResultDistVec results;
 
   Program emptyP(num_Params, {}); // the empty program
 
-  Batch batch(*this);
-  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+  Batch batch(*this, max_batch_size);
+  for (int s = 0; s < num_Samples; s += max_batch_size) {
     bool allEmpty = true;
+
+    // detect remainder batch
+    int batch_size = std::min<int>(max_batch_size, num_Samples - s);
+    batch.resize(batch_size);
+
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > prog_length) {
@@ -391,6 +411,21 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   }
 
   return results;
+}
+
+Model::Statistics
+Model::query_stats() {
+  std::vector<tensorflow::Tensor> outputs;
+  TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
+  double learning_rate = outputs[0].scalar<float>()();
+  size_t global_step = outputs[1].scalar<int>()();
+  return Model::Statistics{global_step, learning_rate};
+}
+
+
+void
+Model::Statistics::print(std::ostream & out) const {
+  out << "global_step=" << global_step << ", learning_rate=" << learning_rate;
 }
 
 ResultDist

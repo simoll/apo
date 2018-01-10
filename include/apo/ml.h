@@ -48,7 +48,7 @@ class Model {
 
   // TODO read from shared config file
 public:
-  int batch_size; // = 4;
+  int max_batch_size; // = 4;
   int prog_length; // = 4;
   int num_Params; // = 5;
   int num_Rules;
@@ -60,6 +60,13 @@ public:
 
   ResultDist createResultDist() { return ResultDist(num_Rules, prog_length); }
 
+  // internal learning statistics
+  struct Statistics {
+    size_t global_step;
+    double learning_rate;
+    void print(std::ostream & out) const;
+  };
+
 public:
   Model(const std::string & fileName, const std::string & configFile);
 
@@ -68,6 +75,8 @@ public:
 
   // train model on a batch of programs (returns loss)
   double train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss);
+
+  Statistics query_stats();
 
   // most likely selection
   ResultVec infer_likely(const ProgramVec& progs);
