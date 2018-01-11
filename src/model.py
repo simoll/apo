@@ -175,6 +175,7 @@ with tf.Session() as sess:
     if UseRDN:   # Recursive Dag Network
         # TODO document
         with tf.variable_scope("DAG"): 
+          out_states=[]
           for l in range(num_layers):
             if l == 0:
               # apply LSTM to opCodes
@@ -221,10 +222,12 @@ with tf.Session() as sess:
               cell = make_cell()
               initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
               outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
+              out_states.append(state[0])
+              out_states.append(state[1])
             # last_output_size = tf.dim_size(outputs[0], 0)
 
         # last layer output state
-        net_out = state.c
+        net_out = tf.concat(out_states, axis=1)
 
     else:
         # multi layer cell
