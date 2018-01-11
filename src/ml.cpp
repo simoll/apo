@@ -216,14 +216,14 @@ struct Batch {
 };
 
 // train model on a batch of programs (returns loss)
-double
-Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss) {
+void
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
   const int batch_size = max_batch_size;
   assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
 
-  double avgLoss = 0.0;
+  Losses L{0.0, 0.0};
   Batch batch(*this, max_batch_size);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
@@ -244,26 +244,23 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
       // writer.add_summary(summary, i)
     }
 
-    float pLoss = 0.0;
-    if (computeLoss) {
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"loss"}, {}, &outputs) );
-      pLoss = outputs[0].scalar<float>()(0);
+    if (oLosses) {
+      float pLoss = 0.0;
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_rule_loss", "mean_target_loss"}, {}, &outputs) );
+      float pRuleLoss = outputs[0].scalar<float>()(0);
+      float pTargetLoss = outputs[1].scalar<float>()(0);
+
+      // std::cout << loss_out << "\n";
+      L.ruleLoss += (double) pRuleLoss;
+      L.targetLoss += (double) pTargetLoss;
     }
-    // std::cout << loss_out << "\n";
-    avgLoss += (double) pLoss;
   }
 
-  // Grab the first output (we only evaluated one graph node: "c")
-  // and convert the node to a scalar representation.
-
-  // (There are similar methods for vectors and matrices here:
-  // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/public/tensor.h)
-
-  // Print the results
-  // std::cout << output_c() << "\n"; // 30
-
-  int numBatches = num_Samples / max_batch_size;
-  return avgLoss / (double) numBatches;
+  if (oLosses) {
+    int numBatches = num_Samples / max_batch_size;
+    oLosses->ruleLoss = L.ruleLoss / (double) numBatches;
+    oLosses->targetLoss = L.targetLoss / (double) numBatches;
+  }
 }
 
 #if 0
@@ -459,6 +456,13 @@ ResultDist::isStop() const {
   if (ruleDist[0] != 1.0) return false;
   if (targetDist[0] != 1.0) return false;
   return true;
+}
+
+
+std::ostream&
+Model::Losses::print(std::ostream & out) const {
+  out << "ruleLoss=" << ruleLoss << ", targetLoss=" << targetLoss;
+  return out;
 }
 
 

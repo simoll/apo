@@ -171,7 +171,7 @@ with tf.Session() as sess:
     initial_outputs = outputs
     
     ### network setup ###
-    UseRDN=True # RDNs are broken...
+    UseRDN=True 
     if UseRDN:   # Recursive Dag Network
         # TODO document
         with tf.variable_scope("DAG"): 
@@ -232,7 +232,7 @@ with tf.Session() as sess:
 
         # use a plain LSTM
         inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
-        outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
+        outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)# swap_memory=True)
         last_output = outputs[-1]
         if num_layers > 1:
           net_out = tf.reshape(state[-1].c, [batch_size, -1])
@@ -289,6 +289,9 @@ with tf.Session() as sess:
     rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=rule_in, logits=rule_logits, dim=-1)
     target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1)
 
+    mean_rule_loss = tf.reduce_mean(rule_loss, name="mean_rule_loss")
+    mean_target_loss = tf.reduce_mean(target_loss, name="mean_target_loss")
+
     all_losses = [rule_loss, target_loss]
     loss = tf.reduce_mean(all_losses, name="loss")
     tf.summary.scalar('loss', loss)
@@ -296,7 +299,7 @@ with tf.Session() as sess:
     # learning rate configuration
     starter_learning_rate = 0.1
     end_learning_rate = 0.0001
-    decay_steps = 10000
+    decay_steps = 400000
     learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
                                               decay_steps, end_learning_rate,
                                               power=0.5, name="learning_rate")

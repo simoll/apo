@@ -74,7 +74,14 @@ public:
   // double train(const ProgramVec& progs, const ResultVec& results, int num_steps);
 
   // train model on a batch of programs (returns loss)
-  double train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, bool computeLoss);
+  struct Losses {
+    double ruleLoss;
+    double targetLoss;
+
+    std::ostream& print(std::ostream & out) const;
+  };
+
+  void train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, Losses * oLoss);
 
   Statistics query_stats();
 

@@ -438,8 +438,8 @@ MonteCarloTest() {
   // TODO factor out into MCOptimizer
 // random program options
   const int numSamples = model.max_batch_size;
-  const int minStubLen = 1; // minimal progrm stub len (excluding params and return)
-  const int maxStubLen = 2; // maximal program stub len (excluding params and return)
+  const int minStubLen = 3; // minimal progrm stub len (excluding params and return)
+  const int maxStubLen = 4; // maximal program stub len (excluding params and return)
   const int maxMutations = 1; // max number of program mutations
   const double pExpand = 0.7; // mutator expansion ratio
 
@@ -450,7 +450,7 @@ MonteCarloTest() {
   const int numOptRounds = 50; // number of optimization retries
 
 // training
-  const int batchTrainSteps = 10;
+  const int batchTrainSteps = 1;
 
 // number of simulation batches
   const int numGames = 10000;
@@ -468,7 +468,7 @@ MonteCarloTest() {
   std::uniform_int_distribution<int> mutRand(0, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-  const int logInterval = 100;
+  const int logInterval = 10;
   const int dotStep = logInterval / 10;
 
   for (int g = 0; g < numGames; ++g) {
@@ -569,10 +569,11 @@ MonteCarloTest() {
       montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
 
     // train model
-      double loss = model.train_dist(progVec, refResults, batchTrainSteps, logInterval);
+      Model::Losses L;
+      model.train_dist(progVec, refResults, batchTrainSteps, logInterval ? &L : nullptr);
 
       if (loggedRound) {
-        std::cerr << "Loss at " << depth << " : " << loss << "\n";
+        std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
       }
 
     // pick an action per program and advance
