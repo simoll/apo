@@ -23,8 +23,8 @@ Parser::Parser() {}
 
 template<typename T>
 T
-Parser::get(const std::string & key) {
-  if (!items.count(key)) return T();
+Parser::get(const std::string & key, const T defVal) {
+  if (!items.count(key)) return defVal;
   T val;
   std::stringstream str(items[key]);
   str >> val;
@@ -32,10 +32,36 @@ Parser::get(const std::string & key) {
 }
 
 template<>
-std::string Parser::get(const std::string & key) {
+std::string Parser::get(const std::string & key, const std::string defVal) {
+  if (!items.count(key)) return defVal;
   return items[key];
 }
 
-template int Parser::get<int>(const std::string & key);
+template<typename T>
+T
+Parser::get_or_fail(const std::string & key) {
+  if (!items.count(key)) {
+    std::cerr << "Missing key " << key << ". Aborting!\n";
+    abort();
+  }
+
+  T val;
+  std::stringstream str(items[key]);
+  str >> val;
+  std::cerr << key << " = " << val << "\n";
+
+  return val;
+}
+
+
+// explicit instantiations
+template int Parser::get<int>(const std::string & key, const int defVal);
+template int Parser::get_or_fail<int>(const std::string & key);
+
+template double Parser::get<double>(const std::string & key, const double defVal);
+template double Parser::get_or_fail<double>(const std::string & key);
+
+template std::string Parser::get_or_fail<std::string>(const std::string & key);
 
 } // namespace apo
+

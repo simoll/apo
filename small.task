@@ -1,0 +1,9 @@
+minStubLen 3
+maxStubLen 4
+maxMutations 1
+pExpand 0.7
+mcDerivationSteps 1
+maxExplorationDepth 2
+pRandom 1.0
+numOptRounds 50
+

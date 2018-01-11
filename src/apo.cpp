@@ -430,27 +430,31 @@ struct MonteCarloOptimizer {
 
 
 void
-MonteCarloTest() {
+MonteCarlo(const std::string taskFile) {
+
   Model model("build/apo_graph.pb", "model.conf");
   auto rules = BuildRules();
 
 // PARAMETERS (TODO factor out)
   // TODO factor out into MCOptimizer
+
+  std::cerr << "Loading task file " << taskFile << "\n";
+  Parser task(taskFile);
 // random program options
   const int numSamples = model.max_batch_size;
-  const int minStubLen = 3; // minimal progrm stub len (excluding params and return)
-  const int maxStubLen = 4; // maximal program stub len (excluding params and return)
-  const int maxMutations = 1; // max number of program mutations
-  const double pExpand = 0.7; // mutator expansion ratio
+  const int minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
+  const int maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
+  const int maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
+  const double pExpand = task.get_or_fail<double>("pExpand"); //0.7; // mutator expansion ratio
 
 // mc search options
-  const int mcDerivationSteps = 1; // number of derivations
-  const int maxExplorationDepth = maxMutations + 1; // best-effort search depth
-  const double pRandom = 1.0; // probability of ignoring the model for inference
-  const int numOptRounds = 50; // number of optimization retries
+  const int mcDerivationSteps = task.get_or_fail<int>("mcDerivationSteps"); //1; // number of derivations
+  const int maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
+  const double pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
+  const int numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
 
 // training
-  const int batchTrainSteps = 1;
+  const int batchTrainSteps = 4;
 
 // number of simulation batches
   const int numGames = 10000;
@@ -471,6 +475,7 @@ MonteCarloTest() {
   const int logInterval = 10;
   const int dotStep = logInterval / 10;
 
+  std::cerr << "Training..\n";
   for (int g = 0; g < numGames; ++g) {
     bool loggedRound = (g % logInterval == 0);
     if (loggedRound) {
@@ -594,9 +599,15 @@ MonteCarloTest() {
 }
 
 int main(int argc, char ** argv) {
+  if (argc != 2) {
+    std::cerr << argv[0] << " <scenario.task>\n";
+    return -1;
+  }
+
   InitRandom();
 
-  MonteCarloTest();
+  std::string taskFile = argv[1];
+  MonteCarlo(taskFile);
 
   Model::shutdown();
 }

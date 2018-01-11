@@ -257,9 +257,9 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   }
 
   if (oLosses) {
-    int numBatches = num_Samples / max_batch_size;
-    oLosses->ruleLoss = L.ruleLoss / (double) numBatches;
-    oLosses->targetLoss = L.targetLoss / (double) numBatches;
+    double numBatches = num_Samples / (double) max_batch_size;
+    oLosses->ruleLoss = L.ruleLoss / numBatches;
+    oLosses->targetLoss = L.targetLoss / numBatches;
   }
 }
 
