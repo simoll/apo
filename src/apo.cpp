@@ -133,12 +133,17 @@ struct MonteCarloOptimizer {
 
     int ruleEnumId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
 
+    size_t giveUp = 10; // 10 sampling attempts
     int targetId;
     do {
       // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
       targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
-    } while (targetId + 1 >= P.size());
+    } while (giveUp-- > 0 && targetId + 1 >= P.size());
 
+    if (!giveUp) {
+      signalsStop = true;
+      return true;
+    }
 
     if (ruleEnumId == 0) {
       // magic STOP rule
@@ -205,6 +210,8 @@ struct MonteCarloOptimizer {
           bool signalsStop = false;
 
         // loop until rewrite succeeds (or stop)
+          const size_t failureLimit = 10;
+          size_t failureCount = 0;
           while (!signalsStop && !success) {
             bool uniRule;
             uniRule = !useModel || (ruleRand(randGen()) <= pRandom);
@@ -223,6 +230,13 @@ struct MonteCarloOptimizer {
             } else {
               // learned rewrite distribution
               success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
+
+              if (!success) failureCount++;
+
+              // avoid infinite loops by failing after @failureLimit
+              if (failureCount >= failureLimit) {
+                signalsStop = true;
+              }
             }
           }
 
