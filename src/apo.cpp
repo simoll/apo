@@ -438,173 +438,204 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
 }
 
 
-void
-MonteCarlo(const std::string taskFile) {
+struct APO {
+  Model model;
+  RuleVec rules;
+  MonteCarloOptimizer montOpt;
+  RPG rpg;
+  Mutator expMut;
 
-  Model model("build/apo_graph.pb", "model.conf");
-  auto rules = BuildRules();
-
-// PARAMETERS (TODO factor out)
-  // TODO factor out into MCOptimizer
-
-  std::cerr << "Loading task file " << taskFile << "\n";
-  Parser task(taskFile);
-// random program options
-  const int numSamples = model.max_batch_size;
-  const int minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
-  const int maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
-  const int maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
-  const double pExpand = task.get_or_fail<double>("pExpand"); //0.7; // mutator expansion ratio
+  int minStubLen; //3; // minimal progrm stub len (excluding params and return)
+  int maxStubLen; //4; // maximal program stub len (excluding params and return)
+  int maxMutations;// 1; // max number of program mutations
+  static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
 
 // mc search options
-  const int mcDerivationSteps = task.get_or_fail<int>("mcDerivationSteps"); //1; // number of derivations
-  const int maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
-  const double pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
-  const int numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
+  int mcDerivationSteps; //1; // number of derivations
+  int maxExplorationDepth; //maxMutations + 1; // best-effort search depth
+  double pRandom; //1.0; // probability of ignoring the model for inference
+  int numOptRounds; //50; // number of optimization retries
 
 // training
-  const int batchTrainSteps = 4;
+  int numSamples;//
+  int batchTrainSteps; // = 4;
 
 // number of simulation batches
   const int numGames = 10000;
 
-  MonteCarloOptimizer montOpt(rules, model);
+  APO(const std::string taskFile)
+  : model("build/apo_graph.pb", "model.conf")
+  , rules(BuildRules())
+  , montOpt(rules, model)
+  , rpg(rules, model.num_Params)
+  , expMut(rules, pExpand)
+  {
+    std::cerr << "Loading task file " << taskFile << "\n";
+    Parser task(taskFile);
+  // random program options
+    numSamples = model.max_batch_size;
+    minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
+    maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
+    maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
 
-  assert(minStubLen > 0 && "can not generate program within constraints");
-  RPG rpg(rules, model.num_Params);
+  // mc search options
+    mcDerivationSteps = task.get_or_fail<int>("mcDerivationSteps"); //1; // number of derivations
+    maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
+    pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
+    numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
 
-  Mutator expMut(rules, pExpand); // expanding rewriter
-  std::uniform_int_distribution<int> mutRand(0, maxMutations);
-  std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
+  // initialize thread safe random number generators
+    InitRandom();
+  }
 
-  const int logInterval = 10;
-  const int dotStep = logInterval / 10;
+  void
+  generatePrograms(ProgramVec & progVec) {
+    std::uniform_int_distribution<int> mutRand(0, maxMutations);
+    std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-  std::cerr << "Training..\n";
-  for (int g = 0; g < numGames; ++g) {
-    bool loggedRound = (g % logInterval == 0);
-    if (loggedRound) {
-      auto stats = model.query_stats();
-      std::cerr << "\nRound " << g << " ("; stats.print(std::cerr); std::cerr << "):\n";
-
-    // evaluating current model
-      ProgramVec evalProgs(numSamples, nullptr);
-      for (int i = 0; i < numSamples; ++i) {
+    for (int i = 0; i < progVec.size(); ++i) {
+      std::shared_ptr<Program> P = nullptr;
+      do {
         int stubLen = stubRand(randGen());
         int mutSteps = mutRand(randGen());
+        P.reset(rpg.generate(stubLen));
 
-        auto * P = rpg.generate(stubLen);
         assert(P->size() <= model.prog_length);
         expMut.mutate(*P, mutSteps); // mutate at least once
-        evalProgs[i] = std::shared_ptr<Program>(P);
-      }
+      } while(P->size() > model.prog_length);
 
-      // random sampling based (uniform sampling, nio model)
-      auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
-
-      // one shot (model based sampling)
-      auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
-
-      double modelScore = ScoreDerivations(refDerVec, modelDerVec);
-      std::cerr << "Model score: " << modelScore << "\n";
-
-    } else {
-      if (g % dotStep == 0) { std::cerr << "."; }
-    }
-
-
-// Generating training programs
-    ProgramVec progVec(numSamples, nullptr);
-
-    #pragma omp parallel for
-    for (int i = 0; i < numSamples; ++i) {
-      int stubLen = stubRand(randGen());
-      int mutSteps = mutRand(randGen());
-
-      auto * P = rpg.generate(stubLen);
-      assert(P->size() <= model.prog_length);
-      expMut.mutate(*P, mutSteps); // mutate at least once
       progVec[i] = std::shared_ptr<Program>(P);
     }
+  }
+
+  void train() {
+    const int numSamples = model.max_batch_size;
+    const int numEvalSamples = model.max_batch_size * 4;
+
+    std::cerr << "numSamples = " << numSamples << "\n"
+              << "numEvalSamples = " << numEvalSamples << "\n"
+              << "numGames = " << numGames << "\n";
+
+  // training
+    const int batchTrainSteps = 4;
+
+  // number of simulation batches
+    const int numGames = 10000;
+
+    assert(minStubLen > 0 && "can not generate program within constraints");
+
+    const int logInterval = 10;
+    const int dotStep = logInterval / 10;
+
+    std::cerr << "Training..\n";
+    for (int g = 0; g < numGames; ++g) {
+      bool loggedRound = (g % logInterval == 0);
+      if (loggedRound) {
+        auto stats = model.query_stats();
+        std::cerr << "\nRound " << g << " ("; stats.print(std::cerr); std::cerr << "):\n";
+
+      // evaluating current model
+        ProgramVec evalProgs(numEvalSamples, nullptr);
+        generatePrograms(evalProgs);
+
+        // random sampling based (uniform sampling, nio model)
+        auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
+
+        // one shot (model based sampling)
+        auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
+
+        double modelScore = ScoreDerivations(refDerVec, modelDerVec);
+        std::cerr << "Model score: " << modelScore << "\n";
+
+      } else {
+        if (g % dotStep == 0) { std::cerr << "."; }
+      }
 
 
-  // explore all actions from current program
-    for (int depth = 0; depth < mcDerivationSteps; ++depth) {
+  // Generating training programs
+      ProgramVec progVec(numSamples, nullptr);
+      generatePrograms(progVec);
 
-    // compute all one-step derivations
-      std::vector<std::pair<int, Rewrite>> rewrites;
-      ProgramVec nextProgs;
-      const int preAllocFactor = 16;
-      rewrites.reserve(preAllocFactor * progVec.size());
-      nextProgs.reserve(preAllocFactor * progVec.size());
 
-      // #pragma omp parallel for ordered
-      for (int t = 0; t < progVec.size(); ++t) {
-        for (int r = 0; r < rules.size(); ++r) {
-          for (int j = 0; j < 2; ++j) {
-            for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
-              bool leftMatch = (bool) j;
+    // explore all actions from current program
+      for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
-              auto * clonedProg = new Program(*progVec[t]);
-              if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
-                // TODO clone after match (or render into copy)
-                delete clonedProg;
-                continue;
-              }
+      // compute all one-step derivations
+        std::vector<std::pair<int, Rewrite>> rewrites;
+        ProgramVec nextProgs;
+        const int preAllocFactor = 16;
+        rewrites.reserve(preAllocFactor * progVec.size());
+        nextProgs.reserve(preAllocFactor * progVec.size());
 
-              // compact list of programs resulting from a single action
-              // #pragma omp ordered
-              {
-                nextProgs.emplace_back(clonedProg);
-                rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
+        // #pragma omp parallel for ordered
+        for (int t = 0; t < progVec.size(); ++t) {
+          for (int r = 0; r < rules.size(); ++r) {
+            for (int j = 0; j < 2; ++j) {
+              for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
+                bool leftMatch = (bool) j;
+
+                auto * clonedProg = new Program(*progVec[t]);
+                if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
+                  // TODO clone after match (or render into copy)
+                  delete clonedProg;
+                  continue;
+                }
+
+                // compact list of programs resulting from a single action
+                // #pragma omp ordered
+                {
+                  nextProgs.emplace_back(clonedProg);
+                  rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
+                }
               }
             }
           }
         }
-      }
 
-    // best-effort search for optimal program
-      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+      // best-effort search for optimal program
+        auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
 
-#if 0
-      IF_DEBUG {
-        std::cerr << "Best derivations:\n";
-        for (int i = 0; i < derVec.size(); ++i) {
-          derVec[i].dump();
-          nextProgs[i]->dump();
-          std::cerr << "\n";
+  #if 0
+        IF_DEBUG {
+          std::cerr << "Best derivations:\n";
+          for (int i = 0; i < derVec.size(); ++i) {
+            derVec[i].dump();
+            nextProgs[i]->dump();
+            std::cerr << "\n";
+          }
         }
+  #endif
+
+      // decode reference ResultDistVec from detected derivations
+        ResultDistVec refResults;
+        montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+
+      // train model
+        Model::Losses L;
+        model.train_dist(progVec, refResults, batchTrainSteps, logInterval ? &L : nullptr);
+
+        if (loggedRound) {
+          std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
+        }
+
+      // pick an action per program and advance
+        bool allStop;
+        progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
+        // FIXME delete unused program objects
+
+        if (allStop) break; // early exit if no progress was made
       }
-#endif
 
-    // decode reference ResultDistVec from detected derivations
-      ResultDistVec refResults;
-      montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
-
-    // train model
-      Model::Losses L;
-      model.train_dist(progVec, refResults, batchTrainSteps, logInterval ? &L : nullptr);
-
-      if (loggedRound) {
-        std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
+  #if 0
+      for (int i = 0; i < progVec.size(); ++i) {
+        std::cerr << "Optimized program " << i << ":\n";
+        progVec[i]->dump();
       }
-
-    // pick an action per program and advance
-      bool allStop;
-      progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
-      // FIXME delete unused program objects
-
-      if (allStop) break; // early exit if no progress was made
+  #endif
     }
-
-#if 0
-    for (int i = 0; i < progVec.size(); ++i) {
-      std::cerr << "Optimized program " << i << ":\n";
-      progVec[i]->dump();
-    }
-#endif
   }
-}
+
+};
 
 int main(int argc, char ** argv) {
   if (argc != 2) {
@@ -612,10 +643,10 @@ int main(int argc, char ** argv) {
     return -1;
   }
 
-  InitRandom();
-
   std::string taskFile = argv[1];
-  MonteCarlo(taskFile);
+  APO apo(taskFile);
+
+  apo.train();
 
   Model::shutdown();
 }

@@ -5,8 +5,13 @@
 
 std::vector<std::mt19937> threadGens;
 
+static bool initialized = false;
+
 void
 InitRandom() {
+  if (initialized) return;
+  initialized = true;
+
 #ifdef _OPENMP
   std::mt19937 randGen(42);
 
