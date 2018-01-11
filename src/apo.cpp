@@ -72,6 +72,37 @@ Clone(const ProgramVec & progVec) {
   return cloned;
 }
 
+
+struct Derivation {
+  int bestScore;
+  int shortestDerivation;
+
+  Derivation(int _score, int _der)
+  : bestScore(_score), shortestDerivation(_der) {}
+
+  Derivation(const Program & origP)
+  : bestScore(GetProgramScore(origP))
+  , shortestDerivation(0)
+  {}
+
+  void dump() const {
+    std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
+  }
+
+  bool betterThan(const Derivation & o) const {
+    if (bestScore < o.bestScore) {
+      return true;
+    } else if (bestScore == o.bestScore && (shortestDerivation < o.shortestDerivation)) {
+      return true;
+    }
+    return false;
+  }
+
+  bool operator== (const Derivation& o) const { return (bestScore == o.bestScore) && (shortestDerivation == o.shortestDerivation); }
+  bool operator!= (const Derivation& o) const { return !(*this == o); }
+};
+using DerivationVec = std::vector<Derivation>;
+
 // optimize the given program @P using @model (or a uniform random rule application using @maxDist)
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
@@ -86,14 +117,12 @@ struct MonteCarloOptimizer {
   int maxGenLen;
   Mutator mut;
 
-  int numOptRounds;
 
-  MonteCarloOptimizer(RuleVec & _rules, Model & _model, int _numOptRounds)
+  MonteCarloOptimizer(RuleVec & _rules, Model & _model)
   : rules(_rules)
   , model(_model)
   , maxGenLen(model.prog_length - model.num_Params - 1)
   , mut(rules, 0.1) // greedy shrinking mutator
-  , numOptRounds(_numOptRounds)
   {}
 
 
@@ -124,39 +153,9 @@ struct MonteCarloOptimizer {
     return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
   }
 
-   struct Derivation {
-     int bestScore;
-     int shortestDerivation;
-
-     Derivation(int _score, int _der)
-     : bestScore(_score), shortestDerivation(_der) {}
-
-     Derivation(const Program & origP)
-     : bestScore(GetProgramScore(origP))
-     , shortestDerivation(0)
-     {}
-
-     void dump() const {
-       std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
-     }
-
-     bool betterThan(const Derivation & o) const {
-       if (bestScore < o.bestScore) {
-         return true;
-       } else if (bestScore == o.bestScore && (shortestDerivation < o.shortestDerivation)) {
-         return true;
-       }
-       return false;
-     }
-
-     bool operator== (const Derivation& o) const { return (bestScore == o.bestScore) && (shortestDerivation == o.shortestDerivation); }
-     bool operator!= (const Derivation& o) const { return !(*this == o); }
-   };
-   using DerivationVec = std::vector<Derivation>;
-
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
-  std::vector<Derivation>
-  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist) {
+  DerivationVec
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
     const int numSamples = progVec.size();
     std::uniform_real_distribution<float> ruleRand(0, 1);
 
@@ -426,7 +425,17 @@ struct MonteCarloOptimizer {
 #undef IF_DEBUG_MV
 };
 
-
+// compute a scaore for the sample derivations (assuming refDef contains reference derivations)
+double
+ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) {
+  size_t numHit = 0;
+  for (int i = 0; i < refDer.size(); ++i) {
+    if (sampleDer[i] == refDer[i] || sampleDer[i].betterThan(refDer[i])) {
+      numHit++;
+    }
+  }
+  return numHit / (double) refDer.size();
+}
 
 
 void
@@ -459,14 +468,10 @@ MonteCarlo(const std::string taskFile) {
 // number of simulation batches
   const int numGames = 10000;
 
-  MonteCarloOptimizer montOpt(rules, model, numOptRounds);
-
-// generate sample programs
+  MonteCarloOptimizer montOpt(rules, model);
 
   assert(minStubLen > 0 && "can not generate program within constraints");
   RPG rpg(rules, model.num_Params);
-
-// generate randomly mutated programs
 
   Mutator expMut(rules, pExpand); // expanding rewriter
   std::uniform_int_distribution<int> mutRand(0, maxMutations);
@@ -481,13 +486,36 @@ MonteCarlo(const std::string taskFile) {
     if (loggedRound) {
       auto stats = model.query_stats();
       std::cerr << "\nRound " << g << " ("; stats.print(std::cerr); std::cerr << "):\n";
+
+    // evaluating current model
+      ProgramVec evalProgs(numSamples, nullptr);
+      for (int i = 0; i < numSamples; ++i) {
+        int stubLen = stubRand(randGen());
+        int mutSteps = mutRand(randGen());
+
+        auto * P = rpg.generate(stubLen);
+        assert(P->size() <= model.prog_length);
+        expMut.mutate(*P, mutSteps); // mutate at least once
+        evalProgs[i] = std::shared_ptr<Program>(P);
+      }
+
+      // random sampling based (uniform sampling, nio model)
+      auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
+
+      // one shot (model based sampling)
+      auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
+
+      double modelScore = ScoreDerivations(refDerVec, modelDerVec);
+      std::cerr << "Model score: " << modelScore << "\n";
+
     } else {
       if (g % dotStep == 0) { std::cerr << "."; }
     }
 
+
+// Generating training programs
     ProgramVec progVec(numSamples, nullptr);
 
-    // std::cout << "Generating " << numSamples << " programs..\n";
     #pragma omp parallel for
     for (int i = 0; i < numSamples; ++i) {
       int stubLen = stubRand(randGen());
@@ -497,30 +525,10 @@ MonteCarlo(const std::string taskFile) {
       assert(P->size() <= model.prog_length);
       expMut.mutate(*P, mutSteps); // mutate at least once
       progVec[i] = std::shared_ptr<Program>(P);
-
-#if 0
-      IF_DEBUG {
-        std::cerr << "P " << i << ":\n";
-        P->dump();
-      }
-#endif
     }
 
-#if 0
-    // sanity check
-    auto derVec = montOpt.searchDerivations(progVec, pRandom, maxExplorationDepth);
-    IF_DEBUG {
-      std::cerr << "Best derivations:\n";
-      for (int i = 1; i < derVec.size(); ++i) {
-        derVec[i].dump();
-        progVec[i]->dump();
-        std::cerr << "\n";
-      }
-    }
-#endif
 
   // explore all actions from current program
-
     for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
     // compute all one-step derivations
@@ -556,7 +564,7 @@ MonteCarlo(const std::string taskFile) {
       }
 
     // best-effort search for optimal program
-      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth);
+      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
 
 #if 0
       IF_DEBUG {
