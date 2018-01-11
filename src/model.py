@@ -190,6 +190,7 @@ with tf.Session() as sess:
 
               # next layer inputs to assemble
               inputs=[]
+              batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [batch_size x 1]
               for time_step in range(prog_length):
                 # if time_step > 0: tf.get_variable_scope().reuse_variables()
 
@@ -197,13 +198,17 @@ with tf.Session() as sess:
                   with tf.variable_scope("inputs"):
                     # gather first operand outputs
                     with tf.variable_scope("firstOp"):
-                      red_first = tf.gather(sequence, firstOp_data[:, time_step]) # batch_size adds redundant batch_size
-                      flat_first = red_first[0]
+                      # sequence [prog_len x batch_size x state_size]
+                      # indices [batch_size x 1]
+                      indices = tf.expand_dims(firstOp_data[:, time_step], axis=1)
+                      idx = tf.concat([indices, batch_range], axis=1)
+                      flat_first = tf.gather_nd(sequence, idx)
 
                     # gather second operand outputs
                     with tf.variable_scope("sndOp"):
-                      red_snd = tf.gather(sequence, sndOp_data[:, time_step]) # gather adds redundant batch_size
-                      flat_snd = red_snd[0]
+                      indices = tf.expand_dims(sndOp_data[:, time_step], axis=1)
+                      idx = tf.concat([indices, batch_range], axis=1)
+                      flat_snd = tf.gather_nd(sequence, idx)
 
                     # merge into joined input 
                     time_input = tf.concat([outputs[time_step], flat_first, flat_snd], axis=1, name="seq_input")
