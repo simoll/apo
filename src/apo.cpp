@@ -728,18 +728,28 @@ struct APO {
 };
 
 int main(int argc, char ** argv) {
-  if (argc != 2) {
-    std::cerr << argv[0] << " <scenario.task>\n";
-    return -1;
+  // pars command
+  std::string cmd = "help";
+  if (argc >= 2) {
+    cmd = argv[1];
   }
 
-  const std::string cpPrefix = "cp/";
+  // help command
+  if (cmd == "help") {
+    std::cerr << argv[0] << " <command>\nAvailable commands:\n"
+                             << "\ttrain <scenario.task>\n";
+    return 0;
+  }
 
-  std::string taskFile = argv[1];
-  APO apo(taskFile, cpPrefix);
+  // train command
+  if (cmd == "train") {
+    const std::string cpPrefix = "cp/";
+    std::string taskFile = argv[2];
+    APO apo(taskFile, cpPrefix);
 
-  const size_t numGames = 1000000;
-  apo.train(numGames);
+    const size_t numGames = 1000000;
+    apo.train(numGames);
+  }
 
   Model::shutdown();
 }
