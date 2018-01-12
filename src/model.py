@@ -305,13 +305,16 @@ with tf.Session() as sess:
     tf.summary.scalar('loss', loss)
 
     # learning rate configuration
-    starter_learning_rate = 0.1
-    end_learning_rate = 0.0001
-    decay_steps = 400000
-    learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
-                                              decay_steps, end_learning_rate,
-                                              power=0.5, name="learning_rate")
+    # starter_learning_rate = 0.1
+    # end_learning_rate = 0.0001
+    # decay_steps = 400000
+    # learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
+    #                                           decay_steps, end_learning_rate,
+    #                                           power=0.5, name="learning_rate")
     
+    # learning rate parameter
+    learning_rate = tf.get_variable("learning_rate", initializer=0.0001, dtype=tf.float32, trainable=False)
+
     # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
