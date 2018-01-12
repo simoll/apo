@@ -109,7 +109,26 @@ using DerivationVec = std::vector<Derivation>;
 struct MonteCarloOptimizer {
 #define IF_DEBUG_MC if (false)
 
-  size_t invalidModelDists; // how often did the model return invalid distributions (and this was detected)
+  // some statistics
+  struct Stats {
+    size_t sampleActionFailures; // failures to sample actions
+    size_t invalidModelDists; // # detected invalid rule/dist distributions from model
+    size_t derivationFailures; // # failed derivations
+    Stats()
+    : sampleActionFailures(0)
+    , invalidModelDists(0)
+    , derivationFailures(0)
+    {}
+
+    std::ostream& print(std::ostream& out) const {
+      out << "MCOpt::Stats {"
+          << "sampleActionFailures " << sampleActionFailures
+          << ", invalidModelDists " << invalidModelDists
+          << ", derivationFailures " << derivationFailures << "}";
+      return out;
+    }
+  };
+  Stats stats;
 
   // IF_DEBUG
   RuleVec & rules;
@@ -120,7 +139,7 @@ struct MonteCarloOptimizer {
 
 
   MonteCarloOptimizer(RuleVec & _rules, Model & _model)
-  : invalidModelDists(0)
+  : stats()
   , rules(_rules)
   , model(_model)
   , maxGenLen(model.prog_length - model.num_Params - 1)
@@ -237,7 +256,7 @@ struct MonteCarloOptimizer {
               if (!checkedDists &&
                   (!IsValidDistribution(modelRewriteDist[t].ruleDist) ||
                   !IsValidDistribution(modelRewriteDist[t].targetDist))) {
-                ++invalidModelDists;
+                stats.invalidModelDists++;
                 signalsStop = true;
                 break;
               }
@@ -251,6 +270,8 @@ struct MonteCarloOptimizer {
               signalsStop = (failureCount >= failureLimit);
             }
           }
+
+          stats.derivationFailures += failureCount;
 
         // don't step over STOP
           if (signalsStop) {
@@ -427,12 +448,14 @@ struct MonteCarloOptimizer {
         }
       }
 
-      // could not hit
+      // could not hit -> STOP
       if (!hit) {
-        std::cerr << "---- Could not sample action!!! -----\n";
-        roundProgs[s]->dump();
-        refResults[s].dump();
-        abort(); // this should never happen
+        stats.sampleActionFailures++;
+
+        // std::cerr << "---- Could not sample action!!! -----\n";
+        // roundProgs[s]->dump();
+        // refResults[s].dump();
+        // abort(); // this should never happen
 
         actionProgs.push_back(roundProgs[s]); // soft failure
       }
@@ -557,12 +580,15 @@ struct APO {
     const int logInterval = 10;
     const int dotStep = logInterval / 10;
 
-    std::cerr << "Training..\n";
+    std::cerr << "\n-- Training --";
     for (int g = 0; g < numGames; ++g) {
       bool loggedRound = (g % logInterval == 0);
       if (loggedRound) {
         auto stats = model.query_stats();
-        std::cerr << "\nRound " << g << " ("; stats.print(std::cerr); std::cerr << "):\n";
+        std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr); std::cerr << ") -\n";
+
+      // print MCTS statistics
+        montOpt.stats.print(std::cerr) << "\n";
 
       // evaluating current model
         ProgramVec evalProgs(numEvalSamples, nullptr);
