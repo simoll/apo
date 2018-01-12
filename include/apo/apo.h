@@ -497,6 +497,9 @@ struct APO {
   double pRandom; //1.0; // probability of ignoring the model for inference
   int numOptRounds; //50; // number of optimization retries
 
+// eval round interval
+  int logRate;
+
 // training
   int numSamples;//
   int batchTrainSteps; // = 4;
@@ -526,6 +529,8 @@ struct APO {
     maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
     pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
+
+    logRate = task.get_or_fail<int>("logRate"); // 10; // number of round followed by an evaluation
 
     std::cerr << "Storing checkpoints to prefix " << cpPrefix << "\n";
 
@@ -567,12 +572,11 @@ struct APO {
   // number of simulation batches
     assert(minStubLen > 0 && "can not generate program within constraints");
 
-    const int logInterval = 10;
-    const int dotStep = logInterval / 10;
+    const int dotStep = logRate / 10;
 
     std::cerr << "\n-- Training --";
     for (int g = 0; g < numGames; ++g) {
-      bool loggedRound = (g % logInterval == 0);
+      bool loggedRound = (g % logRate == 0);
       if (loggedRound) {
         auto stats = model.query_stats();
         std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr); std::cerr << ") -\n";
@@ -664,7 +668,7 @@ struct APO {
 
       // train model
         Model::Losses L;
-        model.train_dist(progVec, refResults, batchTrainSteps, logInterval ? &L : nullptr);
+        model.train_dist(progVec, refResults, batchTrainSteps, logRate ? &L : nullptr);
 
         if (loggedRound) {
           std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
