@@ -499,6 +499,7 @@ struct APO {
 
 // eval round interval
   int logRate;
+  size_t numGames;
 
 // training
   int numSamples;//
@@ -531,6 +532,7 @@ struct APO {
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
 
     logRate = task.get_or_fail<int>("logRate"); // 10; // number of round followed by an evaluation
+    numGames = task.get_or_fail<size_t>("numGames"); // 10; // number of round followed by an evaluation
 
     std::cerr << "Storing checkpoints to prefix " << cpPrefix << "\n";
 
@@ -558,7 +560,7 @@ struct APO {
     }
   }
 
-  void train(const size_t numGames) {
+  void train() {
     const int numSamples = model.max_batch_size;
     const int numEvalSamples = model.max_batch_size * 4;
 
@@ -575,7 +577,7 @@ struct APO {
     const int dotStep = logRate / 10;
 
     std::cerr << "\n-- Training --";
-    for (int g = 0; g < numGames; ++g) {
+    for (size_t g = 0; g < numGames; ++g) {
       bool loggedRound = (g % logRate == 0);
       if (loggedRound) {
         auto stats = model.query_stats();

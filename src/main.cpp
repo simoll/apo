@@ -21,8 +21,7 @@ int main(int argc, char ** argv) {
     std::string taskFile = argv[2];
     APO apo(taskFile, cpPrefix);
 
-    const size_t numGames = 1000000;
-    apo.train(numGames);
+    apo.train();
 
     Model::shutdown();
     return 0;

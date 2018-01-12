@@ -8,3 +8,4 @@ maxExplorationDepth 2
 pRandom 1.0
 numOptRounds 10
 logRate 10
+numGames 1000

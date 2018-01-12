@@ -7,4 +7,4 @@ mcDerivationSteps 2
 maxExplorationDepth 3
 pRandom 1.0
 numOptRounds 100
-
+numGames 100000
