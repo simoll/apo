@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <cassert>
+#include <iostream>
 
 #define EPS 0.00001
 
@@ -33,6 +34,14 @@ SampleCategoryDistribution(CatDist & catDist, double p) {
     if (lastCatBase >= catBase) continue; // skip empty intervals
     assert(p >= lastCatBase);
     return e;
+  }
+
+  if (catBase + EPS < 1.0) {
+    std::cerr << "Samping error!: p=" << p << "\n";
+    std::cerr << catBase << " " << (catBase + EPS) << " catDist:\n";
+    PrintDist(catDist, std::cerr);
+    std::cerr << "Aborting!\n";
+    abort();
   }
 
   assert(catBase + EPS >= 1.0);
