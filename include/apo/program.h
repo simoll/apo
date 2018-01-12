@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 
+#include <vector>
 #include <memory>
 
 namespace apo {
@@ -39,6 +40,7 @@ enum class OpCode : int16_t {
 
 // arithmetic data type
 using data_t = uint64_t;
+using DataVec = std::vector<data_t>;
 
 // node index data type
 using node_t = int32_t;
@@ -405,53 +407,19 @@ struct Program {
 
 };
 
-static data_t
-Evaluate(const Program & prog, const std::vector<data_t> & params) {
-  data_t state[prog.size()];
+using ProgramVec = std::vector<std::shared_ptr<Program>>;
 
-  assert(prog.code[prog.size() - 1].oc == OpCode::Return);
-  for (int pc = 0; pc <= prog.getReturnIndex(); ++pc) {
-    data_t result = 0; // no undefined behavior...
-    const Statement & stat = prog.code[pc];
-    if (stat.oc == OpCode::Constant) {
-      // constant
-      result = stat.getValue();
-
-    } else if (stat.oc == OpCode::Nop) {
-      // pass
-
-    } else if (stat.oc == OpCode::Pipe) {
-      // wrapper instructions
-      int32_t first = stat.getOperand(0);
-      result = first < 0 ? params[GetHoleIndex(first)] : state[first];
-
-    } else {
-      // binary operators
-      int32_t first = stat.getOperand(0);
-      int32_t second = stat.getOperand(1);
-      data_t A = first < 0 ? params[GetHoleIndex(first)] : state[first];
-      data_t B = second < 0 ? params[GetHoleIndex(second)] : state[second];
-
-      switch (stat.oc) {
-      case OpCode::Add: result = A + B; break;
-      case OpCode::Sub: result = A - B; break;
-      case OpCode::Mul: result = A * B; break;
-      case OpCode::And: result = A & B; break;
-      case OpCode::Or:  result = A | B; break;
-      case OpCode::Xor: result = A ^ B; break;
-
-      default:
-        abort(); // not implemented
-      }
-    }
-
-    state[pc] = result;
+static
+ProgramVec
+Clone(const ProgramVec & progVec) {
+  ProgramVec cloned;
+  cloned.reserve(progVec.size());
+  for (const auto & P : progVec) {
+    cloned.emplace_back(new Program(*P));
   }
-
-  return state[prog.getReturnIndex()];
+  return cloned;
 }
 
-using ProgramVec = std::vector<std::shared_ptr<Program>>;
 
 } // namespace apo
 

@@ -11,512 +11,683 @@
 #include <functional>
 #include <queue>
 
-#include "apo/program.h"
 #include "apo/shared.h"
+#include "apo/ml.h"
 
+#include "apo/parser.h"
+#include "apo/extmath.h"
+
+#include "apo/program.h"
+#include "apo/rpg.h"
+#include "apo/mutator.h"
+
+#include <sstream>
+
+#include <vector>
 // #include "tensorflow/cc/client/client_session.h"
 // #include "tensorflow/cc/ops/standard_ops.h"
 // #include "tensorflow/cc/framework/tensor.h"
 
 namespace apo {
 
-using NodeSet = std::set<int32_t>;
-
-static bool
-rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes) {
-  // matching a pattern hole
-  if (IsArgument(patternPc)) {
-    int holeIdx = GetHoleIndex(patternPc);
-    if (defined[holeIdx]) {
-      return holes[holeIdx] == pc; // matched a defined hole
-    } else {
-      // add a new definition
-      holes[holeIdx] = pc;
-      defined[holeIdx] = true;
-      return true;
-    }
-  }
-
-  assert (IsStatement(patternPc));
-  if (pc < 0) {
-    // argument matching
-    return false; // can only match parameters with placeholders
-
-  } else {
-    nodes.insert(pc); // keep track of matched nodes
-
-    OpCode oc = prog.code[pc].oc;
-    if (oc != pattern.code[patternPc].oc) return false;
-    if (oc == OpCode::Constant) {
-      // constant matching
-      return pattern.code[patternPc].getValue() == prog.code[pc].getValue(); // matching constant
-
-    } else {
-      // generic statement matching
-      for (int i = 0; i < 2; ++i) {
-        if (!rec_MatchPattern(prog, prog.code[pc].getOperand(i), pattern, pattern.code[patternPc].getOperand(i), holes, defined, nodes)) return false;
-      }
-      return true;
-    }
-  }
+int
+GetProgramScore(const Program & P) {
+  return P.size();
 }
 
 
-// matches program @pattern aligning the two at the statement at @pc of @prog (stores the operand index at "holes" (parameters) in @holes
-static bool
-MatchPattern(const Program & prog, int pc, const Program & pattern, NodeVec & holes, NodeSet & matchedNodes) {
-  assert (pattern.size() > 0);
-  holes.resize(pattern.num_Params(), -1);
 
-  std::vector<bool> defined(pattern.numParams, false);
-  // match the pattern
-  int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
-  bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, matchedNodes);
-  if (Verbose) {
-    std::cerr << "op match: " << ok << "\n";
+struct Derivation {
+  int bestScore;
+  int shortestDerivation;
+
+  Derivation(int _score, int _der)
+  : bestScore(_score), shortestDerivation(_der) {}
+
+  Derivation(const Program & origP)
+  : bestScore(GetProgramScore(origP))
+  , shortestDerivation(0)
+  {}
+
+  void dump() const {
+    std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
   }
 
-  // make sure that holes do not refer to nodes that are part of the match
-  for (int i = 0; i < pattern.num_Params(); ++i) {
-    if (IsStatement(holes[i]) && matchedNodes.count(holes[i])) { ok = false; break; }
+  bool betterThan(const Derivation & o) const {
+    if (bestScore < o.bestScore) {
+      return true;
+    } else if (bestScore == o.bestScore && (shortestDerivation < o.shortestDerivation)) {
+      return true;
+    }
+    return false;
   }
 
-  // verify that there is no user of a matched node (except for the root)
-  for (int i = 0; ok && (i < prog.size()); ++i) {
-    if (!prog.code[i].isOperator()) continue;
+  bool operator== (const Derivation& o) const { return (bestScore == o.bestScore) && (shortestDerivation == o.shortestDerivation); }
+  bool operator!= (const Derivation& o) const { return !(*this == o); }
+};
+using DerivationVec = std::vector<Derivation>;
 
-    for (int o = 0; ok && (o < prog.code[i].num_Operands()); ++o) {
-      int opIdx = prog.code[i].getOperand(o);
-      if (opIdx < 0 || opIdx == pc) continue; // operand is parameter or the match root (don't care)
-      if (matchedNodes.count(opIdx)) { // uses part of the match
-        if (!matchedNodes.count(i)) { // .. only possible if this instruction is also part of th match
-          ok = false;
+// optimize the given program @P using @model (or a uniform random rule application using @maxDist)
+// maximal derivation length is @maxDist
+// will return the sequence to the best-seen program (even if the model decides to go on)
+struct MonteCarloOptimizer {
+#define IF_DEBUG_MC if (false)
+
+  // some statistics
+  struct Stats {
+    size_t sampleActionFailures; // failures to sample actions
+    size_t invalidModelDists; // # detected invalid rule/dist distributions from model
+    size_t derivationFailures; // # failed derivations
+    Stats()
+    : sampleActionFailures(0)
+    , invalidModelDists(0)
+    , derivationFailures(0)
+    {}
+
+    std::ostream& print(std::ostream& out) const {
+      out << "MCOpt::Stats {"
+          << "sampleActionFailures " << sampleActionFailures
+          << ", invalidModelDists " << invalidModelDists
+          << ", derivationFailures " << derivationFailures << "}";
+      return out;
+    }
+  };
+  Stats stats;
+
+  // IF_DEBUG
+  RuleVec & rules;
+  Model & model;
+
+  int maxGenLen;
+  Mutator mut;
+
+
+  MonteCarloOptimizer(RuleVec & _rules, Model & _model)
+  : stats()
+  , rules(_rules)
+  , model(_model)
+  , maxGenLen(model.prog_length - model.num_Params - 1)
+  , mut(rules, 0.1) // greedy shrinking mutator
+  {}
+
+
+  bool
+  tryApplyModel(Program & P, Rewrite & rewrite, ResultDist & res, bool & signalsStop) {
+  // sample a random rewrite at a random location (product of rule and target distributions)
+    std::uniform_real_distribution<float> pRand(0, 1.0);
+
+    int ruleEnumId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
+
+    size_t keepGoing = 10; // 10 sampling attempts
+    int targetId;
+    bool validPc;
+    do {
+      // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
+      targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
+
+      validPc = targetId + 1 < P.size(); // do not rewrite returns
+    } while (keepGoing-- > 0 && !validPc);
+
+  // failed to sample a valid rule application -> STOP
+    if (!keepGoing) {
+      signalsStop = true;
+      return true;
+    }
+
+    if (ruleEnumId == 0) {
+      // magic STOP rule
+      signalsStop = true;
+      return true;
+    }
+
+  // translate to internal rule representation
+    auto rew = Rewrite::fromModel(targetId, ruleEnumId);
+
+  // Otw, rely on the mutator to do the job
+    return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
+  }
+
+  // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
+  DerivationVec
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
+    const int numSamples = progVec.size();
+    std::uniform_real_distribution<float> ruleRand(0, 1);
+
+    const bool useModel = pRandom != 1.0;
+
+    // start with STOP derivation
+    std::vector<Derivation> states;
+    for (int i = 0; i < progVec.size(); ++i) {
+      states.emplace_back(*progVec[i]);
+    }
+
+#define IF_DEBUG_DER if (false)
+
+    // pre-compute initial program distribution
+    ResultDistVec initialProgDist;
+    if (useModel) initialProgDist = model.infer_dist(progVec, true);
+
+    // number of derivation walks
+    for (int r = 0; r < numOptRounds; ++r) {
+
+      // re-start from initial program
+      ProgramVec roundProgs = Clone(progVec);
+
+      ResultDistVec modelRewriteDist = initialProgDist;
+      for (int derStep = 0; derStep < maxDist; ++derStep) {
+
+        // use cached probabilities if possible
+        if ((derStep > 0) && useModel) modelRewriteDist = model.infer_dist(roundProgs, true); // fail silently
+
+        int frozen = 0;
+
+        #pragma omp parallel for reduction(+:frozen)
+        for (int t = 0; t < numSamples; ++t) {
+          // freeze if derivation exceeds model
+          if (roundProgs[t]->size() >= model.prog_length) {
+            ++frozen;
+            continue;
+          }
+
+          IF_DEBUG_DER if (derStep == 0) {
+            std::cerr << "Initial prog " << t << ":\n";
+            roundProgs[t]->dump();
+          }
+
+        // pick & apply a rewrite
+          Rewrite rewrite;
+          bool success = false;
+          bool signalsStop = false;
+
+        // loop until rewrite succeeds (or stop)
+          const size_t failureLimit = 10;
+          bool checkedDists = false; // sample distributions have been sanitized
+          size_t failureCount = 0;
+          while (!signalsStop && !success) {
+            bool uniRule;
+            uniRule = !useModel || (ruleRand(randGen()) <= pRandom);
+
+            if (uniRule) {
+              // uniform random rewrite
+              rewrite = mut.mutate(*roundProgs[t], 1);
+              IF_DEBUG_DER {
+                std::cerr << "after random rewrite!\n";
+                roundProgs[t]->dump();
+              }
+              success = true; // mutation always succeeeds
+              signalsStop = false;
+            } else {
+              // sanitize distributions drawn from model
+              if (!checkedDists &&
+                  (!IsValidDistribution(modelRewriteDist[t].ruleDist) ||
+                  !IsValidDistribution(modelRewriteDist[t].targetDist))) {
+                stats.invalidModelDists++;
+                signalsStop = true;
+                break;
+              }
+              checkedDists = true; // model returned proper distributions for rule and target
+
+              // use model to apply rule
+              success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
+              if (!success) failureCount++;
+
+              // avoid infinite loops by failing after @failureLimit
+              signalsStop = (failureCount >= failureLimit);
+            }
+          }
+
+          stats.derivationFailures += (failureCount >= failureLimit);
+
+        // don't step over STOP
+          if (signalsStop) {
+            ++frozen;
+            continue;
+          }
+
+        // derived program to large for model -> freeze
+          if (roundProgs[t]->size() > model.prog_length) {
+            ++frozen;
+            continue;
+          }
+
+        // Otw, update incumbent
+          // mutated program
+          int currScore = GetProgramScore(*roundProgs[t]);
+          Derivation thisDer(currScore, derStep + 1);
+          if (thisDer.betterThan(states[t])) { states[t] = thisDer; }
+        }
+
+        if (frozen == numSamples) {
+          break; // all frozen -> early exit
+        }
+      }
+    }
+
+#undef IF_DEBUG_DER
+    return states;
+  }
+
+  using CompactedRewrites = const std::vector<std::pair<int, Rewrite>>;
+
+  // convert detected derivations to refernce distributions
+  void
+  encodeBestDerivation(ResultDist & refResult, Derivation baseDer, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const {
+  // find best-possible rewrite
+    assert(startIdx < derivations.size());
+    bool noBetterDerivation = true;
+    Derivation bestDer = baseDer;
+    for (int i = startIdx;
+         i < rewrites.size() && (rewrites[i].first == progIdx);
+         ++i)
+    {
+      const auto & der = derivations[i];
+      if (der.betterThan(bestDer)) { noBetterDerivation = false; bestDer = der; }
+    }
+
+    if (noBetterDerivation) {
+      // no way to improve over STOP
+      refResult = model.createStopResult();
+      return;
+    }
+
+    IF_DEBUG_MC { std::cerr << progIdx << " -> best "; bestDer.dump(); std::cerr << "\n"; }
+
+  // activate all positions with best rewrites
+    bool noBestDerivation = true;
+    for (int i = startIdx;
+         i < rewrites.size() && (rewrites[i].first == progIdx);
+         ++i)
+    {
+      if (derivations[i] != bestDer) { continue; }
+      noBestDerivation = false;
+      const auto & rew = rewrites[i].second;
+      int ruleEnumId = rew.getEnumId();
+      assert(rew.pc < refResult.targetDist.size());
+      refResult.targetDist[rew.pc] += 1.0;
+      assert(ruleEnumId < refResult.ruleDist.size());
+      refResult.ruleDist[ruleEnumId] += 1.0;
+
+      IF_DEBUG_MC {
+        std::cerr << "Prefix to best. pc=" << rew.pc << ", reid=" << ruleEnumId << "\n";
+        rules[rew.ruleId].dump(rew.leftMatch);
+      }
+    }
+
+    assert(!noBestDerivation);
+  }
+
+  void
+  populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const ProgramVec & progVec) const {
+    int rewriteIdx = 0;
+    int nextSampleWithRewrite = rewrites[rewriteIdx].first;
+    for (int s = 0; s < progVec.size(); ++s) {
+      // program without applicable rewrites
+      if (s < nextSampleWithRewrite) {
+        refResults.push_back(model.createStopResult());
+        continue;
+      } else {
+        refResults.push_back(model.createEmptyResult());
+      }
+
+      // convert to a reference distribution
+      encodeBestDerivation(refResults[s], Derivation(*progVec[s]), derivations, rewrites, rewriteIdx, s);
+
+      // skip to next progam with rewrites
+      for (;rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {}
+
+      if (rewriteIdx >= rewrites.size()) {
+        nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
+      } else {
+        nextSampleWithRewrite = rewrites[rewriteIdx].first; // program with applicable rewrite in sight
+      }
+    }
+    assert(refResults.size() == progVec.size());
+
+    // normalize distributions
+    for (int s = 0; s < progVec.size(); ++s) {
+      auto & result = refResults[s];
+      result.normalize();
+
+      IF_DEBUG_MC {
+        std::cerr << "\n Sample " << s << ":\n";
+        progVec[s]->dump();
+        std::cerr << "Result ";
+        if (result.isStop()) std::cerr << "STOP!\n";
+        else result.dump();
+      }
+    }
+  }
+
+  // sample a target based on the reference distributions
+  ProgramVec
+  sampleActions(const ProgramVec & roundProgs, ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, bool & allStop) {
+#define IF_DEBUG_SAMPLE if (false)
+    allStop = true;
+    std::uniform_real_distribution<float> pRand(0, 1.0);
+
+    ProgramVec actionProgs;
+    actionProgs.reserve(roundProgs.size());
+
+    int rewriteIdx = 0;
+    int nextSampleWithRewrite = rewrites.empty() ? std::numeric_limits<int>::max() : rewrites[rewriteIdx].first;
+    for (int s = 0; s < refResults.size(); ++s) {
+      IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << actionProgs.size() << "\n"; }
+      if (s < nextSampleWithRewrite) {
+        // no rewrite available -> STOP
+        actionProgs.push_back(roundProgs[s]);
+        continue;
+      }
+
+      // Otw, sample an action
+      const int numRetries = 100;
+      bool hit = false;
+      for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
+        int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen()));
+        int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen()));
+
+        IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
+        // try to apply the action
+        if (ruleEnumId > 0) {
+          // scan through legal actions until hit
+          for (int i = rewriteIdx;
+              i < rewrites.size() && rewrites[i].first == s;
+              ++i)
+          {
+            if ((rewrites[i].second.pc == targetId) &&
+                (rewrites[i].second.getEnumId() == ruleEnumId)
+            ) {
+              assert(i < nextProgs.size());
+              actionProgs.push_back(nextProgs[i]);
+              hit = true;
+              break;
+            }
+          }
+
+          // proper action
+          allStop = false;
+        } else {
+          // STOP action
+          actionProgs.push_back(roundProgs[s]);
+          hit = true;
           break;
         }
       }
-    }
-  }
 
-  if (Verbose) {
-    if (ok) {
-      std::cerr << "Match. Holes:";
-      for (int i = 0; i < pattern.numParams; ++i) {
-        std::cerr << " "; PrintIndex(holes[i], std::cerr);
+      // could not hit -> STOP
+      if (!hit) {
+        stats.sampleActionFailures++;
+
+        // std::cerr << "---- Could not sample action!!! -----\n";
+        // roundProgs[s]->dump();
+        // refResults[s].dump();
+        // abort(); // this should never happen
+
+        actionProgs.push_back(roundProgs[s]); // soft failure
       }
-      std::cerr << "\n";
-    }
-    else {
-      std::cerr << "Mismatch.\n";
-    }
-  }
-  return ok;
-}
 
-static void
-rec_ErasePattern(Program & prog, int pc, const Program & pattern, int patternPc, NodeSet & erased) {
-  if (!IsStatement(pc)) return; // do not erase by argument indices
-  if (!erased.insert(pc).second) return;
+      // advance to next progam with rewrites
+      for (;rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {}
 
-  auto & stat = prog.code[pc];
-  auto & patStat = pattern.code[patternPc];
-
-  if (patStat.isOperator()) {
-    for (int i = 0; i < stat.num_Operands(); ++i) {
-      int nextPatIdx = patStat.getOperand(i);
-      int nextProgIdx = stat.getOperand(i);
-      if (IsStatement(nextPatIdx)) {
-        rec_ErasePattern(prog, nextProgIdx, pattern, nextPatIdx, erased);
-      }
-    }
-  }
-
-  stat.oc = OpCode::Nop;
-}
-
-static void
-ErasePattern(Program & prog, int pc, const Program & pattern) {
-  if (pattern.size() <= 1) return; // nothing to erase
-  NodeSet erased;
-  rec_ErasePattern(prog, pc, pattern, pattern.getReturnIndex(), erased);
-}
-
-
-// rewrite rule lhs -> rhs
-struct Rule {
-  Program lhs;
-  Program rhs;
-
-  bool isExpanding(bool leftMatch) const {
-    return getMatchProg(leftMatch).size() < getRewriteProg(leftMatch).size();
-  }
-
-  bool removesHoles(bool leftMatch) const {
-    return getMatchProg(leftMatch).num_Params() > getRewriteProg(leftMatch).num_Params();
-  }
-
-  Program & getMatchProg(bool matchLeft) {
-    if (matchLeft) return lhs; else return rhs;
-  }
-  const Program & getMatchProg(bool matchLeft) const {
-    if (matchLeft) return lhs; else return rhs;
-  }
-
-  Program & getRewriteProg(bool matchLeft) {
-    if (matchLeft) return rhs; else return lhs;
-  }
-  const Program & getRewriteProg(bool matchLeft) const {
-    if (matchLeft) return rhs; else return lhs;
-  }
-
-  Rule(Program _lhs, Program _rhs)
-  : lhs(_lhs)
-  , rhs(_rhs)
-  {}
-
-  bool match_ext(bool matchLeft, const Program & prog, int pc, NodeVec & holes, NodeSet & matchedNodes) const {
-    return MatchPattern(prog, pc, getMatchProg(matchLeft), holes, matchedNodes);
-  }
-
-  inline bool match(bool matchLeft, const Program & prog, int pc, NodeVec & holes) const {
-    NodeSet matchedNodes;
-    return match_ext(matchLeft, prog, pc, holes, matchedNodes);
-  }
-
-  void print(std::ostream & out) const {
-    out << "Rule [[ lhs = "; lhs.print(out);
-    out << "rhs = ";
-    rhs.print(out);
-    out << "]]\n";
-  }
-
-  void print(std::ostream & out, bool leftMatch) const {
-    out << "Rule [[ from = "; getMatchProg(leftMatch).print(out);
-    out << "to = ";
-    getRewriteProg(leftMatch).print(out);
-    out << "]]\n";
-  }
-
-  void dump() const { print(std::cerr); }
-  void dump(bool leftMatch) const { print(std::cerr, leftMatch); }
-
-  // applies this rule (after a match)
-  void rewrite(bool matchLeft, Program & prog, int rootPc, NodeVec & holes) const {
-    IF_VERBOSE { std::cerr << "-- rewrite at " << rootPc << " --\n"; prog.dump(); }
-
-    // erase @lhs
-    ErasePattern(prog, rootPc, getMatchProg(matchLeft));
-
-    IF_VERBOSE { std::cerr << "-- after erase at " << rootPc << " --\n"; prog.dump(); }
-
-    // make space for rewrite rule
-    ReMap reMap;
-    int afterInsertPc = prog.make_space(rootPc + 1, getRewriteProg(matchLeft).size(), reMap);
-    // updated match root
-    int mappedRootPc = reMap.count(rootPc) ? reMap[rootPc] : rootPc;
-
-    IF_VERBOSE { std::cerr << "-- after make_space --\n"; prog.dump(); }
-
-    // insert @rhs
-    // patch holes (some positions were remapped)
-    IF_VERBOSE { std::cerr << "Adjust remap\n"; }
-    for (int i = 0; i < getMatchProg(matchLeft).num_Params(); ++i) {
-      IF_VERBOSE { std::cerr << i << " -> " << holes[i]; }
-      if (reMap.count(holes[i])) { // re-map hole indices for moved statements
-        holes[i] = reMap[holes[i]];
-      }
-      IF_VERBOSE { std::cerr << "  " << holes[i] << "\n"; }
-    }
-
-    // rmappedRootPc replacement after the insertion of this pattern
-    int rootSubstPc = getRewriteProg(matchLeft).link(prog, afterInsertPc - (getRewriteProg(matchLeft).size() - 1), holes);
-
-    IF_VERBOSE {
-      std::cerr << "-- after linking (root subst " << rootSubstPc << ") -- \n";
-      prog.dump();
-    }
-
-    // prog.applyAfter(afterInsertPc, lambda[=](Statement & stat) { .. }
-    for (node_t i = std::max(0, rootSubstPc + 1); i < prog.size(); ++i) {
-      for (int o = 0; o < prog.code[i].num_Operands(); ++o) {
-        if (prog.code[i].getOperand(o) == mappedRootPc) { prog.code[i].setOperand(o, rootSubstPc); }
+      if (rewriteIdx >= rewrites.size()) {
+        nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all remaining programs as STOP
+      } else {
+        nextSampleWithRewrite = rewrites[rewriteIdx].first; // program with applicable rewrite in sight
       }
     }
 
-    IF_VERBOSE {
-      std::cerr << "-- after insert -- \n";
-      prog.dump();
-    }
-    prog.compact();
+    assert(actionProgs.size() == roundProgs.size());
+    return actionProgs;
+#undef IF_DEBUG_SAMPLE
   }
+
+#undef IF_DEBUG_MV
 };
 
+// compute a scaore for the sample derivations (assuming refDef contains reference derivations)
+struct DerStats {
+  double hits; // ratio of met MCTS solutions
+  double improved; // number of improved MCTS solutions
+  double stops; // hit rate of "always STOP" solution
+  double getMisses() const { return 1.0 - (hits + improved); }
+};
 
-using RuleVec = std::vector<Rule>;
-// create a basic rule set
-static
-RuleVec
-BuildRules() {
-  RuleVec rules;
+DerStats
+ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) {
+  size_t numHit = 0;
+  size_t numImproved = 0;
+  size_t numStops = 0;
 
-  // (%b + %a) - %b --> %a
-  {
-    // try some matching
-    Program lhs (2, {Statement(OpCode::Add, -2, -1), Statement(OpCode::Sub, 0, -2), build_ret(1) });
-    Program rhs (1, {build_ret(-1)});
-    rules.emplace_back(lhs, rhs);
+  for (int i = 0; i < refDer.size(); ++i) {
+    if (sampleDer[i] == refDer[i]) {
+      numHit++;
+    }
+    if (sampleDer[i].betterThan(refDer[i])) {
+      numImproved++;
+    }
+    if (refDer[i].shortestDerivation == 0) {
+      numStops = 0;
+    }
   }
-
-  // commutative rules (oc %a %b --> oc %b %a)
-  for_such(IsCommutative, [&](OpCode oc){
-    rules.emplace_back(
-      Program(2, {Statement(oc, -1, -2), build_ret(0)}),
-      Program(2, {Statement(oc, -2, -1), build_ret(0)})
-    );
-  });
-
-  // associative rules (oc (%a %b) %c --> %a (%b %c)
-  for_such(IsAssociative, [&](OpCode oc){
-    rules.emplace_back(
-      Program(3, {Statement(oc, -1, -2),
-                  Statement(oc, 0, -3),
-                  build_ret(1)
-                  }),
-      Program(3, {Statement(oc, -2, -3),
-                  Statement(oc, -1, 0),
-                  build_ret(1)
-                  })
-    );
-  });
-
-  // %a * (%b + %c) --> (%a * %b) + (%a * %c)
-  rules.emplace_back(
-      Program(3, {Statement(OpCode::Add, -2, -3),
-                  Statement(OpCode::Mul, -1, 0),
-                  build_ret(1)
-                  }),
-      Program(3, {Statement(OpCode::Mul, -1, -2),
-                  Statement(OpCode::Mul, -1, -3),
-                  Statement(OpCode::Add, 0, 1),
-                  build_ret(2)
-                  })
-  );
-
-  // (%a <oc> neutral) --> %a
-  for_such(HasNeutralRHS, [&](OpCode oc){
-    data_t neutral = GetNeutralRHS(oc);
-    rules.emplace_back(
-      Program(1, {build_const(neutral),
-                  Statement(oc, -1, 0),
-                  build_ret(1)
-                  }),
-      Program(1, {build_ret(-1)
-                  })
-    );
-  });
-
-  //  paranoid rule consistency checking
-  for (int i = 0; i < rules.size(); ++i) {
-    const auto & rule = rules[i];
-    bool lhs = true;
-    auto handler = [&rule,&lhs](int pc, std::string msg) -> bool {
-      std::cerr << "Error at " << pc << " : " <<msg << "\n";
-      return true;
-    };
-
-    lhs = true; if (!rule.lhs.verify(handler)) { std::cerr << "in rule lhs: " << i << "\n"; exit(-1); }
-    lhs = false; if (!rule.rhs.verify(handler))  { std::cerr << "in rule rhs: " << i << "\n"; exit(-1); }
-  }
-
-  // arithmetic simplifaction rules
-  return rules;
+  return DerStats{
+    numHit / (double) refDer.size(),
+    numImproved / (double) refDer.size(),
+    numStops / (double) refDer.size(),
+  };
 }
 
-struct RPG {
-  int numParams;
 
-  struct Elem {
-    int numUses;
-    int valIdx; // instruction or arg
+struct APO {
+  Model model;
+  std::string cpPrefix; // checkpoint prefix
+  RuleVec rules;
+  MonteCarloOptimizer montOpt;
+  RPG rpg;
+  Mutator expMut;
 
-    /// Elem()
-    /// : numUses(0)
-    /// , valIdx(0)
-    /// {}
+  std::string taskName; // name of task
 
-    Elem(int _numUses, int _valIdx) : numUses(_numUses), valIdx(_valIdx) {}
-    bool operator< (const Elem & right) const {
-      return numUses > right.numUses; // prioritize unused elements
-    }
-  };
+  int minStubLen; //3; // minimal progrm stub len (excluding params and return)
+  int maxStubLen; //4; // maximal program stub len (excluding params and return)
+  int maxMutations;// 1; // max number of program mutations
+  static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
 
-  std::uniform_real_distribution<float> constantRand;
+// mc search options
+  int mcDerivationSteps; //1; // number of derivations
+  int maxExplorationDepth; //maxMutations + 1; // best-effort search depth
+  double pRandom; //1.0; // probability of ignoring the model for inference
+  int numOptRounds; //50; // number of optimization retries
 
-  struct Sampler {
-    std::vector<int> unused;
-    std::priority_queue<Elem, std::vector<Elem>> opQueue;
+// training
+  int numSamples;//
+  int batchTrainSteps; // = 4;
 
-    int num_Unused() const { return unused.size(); }
-
-    // value may be used but does not have to (arguments)
-    void addOptionalUseable(int valIdx) {
-      // std::cerr << "OPT " << valIdx << "\n";
-      opQueue.emplace(0, valIdx);
-    }
-
-    // value has to be used (instruction)
-    void addUseable(int valIdx) {
-      // std::cerr << "MUST USE: " << valIdx << "\n";
-      unused.push_back(valIdx);
-    }
-
-    // fetch a random operand and increase its use count
-    int acquireOperand(int distToLimit) {
-
-      // check whether its safe to peek to already used operands at this point
-      if (num_Unused() > 0) {
-        bool allowPeek = !opQueue.empty() && (distToLimit > unused.size());
-        std::uniform_int_distribution<int> opRand(0, unused.size() - 1 + allowPeek);
-
-        // pick element from unused vector
-        int idx = opRand(randGen());
-        // std::cerr << "UNUED ID " << idx << "\n";
-        assert(idx >= 0);
-        if (idx < unused.size()) {
-          int valIdx = unused[idx];
-          unused.erase(unused.begin() + idx);
-          opQueue.emplace(1, valIdx); // add to used-tracked queue for potential re-use
-          return valIdx;
-        }
-      }
-
-      // Otw, take element from queue
-      Elem elem = opQueue.top();
-      opQueue.pop(); // TODO add randomness
-      int valIdx = elem.valIdx;
-      elem.numUses++;
-      opQueue.push(elem); // re-insert element
-
-      return valIdx;
-    }
-
-    bool empty() const { return unused.empty() && opQueue.empty(); }
-  };
-
-  std::vector<data_t> constVec; // recognized constants in the match rules
-  const double pConstant = 0.20;
-
-  void collectConstants(const Program & prog, std::set<data_t> & seen) {
-    for (auto & stat : prog.code) {
-      if (stat.isConstant()) {
-        if (seen.insert(stat.getValue()).second) {
-          constVec.push_back(stat.getValue());
-        }
-      }
-    }
-  }
-
-  RPG(const RuleVec & rules, int _numParams)
-  : numParams(_numParams)
+// number of simulation batches
+  APO(const std::string & taskFile, const std::string & _cpPrefix)
+  : model("models/rdn", "model.conf")
+  , cpPrefix(_cpPrefix)
+  , rules(BuildRules())
+  , montOpt(rules, model)
+  , rpg(rules, model.num_Params)
+  , expMut(rules, pExpand)
   {
-    std::set<data_t> seen;
-    for (auto & rule : rules) {
-      collectConstants(rule.lhs, seen);
-      collectConstants(rule.rhs, seen);
-    }
-    std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
+    std::cerr << "Loading task file " << taskFile << "\n";
+
+    Parser task(taskFile);
+  // random program options
+    taskName = task.get_or_fail<std::string>("name"); //3; // minimal progrm stub len (excluding params and return)
+
+    numSamples = model.max_batch_size;
+    minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
+    maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
+    maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
+
+  // mc search options
+    mcDerivationSteps = task.get_or_fail<int>("mcDerivationSteps"); //1; // number of derivations
+    maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
+    pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
+    numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
+
+    std::cerr << "Storing checkpoints to prefix " << cpPrefix << "\n";
+
+  // initialize thread safe random number generators
+    InitRandom();
   }
 
-  Program*
-  generate(int length) {
-    Program & P = *(new Program(numParams, {}));
-    P.code.reserve(length);
+  void
+  generatePrograms(ProgramVec & progVec) {
+    std::uniform_int_distribution<int> mutRand(0, maxMutations);
+    std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-    Sampler S;
-    // wrap all arguments in pipes
-    for (int a = 0; a < numParams; ++a) {
-      P.push(build_pipe(-a - 1));
-      S.addOptionalUseable(a);
+    for (int i = 0; i < progVec.size(); ++i) {
+      std::shared_ptr<Program> P = nullptr;
+      do {
+        int stubLen = stubRand(randGen());
+        int mutSteps = mutRand(randGen());
+        P.reset(rpg.generate(stubLen));
+
+        assert(P->size() <= model.prog_length);
+        expMut.mutate(*P, mutSteps); // mutate at least once
+      } while(P->size() > model.prog_length);
+
+      progVec[i] = std::shared_ptr<Program>(P);
     }
+  }
 
-    int s = numParams;
-    for (int i = 0; i < length - 1; ++i, ++s) {
-      bool forceOperand = length - i < S.num_Unused();
+  void train(const size_t numGames) {
+    const int numSamples = model.max_batch_size;
+    const int numEvalSamples = model.max_batch_size * 4;
 
-      if (!forceOperand && // hard criterion to avoid dead code
-          (S.empty() || (constantRand(randGen()) <= pConstant))) { // soft preference criterion
-        // random constant
-        std::uniform_int_distribution<int> constIdxRand(0, constVec.size() - 1);
-        int idx = constIdxRand(randGen());
-        P.push(build_const(constVec[idx]));
+    std::cerr << "numSamples = " << numSamples << "\n"
+              << "numEvalSamples = " << numEvalSamples << "\n"
+              << "numGames = " << numGames << "\n";
+
+  // training
+    const int batchTrainSteps = 4;
+
+  // number of simulation batches
+    assert(minStubLen > 0 && "can not generate program within constraints");
+
+    const int logInterval = 10;
+    const int dotStep = logInterval / 10;
+
+    std::cerr << "\n-- Training --";
+    for (int g = 0; g < numGames; ++g) {
+      bool loggedRound = (g % logInterval == 0);
+      if (loggedRound) {
+        auto stats = model.query_stats();
+        std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr); std::cerr << ") -\n";
+
+      // print MCTS statistics
+        montOpt.stats.print(std::cerr) << "\n";
+        montOpt.stats = MonteCarloOptimizer::Stats();
+
+      // evaluating current model
+        ProgramVec evalProgs(numEvalSamples, nullptr);
+        generatePrograms(evalProgs);
+
+        // random sampling based (uniform sampling, nio model)
+        auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
+
+        // one shot (model based sampling)
+        auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
+
+        DerStats S = ScoreDerivations(refDerVec, modelDerVec);
+        std::cerr << "Model stats. Hits: " << S.hits << ", improved: " << S.improved << ", misses: " << S.getMisses() << ". Stop ratio: " << S.stops << "\n";
+
+        // store model
+        std::stringstream ss;
+        ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
+        model.saveCheckpoint(ss.str());
 
       } else {
-        // pick random opCode and operands
-        int beginBin = (int) OpCode::Begin_Binary;
-        int endBin = (int) OpCode::End_Binary;
-
-        std::uniform_int_distribution<int> ocRand(beginBin, endBin);
-        OpCode oc = (OpCode) ocRand(randGen());
-        int distToLimit = length - 1 - i;
-        int firstOp = S.acquireOperand(distToLimit);
-        int sndOp = S.acquireOperand(distToLimit);
-        P.push(Statement(oc, firstOp, sndOp));
+        if (g % dotStep == 0) { std::cerr << "."; }
       }
 
-      // publish the i-th instruction as useable in an operand position
-      S.addUseable(s);
-    }
 
-    P.push(build_ret(P.size() - 1));
-
-    assert(P.verify());
-
-    return &P;
-  }
-};
+  // Generating training programs
+      ProgramVec progVec(numSamples, nullptr);
+      generatePrograms(progVec);
 
 
+    // explore all actions from current program
+      for (int depth = 0; depth < mcDerivationSteps; ++depth) {
 
+      // compute all one-step derivations
+        std::vector<std::pair<int, Rewrite>> rewrites;
+        ProgramVec nextProgs;
+        const int preAllocFactor = 16;
+        rewrites.reserve(preAllocFactor * progVec.size());
+        nextProgs.reserve(preAllocFactor * progVec.size());
 
+        // #pragma omp parallel for ordered
+        for (int t = 0; t < progVec.size(); ++t) {
+          for (int r = 0; r < rules.size(); ++r) {
+            for (int j = 0; j < 2; ++j) {
+              for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
+                bool leftMatch = (bool) j;
 
-using DataVec = std::vector<data_t>;
-struct RandExecutor {
-  std::vector<DataVec> paramSets;
+                auto * clonedProg = new Program(*progVec[t]);
+                if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
+                  // TODO clone after match (or render into copy)
+                  delete clonedProg;
+                  continue;
+                }
 
-  RandExecutor(int numParams, int numSets)
-  : paramSets()
-  {
-    std::uniform_int_distribution<data_t> argRand(0, std::numeric_limits<data_t>::max());
+                // compact list of programs resulting from a single action
+                // #pragma omp ordered
+                {
+                  nextProgs.emplace_back(clonedProg);
+                  rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
+                }
+              }
+            }
+          }
+        }
 
-    for (int s = 0; s < numSets; ++s) {
-      DataVec params;
-      for (int i = 0; i< numParams; ++i) {
-        params.push_back(argRand(randGen()));
+      // best-effort search for optimal program
+        auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+
+  #if 0
+        IF_DEBUG {
+          std::cerr << "Best derivations:\n";
+          for (int i = 0; i < derVec.size(); ++i) {
+            derVec[i].dump();
+            nextProgs[i]->dump();
+            std::cerr << "\n";
+          }
+        }
+  #endif
+
+      // decode reference ResultDistVec from detected derivations
+        ResultDistVec refResults;
+        montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+
+      // train model
+        Model::Losses L;
+        model.train_dist(progVec, refResults, batchTrainSteps, logInterval ? &L : nullptr);
+
+        if (loggedRound) {
+          std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
+        }
+
+      // pick an action per program and advance
+        bool allStop;
+        progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
+        // FIXME delete unused program objects
+
+        if (allStop) break; // early exit if no progress was made
       }
-      paramSets.push_back(params);
+
+  #if 0
+      for (int i = 0; i < progVec.size(); ++i) {
+        std::cerr << "Optimized program " << i << ":\n";
+        progVec[i]->dump();
+      }
+  #endif
     }
   }
 
-  DataVec run(const Program & P) {
-    DataVec results;
-    for (const auto & params : paramSets) {
-      results.push_back(Evaluate(P, params));
-    }
-    return results;
- }
 };
-
-static void
-Print(std::ostream & out, const DataVec & D) {
-  for (auto & d : D) out << ", " << d;
-}
-
-static bool Equal(const DataVec & A, const DataVec & B) {
-  if (A.size() != B.size()) return false;
-  for (size_t i = 0; i < A.size(); ++i) {
-    if (A[i] != B[i]) return false;
-  }
-  return true;
-}
 
 
 } // namespace apo

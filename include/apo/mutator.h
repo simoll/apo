@@ -1,8 +1,8 @@
 #ifndef APO_MUTATOR_H
 #define APO_MUTATOR_H
 
-#include "apo/apo.h"
 #include "apo/shared.h"
+#include "apo/rules.h"
 
 namespace apo {
 
