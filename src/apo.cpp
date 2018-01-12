@@ -193,7 +193,8 @@ struct MonteCarloOptimizer {
 
     const bool useModel = pRandom != 1.0;
 
-    std::vector<Derivation> states; // thread state
+    // start with STOP derivation
+    std::vector<Derivation> states;
     for (int i = 0; i < progVec.size(); ++i) {
       states.emplace_back(*progVec[i]);
     }
@@ -481,15 +482,35 @@ struct MonteCarloOptimizer {
 };
 
 // compute a scaore for the sample derivations (assuming refDef contains reference derivations)
-double
+struct DerStats {
+  double hits; // ratio of met MCTS solutions
+  double improved; // number of improved MCTS solutions
+  double stops; // hit rate of "always STOP" solution
+  double getMisses() const { return 1.0 - (hits + improved); }
+};
+
+DerStats
 ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) {
   size_t numHit = 0;
+  size_t numImproved = 0;
+  size_t numStops = 0;
+
   for (int i = 0; i < refDer.size(); ++i) {
-    if (sampleDer[i] == refDer[i] || sampleDer[i].betterThan(refDer[i])) {
+    if (sampleDer[i] == refDer[i]) {
       numHit++;
     }
+    if (sampleDer[i].betterThan(refDer[i])) {
+      numImproved++;
+    }
+    if (refDer[i].shortestDerivation == 0) {
+      numStops = 0;
+    }
   }
-  return numHit / (double) refDer.size();
+  return DerStats{
+    numHit / (double) refDer.size(),
+    numImproved / (double) refDer.size(),
+    numStops / (double) refDer.size(),
+  };
 }
 
 
@@ -608,8 +629,8 @@ struct APO {
         // one shot (model based sampling)
         auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
 
-        double modelScore = ScoreDerivations(refDerVec, modelDerVec);
-        std::cerr << "Model score: " << modelScore << "\n";
+        DerStats S = ScoreDerivations(refDerVec, modelDerVec);
+        std::cerr << "Model stats. Hits: " << S.hits << ", improved: " << S.improved << ", misses: " << S.getMisses() << ". Stop ratio: " << S.stops << "\n";
 
         // store model
         std::stringstream ss;
