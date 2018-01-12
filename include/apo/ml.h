@@ -8,6 +8,11 @@
 #include "apo/mutator.h"
 #include "apo/extmath.h"
 
+// MetaGraph
+#include <tensorflow/core/protobuf/meta_graph.pb.h>
+
+namespace tf = tensorflow;
+
 namespace tensorflow {
   class Session;
 }
@@ -44,6 +49,8 @@ class Model {
   // initialize tensorflow
   static int init_tflow();
 
+  tf::MetaGraphDef graph_def;
+
 // graph definition
 
   // TODO read from shared config file
@@ -68,7 +75,10 @@ public:
   };
 
 public:
-  Model(const std::string & fileName, const std::string & configFile);
+  Model(const std::string & saverPrefix, const std::string & configFile);
+
+  void loadCheckpoint(const std::string & checkPointFile);
+  void saveCheckpoint(const std::string & checkPointFile);
 
   // train model on a batch of programs (returns loss)
   // double train(const ProgramVec& progs, const ResultVec& results, int num_steps);
@@ -96,6 +106,9 @@ public:
 
   // create all-zero distributions
   ResultDist createEmptyResult() const;
+
+  // set learning rate
+  void setLearningRate(float v);
 
   static void shutdown();
 };

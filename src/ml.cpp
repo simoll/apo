@@ -4,7 +4,6 @@
 #include "apo/extmath.h"
 #include "apo/config.h"
 
-
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_init.h"
@@ -57,7 +56,7 @@ Model::init_tflow() {
 }
 
 
-Model::Model(const std::string & graphFile, const std::string & configFile) {
+Model::Model(const std::string & saverPrefix, const std::string & configFile) {
   init_tflow(); // make sure tensorflow session works as expected
 
 // parse shared configuration
@@ -72,6 +71,25 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
   std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", max_batch_size=" << max_batch_size << ", num_Rules=" << num_Rules << "\n";
 
 // build Graph
+
+
+#if 1
+  // Read in the protobuf graph we exported
+  Status status = ReadBinaryProto(Env::Default(), saverPrefix + ".meta", &graph_def);
+  if (!status.ok()) {
+    std::cerr << "Error reading graph definition from " << saverPrefix << ": " << status.ToString() <<"\n";
+    abort();
+  }
+
+  // Add the graph to the session
+  status = session->Create(graph_def.graph_def());
+  if (!status.ok()) {
+    std::cerr << "Error creating graph: " + status.ToString() << "\n";
+    abort();
+  }
+#endif
+
+#if 0
   // Read in the protobuf graph we exported
   // (The path seems to be relative to the cwd. Keep this in mind
   // when using `bazel run` since the cwd isn't where you call
@@ -89,12 +107,46 @@ Model::Model(const std::string & graphFile, const std::string & configFile) {
     std::cout << "CREATE_GRAPH: " <<  status.ToString() << "\n";
     abort();
   }
+ // graph-def based code
+#endif
 
   // Setup inputs and outputs:
-  std::cout << "TF: loaded graph " << graphFile << "\n";
+  std::cout << "TF: loaded graph " << saverPrefix << "\n";
 
   // Initialize our variables
   TF_CHECK_OK(session->Run({}, {}, {"init_op"}, nullptr));
+}
+
+void
+Model::loadCheckpoint(const std::string & checkPointFile) {
+  // Read weights from the saved checkpoint
+  Tensor checkpointPathTensor(DT_STRING, TensorShape());
+  checkpointPathTensor.scalar<std::string>()() = checkPointFile;
+  Status status = session->Run(
+          {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
+          {},
+          {graph_def.saver_def().restore_op_name()},
+          nullptr);
+  if (!status.ok()) {
+    std::cerr << "Error loading checkpoint from " << checkPointFile << ": " << status.ToString() << "\n";
+    abort();
+  }
+}
+
+void
+Model::saveCheckpoint(const std::string & checkPointFile) {
+  // Read weights from the saved checkpoint
+  Tensor checkpointPathTensor(DT_STRING, TensorShape());
+  checkpointPathTensor.scalar<std::string>()() = checkPointFile;
+  Status status = session->Run(
+          {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
+          {},
+          {graph_def.saver_def().save_tensor_name()},
+          nullptr);
+  if (!status.ok()) {
+    std::cerr << "Error saving checkpoint to " << checkPointFile << ": " << status.ToString() << "\n";
+    abort();
+  }
 }
 
 void
@@ -408,6 +460,12 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   }
 
   return results;
+}
+
+// set learning rate
+void
+Model::setLearningRate(float v) {
+  abort(); // TODO implement
 }
 
 Model::Statistics

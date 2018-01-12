@@ -340,8 +340,13 @@ with tf.Session() as sess:
     if not DummyRun:
         init = tf.variables_initializer(tf.global_variables(), name='init_op')
         fileName = "apo_graph.pb"
-        tf.train.write_graph(sess.graph, 'build/', fileName, as_text=False)
-        print("Model written to {}.".format(fileName))
+        modelPrefix ="models/rdn"
+
+        # save metagraph
+        tf.train.Saver(tf.trainable_variables()).save(sess, modelPrefix) 
+
+        # tf.train.write_graph(sess.graph, 'build/', fileName, as_text=False)
+        print("Model written to {}.".format(modelPrefix))
         writer.close()
         raise SystemExit
 

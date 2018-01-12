@@ -26,24 +26,31 @@ CFLAGS=${INC}
 PYTHON=python3
 
 # OPTFLAGS=-O3 -DNDEBUG -fopenmp -g
-OPTFLAGS=-O3 -DNDEBUG -g -fopenmp
+# OPTFLAGS=-O3 -DNDEBUG -g -fopenmp
+OPTFLAGS=-O3 -g -fopenmp
 # OPTFLAGS=-O2 -g -fsanitize=address
-# OPTFLAGS=-O0 -g -fsanitize=address
+# OPTFLAGS=-O0 -g 
 
 CXX=clang++ -std=c++14 ${OPTFLAGS}
 # CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
+METAGRAPH=models/apo.meta
 
-apo: $(OBJECTS) build/apo_graph.pb Makefile
+apo: $(OBJECTS) ${METAGRAPH} Makefile
 	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
 
 build/%.o: src/%.cpp Makefile $(HEADERS)
 	mkdir -p $(dir $@)
 	$(CXX) ${CFLAGS} $< -c -o $@ 
 
-build/apo_graph.pb: src/model.py model.conf $(HEADERS)
+${METAGRAPH}: src/model.py model.conf $(HEADERS)
+	mkdir -p $(dir ${METAGRAPH})
 	$(PYTHON) src/model.py
 
 .PHONY: clean
 clean:
 	rm -rf apo build/*
+
+
+purge: clean
+	rm -rf models

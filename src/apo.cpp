@@ -5,6 +5,8 @@
 #include "apo/mutator.h"
 #include "apo/extmath.h"
 
+#include <sstream>
+
 #include <vector>
 
 using namespace apo;
@@ -493,10 +495,13 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
 
 struct APO {
   Model model;
+  std::string cpPrefix; // checkpoint prefix
   RuleVec rules;
   MonteCarloOptimizer montOpt;
   RPG rpg;
   Mutator expMut;
+
+  std::string taskName; // name of task
 
   int minStubLen; //3; // minimal progrm stub len (excluding params and return)
   int maxStubLen; //4; // maximal program stub len (excluding params and return)
@@ -514,18 +519,20 @@ struct APO {
   int batchTrainSteps; // = 4;
 
 // number of simulation batches
-  const int numGames = 10000;
-
-  APO(const std::string taskFile)
-  : model("build/apo_graph.pb", "model.conf")
+  APO(const std::string & taskFile, const std::string & _cpPrefix)
+  : model("models/rdn", "model.conf")
+  , cpPrefix(_cpPrefix)
   , rules(BuildRules())
   , montOpt(rules, model)
   , rpg(rules, model.num_Params)
   , expMut(rules, pExpand)
   {
     std::cerr << "Loading task file " << taskFile << "\n";
+
     Parser task(taskFile);
   // random program options
+    taskName = task.get_or_fail<std::string>("name"); //3; // minimal progrm stub len (excluding params and return)
+
     numSamples = model.max_batch_size;
     minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
     maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
@@ -536,6 +543,8 @@ struct APO {
     maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
     pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
+
+    std::cerr << "Storing checkpoints to prefix " << cpPrefix << "\n";
 
   // initialize thread safe random number generators
     InitRandom();
@@ -561,7 +570,7 @@ struct APO {
     }
   }
 
-  void train() {
+  void train(const size_t numGames) {
     const int numSamples = model.max_batch_size;
     const int numEvalSamples = model.max_batch_size * 4;
 
@@ -573,8 +582,6 @@ struct APO {
     const int batchTrainSteps = 4;
 
   // number of simulation batches
-    const int numGames = 10000;
-
     assert(minStubLen > 0 && "can not generate program within constraints");
 
     const int logInterval = 10;
@@ -603,6 +610,11 @@ struct APO {
 
         double modelScore = ScoreDerivations(refDerVec, modelDerVec);
         std::cerr << "Model score: " << modelScore << "\n";
+
+        // store model
+        std::stringstream ss;
+        ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
+        model.saveCheckpoint(ss.str());
 
       } else {
         if (g % dotStep == 0) { std::cerr << "."; }
@@ -700,10 +712,13 @@ int main(int argc, char ** argv) {
     return -1;
   }
 
-  std::string taskFile = argv[1];
-  APO apo(taskFile);
+  const std::string cpPrefix = "cp/";
 
-  apo.train();
+  std::string taskFile = argv[1];
+  APO apo(taskFile, cpPrefix);
+
+  const size_t numGames = 1000000;
+  apo.train(numGames);
 
   Model::shutdown();
 }
