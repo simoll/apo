@@ -109,6 +109,7 @@ using DerivationVec = std::vector<Derivation>;
 struct MonteCarloOptimizer {
 #define IF_DEBUG_MC if (false)
 
+  size_t invalidModelDists; // how often did the model return invalid distributions (and this was detected)
 
   // IF_DEBUG
   RuleVec & rules;
@@ -119,7 +120,8 @@ struct MonteCarloOptimizer {
 
 
   MonteCarloOptimizer(RuleVec & _rules, Model & _model)
-  : rules(_rules)
+  : invalidModelDists(0)
+  , rules(_rules)
   , model(_model)
   , maxGenLen(model.prog_length - model.num_Params - 1)
   , mut(rules, 0.1) // greedy shrinking mutator
@@ -135,10 +137,13 @@ struct MonteCarloOptimizer {
 
     size_t keepGoing = 10; // 10 sampling attempts
     int targetId;
+    bool validPc;
     do {
       // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
       targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
-    } while (keepGoing-- > 0 && targetId + 1 >= P.size());
+
+      validPc = targetId + 1 < P.size(); // do not rewrite returns
+    } while (keepGoing-- > 0 && !validPc);
 
   // failed to sample a valid rule application -> STOP
     if (!keepGoing) {
@@ -212,6 +217,7 @@ struct MonteCarloOptimizer {
 
         // loop until rewrite succeeds (or stop)
           const size_t failureLimit = 10;
+          bool checkedDists = false; // sample distributions have been sanitized
           size_t failureCount = 0;
           while (!signalsStop && !success) {
             bool uniRule;
@@ -227,9 +233,18 @@ struct MonteCarloOptimizer {
               success = true; // mutation always succeeeds
               signalsStop = false;
             } else {
-              // learned rewrite distribution
-              success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
+              // sanitize distributions drawn from model
+              if (!checkedDists &&
+                  (!IsValidDistribution(modelRewriteDist[t].ruleDist) ||
+                  !IsValidDistribution(modelRewriteDist[t].targetDist))) {
+                ++invalidModelDists;
+                signalsStop = true;
+                break;
+              }
+              checkedDists = true; // model returned proper distributions for rule and target
 
+              // use model to apply rule
+              success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
               if (!success) failureCount++;
 
               // avoid infinite loops by failing after @failureLimit

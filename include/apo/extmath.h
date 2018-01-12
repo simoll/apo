@@ -21,6 +21,16 @@ Normalize(std::vector<float> & dist) {
   for (auto & v : dist) { v /= a; }
 }
 
+static bool
+IsValidDistribution(const CatDist & catDist) {
+  double sum = 0.0;
+  for (float v : catDist) {
+    if (v < 0.0) return false;
+    sum += v;
+  }
+  return sum + EPS >= 1.0;
+}
+
 static int
 SampleCategoryDistribution(CatDist & catDist, double p) {
   assert(((0.0 <= p) && (p <= 1.0)) && "not a valid sample value [0,1]");
@@ -36,16 +46,10 @@ SampleCategoryDistribution(CatDist & catDist, double p) {
     return e;
   }
 
-  if (catBase + EPS < 1.0) {
-    std::cerr << "Samping error!: p=" << p << "\n";
-    std::cerr << catBase << " " << (catBase + EPS) << " catDist:\n";
-    PrintDist(catDist, std::cerr);
-    std::cerr << "Aborting!\n";
-    abort();
-  }
-
-  assert(catBase + EPS >= 1.0);
-  abort();
+  assert(catBase + EPS >= 1.0); // check that @catDist is a valid distribution
+  // Categories may not add up to 1.0 due to fp imprecision.
+  // So if p does not lie in a checked category interval, p points to the interval between the accumulated catogories and 1.0
+  return catDist.size() - 1;
 }
 
 static double
