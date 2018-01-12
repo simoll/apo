@@ -562,11 +562,10 @@ struct APO {
 
   void train() {
     const int numSamples = model.max_batch_size;
-    const int numEvalSamples = model.max_batch_size * 4;
+    const int numEvalSamples = std::min<int>(4096, model.max_batch_size * 16);
 
     std::cerr << "numSamples = " << numSamples << "\n"
-              << "numEvalSamples = " << numEvalSamples << "\n"
-              << "numGames = " << numGames << "\n";
+              << "numEvalSamples = " << numEvalSamples << "\n";
 
   // training
     const int batchTrainSteps = 4;
