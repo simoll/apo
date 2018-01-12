@@ -1,3 +1,4 @@
+name small
 minStubLen 3
 maxStubLen 4
 maxMutations 1

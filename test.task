@@ -1,3 +1,4 @@
+name test
 minStubLen 1
 maxStubLen 1
 maxMutations 1
