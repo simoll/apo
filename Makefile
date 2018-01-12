@@ -28,7 +28,7 @@ PYTHON=python3
 
 CXX=clang++ -std=c++14 ${OPTFLAGS}
 
-METAGRAPH=build/apo.meta
+METAGRAPH=build/rdn.meta
 
 apo: $(OBJECTS) ${METAGRAPH} Makefile
 	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
