@@ -271,7 +271,7 @@ struct MonteCarloOptimizer {
             }
           }
 
-          stats.derivationFailures += failureCount;
+          stats.derivationFailures += (failureCount >= failureLimit);
 
         // don't step over STOP
           if (signalsStop) {
@@ -589,6 +589,7 @@ struct APO {
 
       // print MCTS statistics
         montOpt.stats.print(std::cerr) << "\n";
+        montOpt.stats = MonteCarloOptimizer::Stats();
 
       // evaluating current model
         ProgramVec evalProgs(numEvalSamples, nullptr);
