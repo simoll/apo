@@ -58,6 +58,9 @@ Parser::get_or_fail(const std::string & key) {
 template int Parser::get<int>(const std::string & key, const int defVal);
 template int Parser::get_or_fail<int>(const std::string & key);
 
+template size_t Parser::get<size_t>(const std::string & key, const size_t defVal);
+template size_t Parser::get_or_fail<size_t>(const std::string & key);
+
 template double Parser::get<double>(const std::string & key, const double defVal);
 template double Parser::get_or_fail<double>(const std::string & key);
 
