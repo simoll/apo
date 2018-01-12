@@ -503,7 +503,7 @@ struct APO {
 
 // number of simulation batches
   APO(const std::string & taskFile, const std::string & _cpPrefix)
-  : model("models/rdn", "model.conf")
+  : model("build/rdn", "model.conf")
   , cpPrefix(_cpPrefix)
   , rules(BuildRules())
   , montOpt(rules, model)

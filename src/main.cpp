@@ -15,13 +15,6 @@ int main(int argc, char ** argv) {
     cmd = argv[1];
   }
 
-  // help command
-  if (cmd == "help") {
-    std::cerr << argv[0] << " <command>\nAvailable commands:\n"
-                             << "\ttrain <scenario.task>\n";
-    return 0;
-  }
-
   // train command
   if (cmd == "train") {
     const std::string cpPrefix = "cp/";
@@ -30,7 +23,13 @@ int main(int argc, char ** argv) {
 
     const size_t numGames = 1000000;
     apo.train(numGames);
+
+    Model::shutdown();
+    return 0;
   }
 
-  Model::shutdown();
+  // help command
+  std::cerr << argv[0] << " <command>\nAvailable commands:\n"
+                           << "\ttrain <scenario.task>\n";
+  return 0;
 }

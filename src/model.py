@@ -91,7 +91,9 @@ else:
     # stacked cells
     num_layers = int(conf["num_layers"]) #2
 
-    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, num_layers={}".format(prog_length, num_Params, num_Rules, embed_size, num_layers))
+    # cell_type
+    cell_type= conf["cell_type"]
+    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, num_layers={}, cell_type={}".format(prog_length, num_Params, num_Rules, embed_size, num_layers, cell_type))
 # input feed
 
 # training control parameter (has auto increment)
@@ -157,13 +159,14 @@ with tf.Session() as sess:
         print(outputs)
 
     ### recurrent cell setup ###
-    cell_type="lstm"
-
+    tupleState=False
     if cell_type== "gru":
         make_cell = lambda: tf.nn.rnn_cell.GRUCell(state_size)
     elif cell_type == "block":
+        tupleState = True
         make_cell = lambda: tf.contrib.rnn.LSTMBlockCell(state_size)
     else:
+        tupleState = True
         make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
       # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
 
@@ -222,8 +225,14 @@ with tf.Session() as sess:
               cell = make_cell()
               initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
               outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
-              out_states.append(state[0])
-              out_states.append(state[1])
+              if tupleState:
+                # e.g. LSTM
+                out_states.append(state[0])
+                out_states.append(state[1])
+              else:
+                # e.g. GRU
+                out_states.append(state)
+
             # last_output_size = tf.dim_size(outputs[0], 0)
 
         # last layer output state
@@ -340,7 +349,7 @@ with tf.Session() as sess:
     if not DummyRun:
         init = tf.variables_initializer(tf.global_variables(), name='init_op')
         fileName = "apo_graph.pb"
-        modelPrefix ="models/rdn"
+        modelPrefix ="build/rdn"
 
         # save metagraph
         tf.train.Saver(tf.trainable_variables()).save(sess, modelPrefix) 
