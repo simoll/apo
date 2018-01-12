@@ -5,6 +5,7 @@ SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
 HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
+include make.conf
 
 INC=-Isrc/ \
     -Iinclude \
@@ -25,14 +26,7 @@ CFLAGS=${INC}
 
 PYTHON=python3
 
-# OPTFLAGS=-O3 -DNDEBUG -fopenmp -g
-# OPTFLAGS=-O3 -DNDEBUG -g -fopenmp
-OPTFLAGS=-O3 -g -fopenmp
-# OPTFLAGS=-O2 -g -fsanitize=address
-# OPTFLAGS=-O0 -g 
-
 CXX=clang++ -std=c++14 ${OPTFLAGS}
-# CXX=clang++ -std=c++14 -O3 -Isrc/ 
 
 METAGRAPH=models/apo.meta
 
