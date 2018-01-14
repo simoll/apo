@@ -476,6 +476,20 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
 }
 
 
+static
+DerivationVec
+FilterBest(DerivationVec A, DerivationVec B) {
+  DerivationVec res;
+  for (int i = 0; i < A.size(); ++i) {
+    if (A[i].betterThan(B[i])) {
+      res.push_back(A[i]);
+    } else {
+      res.push_back(B[i]);
+    }
+  }
+  return res;
+}
+
 struct APO {
   Model model;
   std::string cpPrefix; // checkpoint prefix
@@ -651,6 +665,13 @@ struct APO {
 
       // best-effort search for optimal program
         auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+
+      // query model to improve
+        const int racketThreshold = logRate; // ATM
+        if (g > racketThreshold) {
+          auto modelDerVec = montOpt.searchDerivations(nextProgs, 0.0, maxExplorationDepth, 1);
+          derVec = FilterBest(derVec, modelDerVec);
+        }
 
   #if 0
         IF_DEBUG {
