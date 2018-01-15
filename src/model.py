@@ -50,7 +50,10 @@ if DummyRun:
     embed_size = 32
     
     # stacked cells
-    num_layers = 2
+    num_hidden_layers = 2
+
+    # decoder layers
+    num_decoder_layers = 2
 
     # some test data
     # 0 == dummy
@@ -89,11 +92,14 @@ else:
     embed_size = int(conf["embed_size"]) #32
     
     # stacked cells
-    num_layers = int(conf["num_layers"]) #2
+    num_hidden_layers = int(conf["num_hidden_layers"]) #6
+
+    # decoder layers (state wraparound)
+    num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
     # cell_type
     cell_type= conf["cell_type"]
-    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, num_layers={}, cell_type={}".format(prog_length, num_Params, num_Rules, embed_size, num_layers, cell_type))
+    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(prog_length, num_Params, num_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
 # input feed
 
 # training control parameter (has auto increment)
@@ -179,9 +185,10 @@ with tf.Session() as sess:
         # TODO document
         with tf.variable_scope("DAG"): 
           out_states=[]
+          last_states=[]
 
           next_initial = None
-          for l in range(num_layers):
+          for l in range(num_hidden_layers + num_decoder_layers):
             if l == 0:
               # apply LSTM to opCodes
               inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
@@ -227,18 +234,27 @@ with tf.Session() as sess:
               # print(inputs)
               cell = make_cell()
 
-              if next_initial is None:
+              # hidden layers have zero initial states
+              if l < num_hidden_layers:
+                # hidden - initial
                 next_initial = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+              else:
+                # decoder - initial state
+                state_idx = (l - num_decoder_layers)
+                next_initial = last_states[state_idx]
+
               outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=length_data)
-              # next_initial = state # DON't
-              # next_initial=state # LSTM wrap around (TESTING)
+              # next_initial = state # LSTM wrap around for decoder layers
+
               if tupleState:
                 # e.g. LSTM
                 out_states.append(state[0])
                 out_states.append(state[1])
+                last_states.append(state)
               else:
                 # e.g. GRU
                 out_states.append(state)
+                last_states.append(state)
 
             # last_output_size = tf.dim_size(outputs[0], 0)
 
@@ -247,8 +263,8 @@ with tf.Session() as sess:
 
     else:
         # multi layer cell
-        if num_layers > 1:
-          cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_layers)], state_is_tuple=True)
+        if num_hidden_layers > 1:
+          cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_hidden_layers)], state_is_tuple=True)
         else:
           cell = make_cell()
 
@@ -258,7 +274,7 @@ with tf.Session() as sess:
         inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
         outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)# swap_memory=True)
         last_output = outputs[-1]
-        if num_layers > 1:
+        if num_hidden_layers > 1:
           net_out = tf.reshape(state[-1].c, [batch_size, -1])
         else:
           net_out = state.c
@@ -270,20 +286,23 @@ with tf.Session() as sess:
     def make_relu(in_size):
       # target probability [0, 1] per node
       # variables (all [state_size])
-      m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
-      v_init = tf.truncated_normal([in_size], dtype=data_type())
-      m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
-      v_bias = tf.get_variable("v_bias", initializer=v_init, trainable=True)
-      v_project = tf.get_variable("v_project", initializer=v_init, trainable=True)
+      with tf.variable_scope("relu_state"):
+        m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
+        v_init = tf.truncated_normal([in_size], dtype=data_type())
+        m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
+        v_bias = tf.get_variable("v_bias", initializer=v_init, trainable=True)
+        v_project = tf.get_variable("v_project", initializer=v_init, trainable=True)
 
       # target probability unit
       def target_unit(batch):
         # dense layer (todo accumulate state)
         # with tf.variable_scope("dense", reuse=len(accu) > 0):
         #   t = tf.layers.dense(inputs=batch, units=1)[0]
-        elem_trans = tf.nn.relu_layer(batch, m_trans, v_bias)
-        # elem_trans = tf.nn.relu(tf.matmul(batch, m_trans) + v_bias)
-        t = tf.reduce_sum(v_project * elem_trans, axis=1)
+
+        with tf.variable_scope("relu"):
+          elem_trans = tf.nn.relu_layer(batch, m_trans, v_bias)
+          # elem_trans = tf.nn.relu(tf.matmul(batch, m_trans) + v_bias)
+          t = tf.reduce_sum(v_project * elem_trans, axis=1)
         return t
 
       return target_unit
@@ -300,8 +319,12 @@ with tf.Session() as sess:
     # [prog_length x batch_size] -> [batch_size x prog_length]
     target_logits = tf.transpose(accu, [1, 0])
 
-    ### old decomposed rule/target objective ###
-    # fold hidden layer to decision bits
+    ### stop logit ###
+    # with tf.variable_scope("stop"):
+    #   stop_cell = make_relu(tf.shape(net_out)[0]) # BROKEN!
+    # stop_logit = tf.identity(stop_cell(), name="stop_logit")
+
+    ### rule logit ###
     rule_logits = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=num_Rules)
 
     ## predictions ##
@@ -365,9 +388,9 @@ with tf.Session() as sess:
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
 
-    tf.global_variables_initializer().run()
 
     if not DummyRun:
+        tf.global_variables_initializer().run()
         init = tf.variables_initializer(tf.global_variables(), name='init_op')
         fileName = "apo_graph.pb"
         modelPrefix ="build/rdn"
