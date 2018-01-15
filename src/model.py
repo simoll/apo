@@ -41,7 +41,7 @@ if DummyRun:
     prog_length = 3
 
     # number of re-write rules
-    num_Rules = 17
+    max_Rules = 17
 
     # number of scalar cells in the LSTM
     state_size = 64
@@ -83,7 +83,7 @@ else:
     num_Params = int(conf["num_Params"])
 
     # number of re-write rules
-    num_Rules = int(conf["num_Rules"]) #, 17
+    max_Rules = int(conf["max_Rules"]) #, 17
 
     # number of scalar cells in the LSTM
     state_size = int(conf["state_size"]) #64
@@ -99,7 +99,7 @@ else:
 
     # cell_type
     cell_type= conf["cell_type"].strip()
-    print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(prog_length, num_Params, num_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
+    print("Model (construct). prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
 # input feed
 
 # training control parameter (has auto increment)
@@ -284,7 +284,7 @@ with tf.Session() as sess:
 
     ### per-node objective ###
     # target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")        # dist over pcs
-    # rule_in = tf.placeholder(data_type(), [None, prog_length, num_Rules], name="dist_in") # dist over pcs x rule
+    # rule_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="dist_in") # dist over pcs x rule
 
     def make_relu(in_size):
       # target probability [0, 1] per node
@@ -323,12 +323,13 @@ with tf.Session() as sess:
     target_logits = tf.transpose(accu, [1, 0])
 
     ### stop logit ###
-    # with tf.variable_scope("stop"):
-    #   stop_cell = make_relu(tf.shape(net_out)[0]) # BROKEN!
-    # stop_logit = tf.identity(stop_cell(), name="stop_logit")
+    with tf.variable_scope("stop"):
+      stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
+
+    pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
 
     ### rule logit ###
-    rule_logits = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=num_Rules)
+    rule_logits = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=max_Rules)
 
     ## predictions ##
     # distributions
@@ -341,23 +342,25 @@ with tf.Session() as sess:
 
     ### reference input & training ###
     # reference input #
-    rule_in = tf.placeholder(data_type(), [None, num_Rules], name="rule_in")
+    stop_in = tf.placeholder(data_type(), [None], name="stop_in")
+    rule_in = tf.placeholder(data_type(), [None, max_Rules], name="rule_in")
     target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")
 
     # training #
-    # ref_rule = tf.one_hot(rule_in, axis=-1, depth=num_Rules)
-    # rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_rule, logits=rule_logits, dim=-1)
-    # ref_target = tf.one_hot(target_in, axis=-1, depth=max_Time)
-    # target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=ref_target, logits=target_logits, dim=-1)
+    stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
+    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=rule_in, logits=rule_logits, dim=-1) # [batch_size]
+    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
 
-    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=rule_in, logits=rule_logits, dim=-1)
-    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1)
+    action_losses = rule_loss + target_loss # [batch_size]
 
+    # conditional loss (only penalize rule/target if !stop_in)
+    loss = tf.reduce_mean((1.0 - stop_in) * action_losses) + stop_loss
+    tf.identity(loss, "loss")
+
+    mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
     mean_rule_loss = tf.reduce_mean(rule_loss, name="mean_rule_loss")
     mean_target_loss = tf.reduce_mean(target_loss, name="mean_target_loss")
 
-    all_losses = [rule_loss, target_loss]
-    loss = tf.reduce_mean(all_losses, name="loss")
     tf.summary.scalar('loss', loss)
 
     # learning rate configuration

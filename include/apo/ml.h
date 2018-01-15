@@ -22,10 +22,13 @@ namespace apo {
 
 
 struct ResultDist {
+  float stopDist;
   CatDist ruleDist;
   CatDist targetDist;
+
   ResultDist(int numRules, int numTargets)
-  : ruleDist(numRules, 0.0)
+  : stopDist(0.0)
+  , ruleDist(numRules, 0.0)
   , targetDist(numTargets, 0.0)
   {}
   void normalize();
@@ -56,9 +59,10 @@ class Model {
   // TODO read from shared config file
 public:
   int max_batch_size; // = 4;
-  int prog_length; // = 4;
+  int prog_length; // maximal program length
   int num_Params; // = 5;
-  int num_Rules;
+  int max_Rules; //  maximal number of rules supported by model
+  int num_Rules; // number of active rules
   const int max_Operands = 2;
 
   int translateOperand(node_t idx) const;
@@ -75,7 +79,7 @@ public:
   };
 
 public:
-  Model(const std::string & saverPrefix, const std::string & configFile);
+  Model(const std::string & saverPrefix, const std::string & configFile, int num_Rules);
 
   void loadCheckpoint(const std::string & checkPointFile);
   void saveCheckpoint(const std::string & checkPointFile);
@@ -87,6 +91,7 @@ public:
   struct Losses {
     double ruleLoss;
     double targetLoss;
+    double stopLoss;
 
     std::ostream& print(std::ostream & out) const;
   };

@@ -12,15 +12,13 @@ struct Rewrite {
   bool leftMatch;
 
   static Rewrite
-  fromModel(int pc, int ruleEnumId) {
-    assert(ruleEnumId > 0);
-    int r = ruleEnumId - 1;
+  fromModel(int pc, int r) {
     return Rewrite{pc, r / 2, (bool) (r % 2)};
   }
 
   int
   getEnumId() const {
-    return (ruleId * 2 + 1) + (int) leftMatch;
+    return (ruleId * 2) + (int) leftMatch;
   }
 };
 

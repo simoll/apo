@@ -116,12 +116,19 @@ struct MonteCarloOptimizer {
   // sample a random rewrite at a random location (product of rule and target distributions)
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
-    int ruleEnumId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
+    // should we stop?
+    if (pRand(randGen()) <= res.stopDist) {
+      signalsStop = true;
+      return true;
+    }
 
     size_t keepGoing = 10; // 10 sampling attempts
-    int targetId;
+    int targetId, ruleId;
     bool validPc;
     do {
+      // which rule to apply?
+      ruleId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
+
       // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
       targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
 
@@ -134,14 +141,8 @@ struct MonteCarloOptimizer {
       return true;
     }
 
-    if (ruleEnumId == 0) {
-      // magic STOP rule
-      signalsStop = true;
-      return true;
-    }
-
   // translate to internal rule representation
-    auto rew = Rewrite::fromModel(targetId, ruleEnumId);
+    auto rew = Rewrite::fromModel(targetId, ruleId);
 
   // Otw, rely on the mutator to do the job
     return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
@@ -301,9 +302,9 @@ struct MonteCarloOptimizer {
       if (derivations[i] != bestDer) { continue; }
       noBestDerivation = false;
       const auto & rew = rewrites[i].second;
-      int ruleEnumId = rew.getEnumId();
       assert(rew.pc < refResult.targetDist.size());
       refResult.targetDist[rew.pc] += 1.0;
+      int ruleEnumId = rew.getEnumId();
       assert(ruleEnumId < refResult.ruleDist.size());
       refResult.ruleDist[ruleEnumId] += 1.0;
 
@@ -382,12 +383,24 @@ struct MonteCarloOptimizer {
       const int numRetries = 100;
       bool hit = false;
       for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
-        int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen()));
-        int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen()));
 
-        IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
+        // model picks stop?
+        bool shouldStop = pRand(randGen()) <= 1.0;
+
+        // valid distributions?
+        if (!shouldStop && (!IsValidDistribution(refResults[s].ruleDist) ||
+            !IsValidDistribution(refResults[s].targetDist)))
+        {
+          hit = false;
+          break;
+        }
+
         // try to apply the action
-        if (ruleEnumId > 0) {
+        if (!shouldStop) {
+          int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen()));
+          int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen()));
+          IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
+
           // scan through legal actions until hit
           for (int i = rewriteIdx;
               i < rewrites.size() && rewrites[i].first == s;
@@ -491,9 +504,9 @@ FilterBest(DerivationVec A, DerivationVec B) {
 }
 
 struct APO {
+  RuleVec rules;
   Model model;
   std::string cpPrefix; // checkpoint prefix
-  RuleVec rules;
   MonteCarloOptimizer montOpt;
   RPG rpg;
   Mutator expMut;
@@ -521,9 +534,9 @@ struct APO {
 
 // number of simulation batches
   APO(const std::string & taskFile, const std::string & _cpPrefix)
-  : model("build/rdn", "model.conf")
+  : rules(BuildRules())
+  , model("build/rdn", "model.conf", rules.size() * 2)
   , cpPrefix(_cpPrefix)
-  , rules(BuildRules())
   , montOpt(rules, model)
   , rpg(rules, model.num_Params)
   , expMut(rules, pExpand)
