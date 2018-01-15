@@ -49,9 +49,11 @@ struct Derivation {
   , shortestDerivation(0)
   {}
 
-  void dump() const {
-    std::cerr << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")";
+  std::ostream& print(std::ostream & out) const {
+    out << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")"; return out;
   }
+
+  void dump() const { print(std::cerr); }
 
   bool betterThan(const Derivation & o) const {
     if (bestScore < o.bestScore) {
@@ -463,14 +465,13 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
   size_t numStops = 0;
 
   for (int i = 0; i < refDer.size(); ++i) {
+    if (refDer[i].shortestDerivation == 0) {
+      numStops++;
+    }
     if (sampleDer[i] == refDer[i]) {
       numHit++;
-    }
-    if (sampleDer[i].betterThan(refDer[i])) {
+    } else if (sampleDer[i].betterThan(refDer[i])) {
       numImproved++;
-    }
-    if (refDer[i].shortestDerivation == 0) {
-      numStops = 0;
     }
   }
   return DerStats{
@@ -507,6 +508,7 @@ struct APO {
 
   int minStubLen; //3; // minimal progrm stub len (excluding params and return)
   int maxStubLen; //4; // maximal program stub len (excluding params and return)
+  int minMutations;// 1; // max number of program mutations
   int maxMutations;// 1; // max number of program mutations
   static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
 
@@ -542,6 +544,7 @@ struct APO {
     numSamples = model.max_batch_size;
     minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
     maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
+    minMutations = task.get_or_fail<int>("minMutations");// 1; // max number of program mutations
     maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
 
   // mc search options
@@ -561,7 +564,7 @@ struct APO {
 
   void
   generatePrograms(ProgramVec & progVec) {
-    std::uniform_int_distribution<int> mutRand(0, maxMutations);
+    std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
     std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
     for (int i = 0; i < progVec.size(); ++i) {

@@ -80,8 +80,10 @@ with tf.Session() as sess:
     #     print(sndOp_data.eval())
 
     # opCode embedding
+
     with tf.device("/cpu:0"):
-        oc_embedding = tf.get_variable("oc_embed", [num_OpCodes, embed_size], dtype=data_type())
+        oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
+        oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
         oc_inputs = tf.nn.embedding_lookup(oc_embedding, oc_data) # [batch_size x idx x embed_size]
 
     print("oc_inputs: {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
@@ -311,8 +313,8 @@ with tf.Session() as sess:
     tf.identity(loss, "loss")
 
     mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
-    mean_action_loss = tf.reduce_mean(action_loss, name="mean_action_loss")
-    mean_target_loss = tf.reduce_mean(target_loss, name="mean_target_loss")
+    mean_action_loss = tf.reduce_mean((1.0 - stop_in) *action_loss, name="mean_action_loss")
+    mean_target_loss = tf.reduce_mean((1.0 - stop_in) *target_loss, name="mean_target_loss")
 
     tf.summary.scalar('loss', loss)
 

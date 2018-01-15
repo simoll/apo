@@ -88,8 +88,9 @@ public:
 
   // train model on a batch of programs (returns loss)
   struct Losses {
-    double actionLoss;
     double stopLoss;
+    double targetLoss;
+    double actionLoss;
 
     std::ostream& print(std::ostream & out) const;
   };

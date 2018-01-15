@@ -200,6 +200,7 @@ struct Batch {
   Tensor length_feed;
 
   // output encoding
+  Tensor target_feed;
   Tensor action_feed;
   Tensor stop_feed;
 
@@ -212,6 +213,7 @@ struct Batch {
   , length_feed(DT_INT32,  TensorShape({batch_size}))
 
   , stop_feed(DT_FLOAT,  TensorShape({batch_size}))
+  , target_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length}))
   , action_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}))
   {}
 
@@ -223,7 +225,9 @@ struct Batch {
     firstOp_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
     sndOp_feed = Tensor(DT_INT32,   TensorShape({batch_size, model.prog_length}));
     length_feed = Tensor(DT_INT32,  TensorShape({batch_size}));
+
     stop_feed = Tensor(DT_FLOAT,  TensorShape({batch_size}));
+    target_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length}));
     action_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}));
   }
 
@@ -253,11 +257,22 @@ struct Batch {
   void encode_Result(int batch_id, const ResultDist & result) {
     stop_feed.tensor<float, 1>()(batch_id) = result.stopDist;
 
+    // std::cerr << "S " << result.stopDist << "\n";
+    auto target_Mapped = target_feed.tensor<float, 2>();
     auto action_Mapped = action_feed.tensor<float, 3>();
     for (int t = 0; t < model.prog_length; ++t) {
+      double pTarget = 0.0;
+      for (int r = 0; r < model.num_Rules; ++r) {
+        pTarget += result.actionDist[t * model.num_Rules + r];
+      }
+
+      // std::cerr << "T " << batch_id << " " << t << "  :  " << pTarget << "\n";
+      target_Mapped(batch_id, t) = pTarget;
       for (int r = 0; r < model.max_Rules; ++r) {
-        if (r < model.num_Rules) {
-          action_Mapped(batch_id, t, r) = result.actionDist[t * model.num_Rules + r];
+        if (r < model.num_Rules && (pTarget > 0.0)) {
+          auto pAction = result.actionDist[t * model.num_Rules + r] / pTarget;
+          // std::cerr << "B " << batch_id << " " << t << " " << r << "  :  " << pAction << "\n";
+          action_Mapped(batch_id, t, r) = pAction;
         } else {
           action_Mapped(batch_id, t, r) = 0.0;
         }
@@ -273,6 +288,7 @@ struct Batch {
       {"sndOp_data", sndOp_feed},
       {"length_data", length_feed},
       {"stop_in", stop_feed},
+      {"target_in", target_feed},
       {"action_in", action_feed}
     };
     return dict;
@@ -287,7 +303,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   const int batch_size = max_batch_size;
   assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
 
-  Losses L{0.0, 0.0};
+  Losses L{0.0, 0.0, 0.0};
   Batch batch(*this, max_batch_size);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
@@ -309,12 +325,14 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
     }
 
     if (oLosses) {
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_action_loss"}, {}, &outputs) );
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_target_loss", "mean_action_loss"}, {}, &outputs) );
       float pStopLoss = outputs[0].scalar<float>()(0);
-      float pActionLoss = outputs[1].scalar<float>()(0);
+      float pTargetLoss = outputs[1].scalar<float>()(0);
+      float pActionLoss = outputs[2].scalar<float>()(0);
 
       // std::cout << loss_out << "\n";
       L.stopLoss += (double) pStopLoss;
+      L.targetLoss += (double) pTargetLoss;
       L.actionLoss += (double) pActionLoss;
     }
   }
@@ -322,6 +340,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   if (oLosses) {
     double numBatches = num_Samples / (double) max_batch_size;
     oLosses->stopLoss = L.stopLoss / numBatches;
+    oLosses->targetLoss = L.targetLoss / numBatches;
     oLosses->actionLoss = L.actionLoss / numBatches;
   }
 }
@@ -447,20 +466,28 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     // The session will initialize the outputs
     std::vector<tensorflow::Tensor> outputs;
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_action_dist"}, {}, &outputs) );
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
     // writer.add_summary(summary, i)
     auto stopDistTensor = outputs[0];
-    auto actionDistTensor = outputs[1];
+    auto targetDistTensor = outputs[1];
+    auto actionDistTensor = outputs[2];
 
     auto stopDist_Mapped = stopDistTensor.tensor<float, 1>();
+    auto targetDist_Mapped = targetDistTensor.tensor<float, 2>();
     auto actionDist_Mapped = actionDistTensor.tensor<float, 3>();
 
+    // rescale to combined target-rule distribution
     for (int i = 0; i < batch_size; ++i) {
       ResultDist res = createResultDist();
       res.stopDist = stopDist_Mapped(i);
       for (int t = 0; t < progs[s+i]->size(); ++t) {
+        float pTarget = targetDist_Mapped(i, t);
+
+        // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
         for (int r = 0; r < progs[s+i]->size(); ++r) {
-          res.actionDist[t*num_Rules + r] = actionDist_Mapped(i, t, r);
+          auto pAction = actionDist_Mapped(i, t, r);
+          // std::cerr << i << " " << t << " " << r << "  :  " << pAction << "\n";
+          res.actionDist[t*num_Rules + r] = pAction * pTarget;
         }
       }
 
@@ -526,7 +553,7 @@ ResultDist::isStop() const {
 
 std::ostream&
 Model::Losses::print(std::ostream & out) const {
-  out << "actionLoss=" << actionLoss << ", stopLoss=" << stopLoss;
+  out << "actionLoss=" << actionLoss << ", targetLoss=" << targetLoss << ", stopLoss=" << stopLoss;
   return out;
 }
 
