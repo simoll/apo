@@ -445,10 +445,12 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     int batch_size = std::min<int>(max_batch_size, num_Samples - s);
     batch.resize(batch_size);
 
+    std::vector<bool> skippedProgVec(progs.size(), false);
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > prog_length) {
         batch.encode_Program(i, emptyP);
+        skippedProgVec[i] = true;
       } else {
         allEmpty = false;
         batch.encode_Program(i, P);
@@ -480,14 +482,16 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     for (int i = 0; i < batch_size; ++i) {
       ResultDist res = createResultDist();
       res.stopDist = stopDist_Mapped(i);
-      for (int t = 0; t < progs[s+i]->size(); ++t) {
+      for (int t = 0; t < prog_length; ++t) {
         float pTarget = targetDist_Mapped(i, t);
 
         // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
-        for (int r = 0; r < progs[s+i]->size(); ++r) {
+        for (int r = 0; r < num_Rules; ++r) {
           auto pAction = actionDist_Mapped(i, t, r);
           // std::cerr << i << " " << t << " " << r << "  :  " << pAction << "\n";
-          res.actionDist[t*num_Rules + r] = pAction * pTarget;
+          int i = t*num_Rules + r;
+          assert(0 <= i && i < res.actionDist.size());
+          res.actionDist[i] = pAction * pTarget;
         }
       }
 
