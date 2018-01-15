@@ -8,20 +8,10 @@ def data_type():
 
 
 
-### OpCode model ###
-# op code encoding
-num_OpCodes = 10
-oc_Ret = 3
-oc_Add = 4
-oc_Sub = 5
-
-
 # enable debug output
 Debug = False
 
 # set to true for pseudo inputs
-DummyRun = False
-
 Training = True
 
 def parseConfig(fileName):
@@ -31,75 +21,35 @@ def parseConfig(fileName):
     res[parts[0]] = parts[1]
   return res
 
-if DummyRun:
-    batch_size = 4
+### model configuration ###
+conf = parseConfig("model.conf")
 
-    # maximal number of parameters
-    num_Params = 5
+# maximal program len
+prog_length = int(conf["prog_length"])
 
-    # maximal program length
-    prog_length = 3
+num_OpCodes = int(conf["num_OpCodes"])
 
-    # number of re-write rules
-    max_Rules = 17
+# maximal number of parameters
+num_Params = int(conf["num_Params"])
 
-    # number of scalar cells in the LSTM
-    state_size = 64
-    
-    # op code embedding size
-    embed_size = 32
-    
-    # stacked cells
-    num_hidden_layers = 2
+# number of re-write rules
+max_Rules = int(conf["max_Rules"]) #, 17
 
-    # decoder layers
-    num_decoder_layers = 2
+# number of scalar cells in the LSTM
+state_size = int(conf["state_size"]) #64
 
-    # some test data
-    # 0 == dummy
-    # 1 == param 1
-    # 2 == param 2
-    # 3 == param 3
-    # 4 == instruction @ 0
+# op code embedding size
+embed_size = int(conf["embed_size"]) #32
 
-    # program = tf.constant([[[oc_Add, 1, 2], [oc_Sub, 4, 1], [oc_Ret, 5, 0]]])
-    # oc_data = tf.reshape(tf.slice(program, [0, 0, 0], [-1, -1, 1]), [batch_size, -1])
-    # print("oc_data: {}".format(oc_data.get_shape())) # [batch_size x max_len]
-    # 
-    # firstOp_data = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
-    # print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
-    # 
-    # sndOp_data = tf.reshape(tf.slice(program, [0, 0, 2], [-1, -1, 1]), [batch_size, -1])
+# stacked cells
+num_hidden_layers = int(conf["num_hidden_layers"]) #6
 
-    # return the number of instructions
-    # rule_in = tf.constant([3])
-else:
-    conf = parseConfig("model.conf")
+# decoder layers (state wraparound)
+num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
-    # maximal program len
-    prog_length = int(conf["prog_length"])
-
-    # maximal number of parameters
-    num_Params = int(conf["num_Params"])
-
-    # number of re-write rules
-    max_Rules = int(conf["max_Rules"]) #, 17
-
-    # number of scalar cells in the LSTM
-    state_size = int(conf["state_size"]) #64
-    
-    # op code embedding size
-    embed_size = int(conf["embed_size"]) #32
-    
-    # stacked cells
-    num_hidden_layers = int(conf["num_hidden_layers"]) #6
-
-    # decoder layers (state wraparound)
-    num_decoder_layers = int(conf["num_decoder_layers"]) #2
-
-    # cell_type
-    cell_type= conf["cell_type"].strip()
-    print("Model (construct). prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
+# cell_type
+cell_type= conf["cell_type"].strip()
+print("Model (construct). num_OpCodes={}, prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(num_OpCodes, prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
 # input feed
 
 # training control parameter (has auto increment)
@@ -124,7 +74,6 @@ sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
 
 with tf.Session() as sess:
     ### OK
-    # if DummyRun:
     #     sess.run(tf.global_variables_initializer())
     #     print(oc_data.eval())
     #     print(firstOp_data.eval())
@@ -312,22 +261,23 @@ with tf.Session() as sess:
 
     ### target logits ###
     pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
-    # with tf.variable_scope("target"):
-    #   cell = make_relu(state_size * 2)
-    #   accu=[]
-    #   for batch in outputs:
-    #     J = tf.concat([batch, pool], axis=1)
-    #     accu.append(cell(J))
-    # # [prog_length x batch_size] -> [batch_size x prog_length]
-    # target_logits = tf.transpose(accu, [1, 0])
+    with tf.variable_scope("target"):
+      cell = make_relu(state_size * 2)
+      accu=[]
+      for batch in outputs:
+        J = tf.concat([batch, pool], axis=1)
+        accu.append(cell(J))
+    # [prog_length x batch_size] -> [batch_size x prog_length]
+    target_logits = tf.transpose(accu, [1, 0])
 
     ### stop logit ###
     with tf.variable_scope("stop"):
       stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
+
     pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
 
     ### rule logits ###
-    with tf.variable_scope("actions"):
+    with tf.variable_scope("rules"):
       accu=[]
       for batch in outputs:
         J = tf.concat([batch, pool], axis=1)
@@ -339,22 +289,30 @@ with tf.Session() as sess:
     ## predictions ##
     # distributions
     tf.nn.softmax(logits=action_logits,name="pred_action_dist")
+    tf.nn.softmax(logits=target_logits,name="pred_target_dist")
 
     ### reference input & training ###
     # reference input #
-    stop_in = tf.placeholder(data_type(), [None], name="stop_in")
-    action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in")
+    stop_in = tf.placeholder(data_type(), [None], name="stop_in") # stop indicator
+    action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in") # action distribution (over rules per instruction)
+    target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in") # target distribution (over instructions (per program))
 
     # training #
     stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
+    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=action_in, logits=action_logits, dim=-1) # [batch_size]
+    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
+
+    # TODO check that this is actually correct
     action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, prog_length * max_Rules]), logits=tf.reshape(action_logits, [-1, prog_length * max_Rules]), dim=-1) # [batch_size]
+    move_losses = action_loss + target_loss # [batch_size]
 
     # conditional loss (only penalize rule/target if !stop_in)
-    loss = tf.reduce_mean((1.0 - stop_in) * action_loss) + stop_loss
+    loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
     tf.identity(loss, "loss")
 
     mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
     mean_action_loss = tf.reduce_mean(action_loss, name="mean_action_loss")
+    mean_target_loss = tf.reduce_mean(target_loss, name="mean_target_loss")
 
     tf.summary.scalar('loss', loss)
 
@@ -389,75 +347,16 @@ with tf.Session() as sess:
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
 
-    if not DummyRun:
-        tf.global_variables_initializer().run()
-        init = tf.variables_initializer(tf.global_variables(), name='init_op')
-        fileName = "apo_graph.pb"
-        modelPrefix ="build/rdn"
 
-        # save metagraph
-        tf.train.Saver(tf.trainable_variables()).save(sess, modelPrefix) 
+    tf.global_variables_initializer().run()
+    init = tf.variables_initializer(tf.global_variables(), name='init_op')
+    fileName = "apo_graph.pb"
+    modelPrefix ="build/rdn"
 
-        # tf.train.write_graph(sess.graph, 'build/', fileName, as_text=False)
-        print("Model written to {}.".format(modelPrefix))
-        writer.close()
-        raise SystemExit
+    # save metagraph
+    tf.train.Saver(tf.trainable_variables()).save(sess, modelPrefix) 
 
-    def feed_dict():
-        # oc_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="oc_feed")
-        # firstOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="firstOp_feed")
-        # sndOp_data = tf.placeholder(tf.int32, [batch_size, max_Time], name="sndOp_feed")
-        # rule_in = tf.placeholder(tf.int32, [batch_size], name="rule_in")
-        program = tf.constant([[[oc_Add, 1, 2], [oc_Sub, 4, 1], [oc_Ret, 5, 0]]])
-        # oc_dummy = tf.reshape(tf.slice(program, [0, 0, 0], [-1, -1, 1]), [batch_size, -1])
-
-
-        # print("oc_dummy: {}".format(oc_dummy.get_shape())) # [batch_size x max_len]
-        
-        oc_dummy=[[oc_Add, oc_Sub, oc_Ret],
-                  [oc_Add, oc_Sub, oc_Add],
-                  [oc_Sub, oc_Sub, oc_Sub],
-                  [oc_Add, oc_Add, oc_Add]]
-
-        rule_in_dummy = [1, 2, 0, 3] # number of oc_Add s
-        firstOp_dummy = [[1, 4, 5]] * batch_size
-        sndOp_dummy = [[2, 1, 0]] * batch_size
-        length_dummy=[3] * batch_size
-
-        # firstOp_dummy = tf.reshape(tf.slice(program, [0, 0, 1], [-1, -1, 1]), [batch_size, -1])
-        # print("firstOp_data: {}".format(firstOp_data.get_shape())) # [batch_size x max_len]
-        
-        # return the number of instructions
-        return {oc_data: oc_dummy, firstOp_data: firstOp_dummy, sndOp_data: sndOp_dummy, rule_in: rule_in_dummy, length_data: length_dummy}
-
-    if merged is None:
-        print(" merged was none!!")
-        raise SystemExit
-
-    print(merged)
-    print(loss)
-    print(train_op)
-
-    train_steps=10000
-    for i in range(train_steps):
-      if i % 10 == 0:  # Record summaries and test-set accuracy
-        summary, roundLoss  = sess.run([merged, loss], feed_dict=feed_dict())
-        writer.add_summary(summary, i)
-        print('Loss at step %s: %s' % (i, roundLoss))
-    
-      else:  # Record train set summaries, and train
-        summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
-        writer.add_summary(summary, i)
-
+    # tf.train.write_graph(sess.graph, 'build/', fileName, as_text=False)
+    print("Model written to {}.".format(modelPrefix))
     writer.close()
-
-    # return output, state
-
-    # one LSTM invocation
-    # for inst in oc_inputs:
-    #    output, state = lstm(inst, state)
-    # seq_length=[4] * batch_size
-    # outputs, state = tf.nn.static_rnn(cell, tf.unstack(oc_data, 1), initial_state=initial_state, sequence_length=seq_length)
-
-    sess.run(tf.global_variables_initializer())
-    # print(oc_inputs.eval())
+    raise SystemExit
