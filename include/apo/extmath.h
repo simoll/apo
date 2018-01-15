@@ -14,7 +14,7 @@ using CatDist = std::vector<float>;
 void PrintDist(const CatDist & dist, std::ostream &);
 
 static void
-Normalize(std::vector<float> & dist) {
+Normalize(CatDist & dist) {
   double a = 0;
   for (auto v : dist) { a += v; }
   if (a == 0.0) return;
@@ -40,7 +40,7 @@ SampleCategoryDistribution(CatDist & catDist, double p) {
     double lastCatBase = catBase;
     double catInterval = catDist[e];
     catBase = lastCatBase + catInterval;
-    if (p > catBase) continue; // skip rule. Otw, sample pos is inside target range for this rule
+    if (p > catBase) continue; // skip category. Otw, sample pos is inside target range for this rule
     if (lastCatBase >= catBase) continue; // skip empty intervals
     assert(p >= lastCatBase);
     return e;
