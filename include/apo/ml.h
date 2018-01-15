@@ -115,6 +115,18 @@ public:
   // set learning rate
   void setLearningRate(float v);
 
+  int toActionID(const Rewrite rew) const {
+    int ruleEnumId = rew.getEnumId();
+    return rew.pc * num_Rules + ruleEnumId;
+  }
+
+  // translate flat actionId to Rewrite
+  Rewrite toRewrite(int actionId) const {
+    int ruleEnumId = actionId % num_Rules;
+    int pc = actionId / num_Rules;
+    return Rewrite::fromModel(ruleEnumId, pc);
+  }
+
   static void shutdown();
 };
 

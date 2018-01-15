@@ -125,14 +125,14 @@ struct MonteCarloOptimizer {
     size_t keepGoing = 10; // 10 sampling attempts
     int targetId, ruleId;
     bool validPc;
+    Rewrite rew;
     do {
       // which rule to apply?
-      ruleId = SampleCategoryDistribution(res.ruleDist, pRand(randGen()));
+      int actionId = SampleCategoryDistribution(res.actionDist, pRand(randGen()));
+      rew = model.toRewrite(actionId);
 
-      // TODO (efficiently!) normalize targetId to actual program length (apply cutoff after problem len)
-      targetId = SampleCategoryDistribution(res.targetDist, pRand(randGen()));
-
-      validPc = targetId + 1 < P.size(); // do not rewrite returns
+      // translate to internal rule representation
+      validPc = rew.pc + 1 < P.size(); // do not rewrite returns
     } while (keepGoing-- > 0 && !validPc);
 
   // failed to sample a valid rule application -> STOP
@@ -140,9 +140,6 @@ struct MonteCarloOptimizer {
       signalsStop = true;
       return true;
     }
-
-  // translate to internal rule representation
-    auto rew = Rewrite::fromModel(targetId, ruleId);
 
   // Otw, rely on the mutator to do the job
     return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
@@ -220,8 +217,7 @@ struct MonteCarloOptimizer {
             } else {
               // sanitize distributions drawn from model
               if (!checkedDists &&
-                  (!IsValidDistribution(modelRewriteDist[t].ruleDist) ||
-                  !IsValidDistribution(modelRewriteDist[t].targetDist))) {
+                  !IsValidDistribution(modelRewriteDist[t].actionDist)) {
                 stats.invalidModelDists++;
                 signalsStop = true;
                 break;
@@ -302,14 +298,13 @@ struct MonteCarloOptimizer {
       if (derivations[i] != bestDer) { continue; }
       noBestDerivation = false;
       const auto & rew = rewrites[i].second;
-      assert(rew.pc < refResult.targetDist.size());
-      refResult.targetDist[rew.pc] += 1.0;
-      int ruleEnumId = rew.getEnumId();
-      assert(ruleEnumId < refResult.ruleDist.size());
-      refResult.ruleDist[ruleEnumId] += 1.0;
+      // assert(rew.pc < refResult.targetDist.size());
+      int actionId = model.toActionID(rew);
+      refResult.actionDist[actionId] += 1.0;
+      // assert(ruleEnumId < refResult.ruleDist.size());
 
       IF_DEBUG_MC {
-        std::cerr << "Prefix to best. pc=" << rew.pc << ", reid=" << ruleEnumId << "\n";
+        std::cerr << "Prefix to best. pc=" << rew.pc << ", actionId=" << actionId << "\n";
         rules[rew.ruleId].dump(rew.leftMatch);
       }
     }
@@ -388,26 +383,23 @@ struct MonteCarloOptimizer {
         bool shouldStop = pRand(randGen()) <= 1.0;
 
         // valid distributions?
-        if (!shouldStop && (!IsValidDistribution(refResults[s].ruleDist) ||
-            !IsValidDistribution(refResults[s].targetDist)))
-        {
+        if (!shouldStop && !IsValidDistribution(refResults[s].actionDist)) {
           hit = false;
           break;
         }
 
         // try to apply the action
         if (!shouldStop) {
-          int ruleEnumId = SampleCategoryDistribution(refResults[s].ruleDist, pRand(randGen()));
-          int targetId = SampleCategoryDistribution(refResults[s].targetDist, pRand(randGen()));
-          IF_DEBUG_SAMPLE { std::cerr << "PICK: " << targetId << " " << ruleEnumId << "\n"; }
+          int actionId = SampleCategoryDistribution(refResults[s].actionDist, pRand(randGen()));
+          Rewrite randomRew = model.toRewrite(actionId);
+          IF_DEBUG_SAMPLE { std::cerr << "PICK: "; randomRew.print(std::cerr) << "\n";}
 
           // scan through legal actions until hit
           for (int i = rewriteIdx;
               i < rewrites.size() && rewrites[i].first == s;
               ++i)
           {
-            if ((rewrites[i].second.pc == targetId) &&
-                (rewrites[i].second.getEnumId() == ruleEnumId)
+            if ((rewrites[i].second == randomRew)
             ) {
               assert(i < nextProgs.size());
               actionProgs.push_back(nextProgs[i]);

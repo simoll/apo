@@ -347,7 +347,7 @@ with tf.Session() as sess:
 
     # training #
     stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
-    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1]), logits=tf.reshape(action_logits, [-1]), dim=-1) # [batch_size]
+    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, prog_length * max_Rules]), logits=tf.reshape(action_logits, [-1, prog_length * max_Rules]), dim=-1) # [batch_size]
 
     # conditional loss (only penalize rule/target if !stop_in)
     loss = tf.reduce_mean((1.0 - stop_in) * action_loss) + stop_loss

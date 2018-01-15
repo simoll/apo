@@ -20,6 +20,14 @@ struct Rewrite {
   getEnumId() const {
     return (ruleId * 2) + (int) leftMatch;
   }
+
+  std::ostream& print(std::ostream& out) const {
+    out << pc << " " << ruleId << " " << leftMatch; return out;
+  }
+
+  bool operator==(const Rewrite & O) const {
+    return pc == O.pc && ruleId == O.ruleId && leftMatch == O.leftMatch;
+  }
 };
 
 struct Mutator {
