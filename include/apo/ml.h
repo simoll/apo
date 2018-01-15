@@ -22,15 +22,14 @@ namespace apo {
 
 
 struct ResultDist {
-  float stopDist;
-  CatDist ruleDist;
-  CatDist targetDist;
+  float stopDist; // [0,1]
+  CatDist actionDist; // [prog_length x num_Rules] -> [0,1]
 
   ResultDist(int numRules, int numTargets)
   : stopDist(0.0)
-  , ruleDist(numRules, 0.0)
-  , targetDist(numTargets, 0.0)
+  , actionDist(numTargets * numRules, 0.0)
   {}
+
   void normalize();
   void print(std::ostream & out) const;
   void dump() const;
@@ -89,8 +88,7 @@ public:
 
   // train model on a batch of programs (returns loss)
   struct Losses {
-    double ruleLoss;
-    double targetLoss;
+    double actionLoss;
     double stopLoss;
 
     std::ostream& print(std::ostream & out) const;
@@ -101,7 +99,9 @@ public:
   Statistics query_stats();
 
   // most likely selection
+#if 0
   ResultVec infer_likely(const ProgramVec& progs);
+#endif
 
   // distribution over selections
   ResultDistVec infer_dist(const ProgramVec& progs, bool failSilently=false);

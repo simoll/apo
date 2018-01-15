@@ -311,55 +311,50 @@ with tf.Session() as sess:
       return target_unit
 
     ### target logits ###
-    # accu=tf.map_fn(target_unit, outputs, dtype=data_type()) # FIXME
-    with tf.variable_scope("target"):
-      pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
-      cell = make_relu(state_size * 2)
-      accu=[]
-      for batch in outputs:
-        J = tf.concat([batch, pool], axis=1)
-        accu.append(cell(J))
-    # [prog_length x batch_size] -> [batch_size x prog_length]
-    target_logits = tf.transpose(accu, [1, 0])
+    pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
+    # with tf.variable_scope("target"):
+    #   cell = make_relu(state_size * 2)
+    #   accu=[]
+    #   for batch in outputs:
+    #     J = tf.concat([batch, pool], axis=1)
+    #     accu.append(cell(J))
+    # # [prog_length x batch_size] -> [batch_size x prog_length]
+    # target_logits = tf.transpose(accu, [1, 0])
 
     ### stop logit ###
     with tf.variable_scope("stop"):
       stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
-
     pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
 
-    ### rule logit ###
-    rule_logits = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=max_Rules)
+    ### rule logits ###
+    with tf.variable_scope("actions"):
+      accu=[]
+      for batch in outputs:
+        J = tf.concat([batch, pool], axis=1)
+        with tf.variable_scope("", reuse=len(accu) > 0):
+          rule_bit = tf.layers.dense(inputs=J, activation=tf.nn.relu, units=max_Rules, name="layer")
+        accu.append(rule_bit)
+    action_logits = tf.transpose(accu, [1, 0, 2]) # [batch_size x prog_length x max_Rules]
 
     ## predictions ##
     # distributions
-    tf.nn.softmax(logits=rule_logits,name="pred_rule_dist")
-    tf.nn.softmax(logits=target_logits,name="pred_target_dist")
-
-    # most-likely categories
-    pred_rule = tf.cast(tf.argmax(rule_logits, axis=1), tf.int32, name="pred_rule")
-    pred_target = tf.cast(tf.argmax(target_logits, axis=1), tf.int32, name="pred_target")
+    tf.nn.softmax(logits=action_logits,name="pred_action_dist")
 
     ### reference input & training ###
     # reference input #
     stop_in = tf.placeholder(data_type(), [None], name="stop_in")
-    rule_in = tf.placeholder(data_type(), [None, max_Rules], name="rule_in")
-    target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")
+    action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in")
 
     # training #
     stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
-    rule_loss = tf.nn.softmax_cross_entropy_with_logits(labels=rule_in, logits=rule_logits, dim=-1) # [batch_size]
-    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
-
-    action_losses = rule_loss + target_loss # [batch_size]
+    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1]), logits=tf.reshape(action_logits, [-1]), dim=-1) # [batch_size]
 
     # conditional loss (only penalize rule/target if !stop_in)
-    loss = tf.reduce_mean((1.0 - stop_in) * action_losses) + stop_loss
+    loss = tf.reduce_mean((1.0 - stop_in) * action_loss) + stop_loss
     tf.identity(loss, "loss")
 
     mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
-    mean_rule_loss = tf.reduce_mean(rule_loss, name="mean_rule_loss")
-    mean_target_loss = tf.reduce_mean(target_loss, name="mean_target_loss")
+    mean_action_loss = tf.reduce_mean(action_loss, name="mean_action_loss")
 
     tf.summary.scalar('loss', loss)
 
@@ -393,7 +388,6 @@ with tf.Session() as sess:
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
-
 
     if not DummyRun:
         tf.global_variables_initializer().run()

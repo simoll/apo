@@ -200,9 +200,8 @@ struct Batch {
   Tensor length_feed;
 
   // output encoding
-  Tensor rule_feed;
+  Tensor action_feed;
   Tensor stop_feed;
-  Tensor target_feed;
 
   Batch(const Model & _model, int _batch_size)
   : model(_model)
@@ -211,9 +210,9 @@ struct Batch {
   , firstOp_feed(DT_INT32, TensorShape({batch_size, model.prog_length}))
   , sndOp_feed(DT_INT32,   TensorShape({batch_size, model.prog_length}))
   , length_feed(DT_INT32,  TensorShape({batch_size}))
-  , rule_feed(DT_FLOAT,  TensorShape({batch_size, model.max_Rules}))
+
   , stop_feed(DT_FLOAT,  TensorShape({batch_size}))
-  , target_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length}))
+  , action_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}))
   {}
 
   void resize(int new_size) {
@@ -224,9 +223,8 @@ struct Batch {
     firstOp_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
     sndOp_feed = Tensor(DT_INT32,   TensorShape({batch_size, model.prog_length}));
     length_feed = Tensor(DT_INT32,  TensorShape({batch_size}));
-    rule_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.max_Rules}));
     stop_feed = Tensor(DT_FLOAT,  TensorShape({batch_size}));
-    target_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length}));
+    action_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}));
   }
 
   void encode_Program(int batch_id, const Program & prog) {
@@ -255,17 +253,14 @@ struct Batch {
   void encode_Result(int batch_id, const ResultDist & result) {
     stop_feed.tensor<float, 1>()(batch_id) = result.stopDist;
 
-    auto rule_Mapped = rule_feed.tensor<float, 2>();
-    auto target_Mapped = target_feed.tensor<float, 2>();
-    for (int t = 0; t < result.targetDist.size(); ++t) {
-      target_Mapped(batch_id, t) = result.targetDist[t];
-    }
-
-    for (int r = 0; r < model.max_Rules; ++r) {
-      if (r < model.num_Rules) {
-        rule_Mapped(batch_id, r) = result.ruleDist[r];
-      } else { // mask out inactive rules
-        rule_Mapped(batch_id, r) = 0.0;
+    auto action_Mapped = action_feed.tensor<float, 3>();
+    for (int t = 0; t < model.prog_length; ++t) {
+      for (int r = 0; r < model.max_Rules; ++r) {
+        if (r < model.num_Rules) {
+          action_Mapped(batch_id, t, r) = result.actionDist[t * model.num_Rules + r];
+        } else {
+          action_Mapped(batch_id, t, r) = 0.0;
+        }
       }
     }
   }
@@ -276,10 +271,9 @@ struct Batch {
       {"oc_data", oc_feed},
       {"firstOp_data", firstOp_feed},
       {"sndOp_data", sndOp_feed},
+      {"length_data", length_feed},
       {"stop_in", stop_feed},
-      {"rule_in", rule_feed},
-      {"target_in", target_feed},
-      {"length_data", length_feed}
+      {"action_in", action_feed}
     };
     return dict;
   }
@@ -293,7 +287,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
   const int batch_size = max_batch_size;
   assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
 
-  Losses L{0.0, 0.0, 0.0};
+  Losses L{0.0, 0.0};
   Batch batch(*this, max_batch_size);
 
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
@@ -315,23 +309,20 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
     }
 
     if (oLosses) {
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_rule_loss", "mean_target_loss"}, {}, &outputs) );
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_action_loss"}, {}, &outputs) );
       float pStopLoss = outputs[0].scalar<float>()(0);
-      float pRuleLoss = outputs[1].scalar<float>()(0);
-      float pTargetLoss = outputs[2].scalar<float>()(0);
+      float pActionLoss = outputs[1].scalar<float>()(0);
 
       // std::cout << loss_out << "\n";
       L.stopLoss += (double) pStopLoss;
-      L.ruleLoss += (double) pRuleLoss;
-      L.targetLoss += (double) pTargetLoss;
+      L.actionLoss += (double) pActionLoss;
     }
   }
 
   if (oLosses) {
     double numBatches = num_Samples / (double) max_batch_size;
     oLosses->stopLoss = L.stopLoss / numBatches;
-    oLosses->ruleLoss = L.ruleLoss / numBatches;
-    oLosses->targetLoss = L.targetLoss / numBatches;
+    oLosses->actionLoss = L.actionLoss / numBatches;
   }
 }
 
@@ -383,6 +374,7 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 }
 #endif
 
+#if 0
 ResultVec
 Model::infer_likely(const ProgramVec& progs) {
   int num_Samples = progs.size();
@@ -417,6 +409,7 @@ Model::infer_likely(const ProgramVec& progs) {
 
   return results;
 }
+#endif
 
 ResultDistVec
 Model::infer_dist(const ProgramVec& progs, bool failSilently) {
@@ -454,30 +447,24 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     // The session will initialize the outputs
     std::vector<tensorflow::Tensor> outputs;
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_rule_dist", "pred_target_dist"}, {}, &outputs) );
+    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_action_dist"}, {}, &outputs) );
     // writer.add_summary(summary, i)
     auto stopDistTensor = outputs[0];
-    auto ruleDistTensor = outputs[1];
-    auto targetDistTensor = outputs[2];
+    auto actionDistTensor = outputs[1];
 
     auto stopDist_Mapped = stopDistTensor.tensor<float, 1>();
-    auto ruleDist_Mapped = ruleDistTensor.tensor<float, 2>();
-    auto targetDist_Mapped = targetDistTensor.tensor<float, 2>();
+    auto actionDist_Mapped = actionDistTensor.tensor<float, 3>();
 
     for (int i = 0; i < batch_size; ++i) {
       ResultDist res = createResultDist();
       res.stopDist = stopDist_Mapped(i);
-      for (int j = 0; j < num_Rules; ++j) {
-        res.ruleDist[j] = ruleDist_Mapped(i, j);
+      for (int t = 0; t < progs[s+i]->size(); ++t) {
+        for (int r = 0; r < progs[s+i]->size(); ++r) {
+          res.actionDist[t*num_Rules + r] = actionDist_Mapped(i, t, r);
+        }
       }
 
-      for (int j = 0; j < progs[s+i]->size(); ++j) {
-        res.targetDist[j] = targetDist_Mapped(i, j);
-      }
-
-      Normalize(res.ruleDist);
-      Normalize(res.targetDist);
-
+      res.normalize();
       results.push_back(res);
     }
   }
@@ -518,7 +505,7 @@ Model::createEmptyResult() const { return ResultDist(num_Rules, prog_length); }
 
 void
 ResultDist::print(std::ostream & out) const {
-  out << "Res {stop=" << stopDist << ", rule="; PrintDist(ruleDist, out); out << ", target="; PrintDist(targetDist, out); out << "}\n";
+  out << "Res {stop=" << stopDist << ", actions="; PrintDist(actionDist, out); out << "}\n";
 }
 
 void
@@ -527,8 +514,7 @@ ResultDist::dump() const { print(std::cerr); }
 void
 ResultDist::normalize() {
   stopDist = Clamp(stopDist, 0.0, 1.0);
-  Normalize(ruleDist);
-  Normalize(targetDist);
+  Normalize(actionDist);
 }
 
 
@@ -540,7 +526,7 @@ ResultDist::isStop() const {
 
 std::ostream&
 Model::Losses::print(std::ostream & out) const {
-  out << "ruleLoss=" << ruleLoss << ", targetLoss=" << targetLoss << ", stopLoss=" << stopLoss;
+  out << "actionLoss=" << actionLoss << ", stopLoss=" << stopLoss;
   return out;
 }
 
