@@ -452,31 +452,58 @@ struct MonteCarloOptimizer {
 
 // compute a scaore for the sample derivations (assuming refDef contains reference derivations)
 struct DerStats {
-  double hits; // ratio of met MCTS solutions
-  double improved; // number of improved MCTS solutions
-  double stops; // hit rate of "always STOP" solution
-  double getMisses() const { return 1.0 - (hits + improved); }
+  double matched; // ref == model
+  double longerDer; // ref.score == model.score BUT model.der > ref.der
+  double betterScore; // model.score < ref.score
+  double shorterDer; // ref.score == model.score AND model.der < ref.der
+  double stops;
+
+  double getClearedScore() const { return matched + longerDer + betterScore + shorterDer; }
+  double getMisses() const { return 1.0 - getClearedScore(); }
+
+  void print(std::ostream&out) const {
+    out << "Model stats. Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << "). Stops " << stops << "\n";
+  }
 };
 
 DerStats
 ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) {
-  size_t numHit = 0;
-  size_t numImproved = 0;
+  size_t numMatched = 0;
+  size_t numLongerDer = 0;
+  size_t numBetterScore = 0;
+  size_t numShorterDer = 0;
   size_t numStops = 0;
 
   for (int i = 0; i < refDer.size(); ++i) {
+    // always STOP baseline
     if (refDer[i].shortestDerivation == 0) {
       numStops++;
     }
-    if (sampleDer[i] == refDer[i]) {
-      numHit++;
-    } else if (sampleDer[i].betterThan(refDer[i])) {
-      numImproved++;
+
+    // improved over reference result
+    if (sampleDer[i].betterThan(refDer[i])) {
+      // actual improvements (shorter derivation or better program)
+      if (sampleDer[i].bestScore < refDer[i].bestScore) {
+        numBetterScore++;
+      }  else if (sampleDer[i].shortestDerivation < refDer[i].shortestDerivation) {
+        numShorterDer++;
+      }
+    }
+
+    // number of targets hit
+    if (sampleDer[i].bestScore == refDer[i].bestScore) {
+      if (sampleDer[i].shortestDerivation > refDer[i].shortestDerivation) {
+        numLongerDer++;
+      } else {
+        numMatched++;
+      }
     }
   }
   return DerStats{
-    numHit / (double) refDer.size(),
-    numImproved / (double) refDer.size(),
+    numMatched / (double) refDer.size(),
+    numLongerDer / (double) refDer.size(),
+    numBetterScore / (double) refDer.size(),
+    numShorterDer / (double) refDer.size(),
     numStops / (double) refDer.size(),
   };
 }
@@ -619,7 +646,7 @@ struct APO {
         auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
 
         DerStats S = ScoreDerivations(refDerVec, modelDerVec);
-        std::cerr << "Model stats. Hits: " << S.hits << ", improved: " << S.improved << ", misses: " << S.getMisses() << ". Stop ratio: " << S.stops << "\n";
+        S.print(std::cerr);
 
         // store model
         std::stringstream ss;
