@@ -282,7 +282,6 @@ with tf.Session() as sess:
       # accumulate outputs states
       # pool = tf.matmul(m_pool, tf.reduce_sum(outputs, axis=0)) #[batch_size]
       pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
-      print("POOL {}".format(pool))
 
       # target probability unit
       def target_unit(batch):
