@@ -1,7 +1,8 @@
 name large
 minStubLen 3
 maxStubLen 12
-maxMutations 3
+minMutations 3
+maxMutations 5
 pExpand 0.7
 mcDerivationSteps 3
 maxExplorationDepth 4

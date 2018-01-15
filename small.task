@@ -1,11 +1,12 @@
 name small
-minStubLen 3
-maxStubLen 4
-maxMutations 1
+minStubLen 2
+maxStubLen 3
+minMutations 2
+maxMutations 5
 pExpand 0.7
 mcDerivationSteps 1
 maxExplorationDepth 2
 pRandom 1.0
-numOptRounds 80
+numOptRounds 4
 logRate 20
 numGames 10000

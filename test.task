@@ -1,7 +1,8 @@
 name test
-minStubLen 1
-maxStubLen 1
-maxMutations 1
+minStubLen 3
+maxStubLen 3
+minMutations 0
+maxMutations 0
 pExpand 0.7
 mcDerivationSteps 1
 maxExplorationDepth 2
