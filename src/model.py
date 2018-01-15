@@ -179,6 +179,8 @@ with tf.Session() as sess:
         # TODO document
         with tf.variable_scope("DAG"): 
           out_states=[]
+
+          next_initial = None
           for l in range(num_layers):
             if l == 0:
               # apply LSTM to opCodes
@@ -195,6 +197,7 @@ with tf.Session() as sess:
               # next layer inputs to assemble
               inputs=[]
               batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [batch_size x 1]
+              # [prog_length x batch_size]
               for time_step in range(prog_length):
                 # if time_step > 0: tf.get_variable_scope().reuse_variables()
 
@@ -223,8 +226,12 @@ with tf.Session() as sess:
               # print("Input at layer {}".format(l))
               # print(inputs)
               cell = make_cell()
-              initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
-              outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)
+
+              if next_initial is None:
+                next_initial = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+              outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=length_data)
+              # next_initial = state # DON't
+              # next_initial=state # LSTM wrap around (TESTING)
               if tupleState:
                 # e.g. LSTM
                 out_states.append(state[0])
@@ -256,9 +263,52 @@ with tf.Session() as sess:
         else:
           net_out = state.c
 
+    ### per-node objective ###
+    # target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")        # dist over pcs
+    # rule_in = tf.placeholder(data_type(), [None, prog_length, num_Rules], name="dist_in") # dist over pcs x rule
+
+    # target probability [0, 1] per node
+    with tf.variable_scope("target"):
+      # variables (all [state_size])
+      in_size=2 * state_size
+      m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
+      v_init = tf.truncated_normal([in_size], dtype=data_type())
+      m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
+      v_bias = tf.get_variable("v_bias", initializer=v_init, trainable=True)
+      v_project = tf.get_variable("v_project", initializer=v_init, trainable=True)
+
+      # pooling layer adder
+      # m_pool = tf.get_variable("v_pool", initializer=tf.zeros([state_size, state_size], dtype=data_type()), trainable=True)
+      # accumulate outputs states
+      # pool = tf.matmul(m_pool, tf.reduce_sum(outputs, axis=0)) #[batch_size]
+      pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
+      print("POOL {}".format(pool))
+
+      # target probability unit
+      def target_unit(batch):
+        # dense layer (todo accumulate state)
+        # with tf.variable_scope("dense", reuse=len(accu) > 0):
+        #   t = tf.layers.dense(inputs=batch, units=1)[0]
+     
+        J = tf.concat([batch, pool], axis=1)
+        elem_trans = tf.nn.relu_layer(J, m_trans, v_bias)
+        # elem_trans = tf.nn.relu(tf.matmul(batch, m_trans) + v_bias)
+        t = tf.reduce_sum(v_project * elem_trans, axis=1)
+        return t
+
+
+      # accu=tf.map_fn(target_unit, outputs, dtype=data_type()) # FIXME
+      accu=[]
+      for batch in outputs:
+        accu.append(target_unit(batch))
+
+    # [prog_length x batch_size] -> [batch_size x prog_length]
+    target_logits = tf.transpose(accu, [1, 0])
+
+    ### old decomposed rule/target objective ###
     # fold hidden layer to decision bits
     rule_logits = tf.layers.dense(inputs=net_out, units=num_Rules)
-    target_logits = tf.layers.dense(inputs=net_out, units=prog_length) # TODO use ptr-net instead
+    # target_logits = tf.layers.dense(inputs=net_out, units=prog_length) 
 
     ## predictions ##
     # distributions
@@ -268,29 +318,6 @@ with tf.Session() as sess:
     # most-likely categories
     pred_rule = tf.cast(tf.argmax(rule_logits, axis=1), tf.int32, name="pred_rule")
     pred_target = tf.cast(tf.argmax(target_logits, axis=1), tf.int32, name="pred_target")
-
-    if False:
-        ### target pointer extraction (pointer net) ###
-        def attention(ref, query, scope="attention"):
-          with tf.variable_scope(scope):
-            W_ref = tf.get_variable(
-                "W_ref", [state_size, state_size])
-            W_q = tf.get_variable(
-                "W_q", [state_size, state_size])
-            v = tf.get_variable(
-                "v", [state_size])
-        
-            encoded_ref = tf.matmul(ref, W_ref, name="encoded_ref")
-            encoded_query = tf.expand_dims(tf.matmul(query, W_q, name="encoded_query"), 1)
-            tiled_encoded_Query = tf.tile(
-                encoded_query, [1, tf.shape(encoded_ref)[1], 1], name="tiled_encoded_query")
-            scores = tf.reduce_sum(v * tf.tanh(encoded_ref + encoded_query), [-1])
-            return scores
-        
-        def glimpse(ref, query, scope="glimpse"):
-          p = tf.nn.softmax(attention(ref, query, scope=scope))
-          alignments = tf.expand_dims(p, 2)
-          return tf.reduce_sum(alignments * ref, [1])
 
     ### reference input & training ###
     # reference input #
