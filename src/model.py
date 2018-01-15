@@ -267,47 +267,42 @@ with tf.Session() as sess:
     # target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")        # dist over pcs
     # rule_in = tf.placeholder(data_type(), [None, prog_length, num_Rules], name="dist_in") # dist over pcs x rule
 
-    # target probability [0, 1] per node
-    with tf.variable_scope("target"):
+    def make_relu(in_size):
+      # target probability [0, 1] per node
       # variables (all [state_size])
-      in_size=2 * state_size
       m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
       v_init = tf.truncated_normal([in_size], dtype=data_type())
       m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
       v_bias = tf.get_variable("v_bias", initializer=v_init, trainable=True)
       v_project = tf.get_variable("v_project", initializer=v_init, trainable=True)
 
-      # pooling layer adder
-      # m_pool = tf.get_variable("v_pool", initializer=tf.zeros([state_size, state_size], dtype=data_type()), trainable=True)
-      # accumulate outputs states
-      # pool = tf.matmul(m_pool, tf.reduce_sum(outputs, axis=0)) #[batch_size]
-      pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
-
       # target probability unit
       def target_unit(batch):
         # dense layer (todo accumulate state)
         # with tf.variable_scope("dense", reuse=len(accu) > 0):
         #   t = tf.layers.dense(inputs=batch, units=1)[0]
-     
-        J = tf.concat([batch, pool], axis=1)
-        elem_trans = tf.nn.relu_layer(J, m_trans, v_bias)
+        elem_trans = tf.nn.relu_layer(batch, m_trans, v_bias)
         # elem_trans = tf.nn.relu(tf.matmul(batch, m_trans) + v_bias)
         t = tf.reduce_sum(v_project * elem_trans, axis=1)
         return t
 
+      return target_unit
 
-      # accu=tf.map_fn(target_unit, outputs, dtype=data_type()) # FIXME
+    ### target logits ###
+    # accu=tf.map_fn(target_unit, outputs, dtype=data_type()) # FIXME
+    with tf.variable_scope("target"):
+      pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
+      cell = make_relu(state_size * 2)
       accu=[]
       for batch in outputs:
-        accu.append(target_unit(batch))
-
+        J = tf.concat([batch, pool], axis=1)
+        accu.append(cell(J))
     # [prog_length x batch_size] -> [batch_size x prog_length]
     target_logits = tf.transpose(accu, [1, 0])
 
     ### old decomposed rule/target objective ###
     # fold hidden layer to decision bits
-    rule_logits = tf.layers.dense(inputs=net_out, units=num_Rules)
-    # target_logits = tf.layers.dense(inputs=net_out, units=prog_length) 
+    rule_logits = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=num_Rules)
 
     ## predictions ##
     # distributions
