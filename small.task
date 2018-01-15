@@ -7,6 +7,6 @@ pExpand 0.7
 mcDerivationSteps 1
 maxExplorationDepth 2
 pRandom 1.0
-numOptRounds 4
+numOptRounds 50
 logRate 20
 numGames 10000
