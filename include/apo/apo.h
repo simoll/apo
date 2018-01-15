@@ -129,7 +129,7 @@ struct MonteCarloOptimizer {
     } while (keepGoing-- > 0 && !validPc);
 
   // failed to sample a valid rule application -> STOP
-    if (!keepGoing) {
+    if (!validPc) {
       signalsStop = true;
       return true;
     }
