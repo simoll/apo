@@ -16,6 +16,7 @@ INC=-Isrc/ \
 LIBS=-ltensorflow_framework \
     $(TFLOW)/python/_pywrap_tensorflow_internal.so \
     $(TFLOW)/python/framework/fast_tensor_util.so \
+    $(TFLOW)/contrib/rnn/python/ops/_lstm_ops.so \
     -lcuda \
     -lpython3
 LIBPATH=-L${TFLOW}
@@ -30,14 +31,14 @@ CXX=clang++ -std=c++14 ${OPTFLAGS}
 
 METAGRAPH=build/rdn.meta
 
-apo: $(OBJECTS) ${METAGRAPH} Makefile
+apo: $(OBJECTS) ${METAGRAPH} Makefile make.conf
 	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
 
-build/%.o: src/%.cpp Makefile $(HEADERS)
+build/%.o: src/%.cpp Makefile $(HEADERS) make.conf
 	mkdir -p $(dir $@)
 	$(CXX) ${CFLAGS} $< -c -o $@ 
 
-${METAGRAPH}: src/model.py model.conf 
+${METAGRAPH}: src/model.py model.conf
 	mkdir -p $(dir ${METAGRAPH})
 	$(PYTHON) src/model.py
 

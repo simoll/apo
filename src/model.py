@@ -98,7 +98,7 @@ else:
     num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
     # cell_type
-    cell_type= conf["cell_type"]
+    cell_type= conf["cell_type"].strip()
     print("Model (construct). prog_length={}, num_Params={}, num_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(prog_length, num_Params, num_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
 # input feed
 
@@ -166,15 +166,18 @@ with tf.Session() as sess:
 
     ### recurrent cell setup ###
     tupleState=False
-    if cell_type== "gru":
+    if cell_type == "gru":
         make_cell = lambda: tf.nn.rnn_cell.GRUCell(state_size)
-    elif cell_type == "block":
+    elif cell_type == "lstm_block":
         tupleState = True
         make_cell = lambda: tf.contrib.rnn.LSTMBlockCell(state_size)
-    else:
+    elif cell_type == "lstm":
         tupleState = True
         make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
-      # cell = tf.nn.rnn_cell.BasicRNNCell(state_size)
+    else:
+        print(cell_type)
+        print("Failed to build model! Choose an RNN cell type.")
+        raise SystemExit
 
 
     initial_outputs = outputs
