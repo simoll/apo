@@ -32,6 +32,10 @@
 #include <type_traits>
 #include <utility>
 
+#define LLVM_ATTRIBUTE_ALWAYS_INLINE inline
+
+#define LLVM_UNLIKELY(x) __builtin_expect((x),0)
+
 namespace llvm {
 
 /// This is all the non-templated stuff common to all SmallVectors.
@@ -112,13 +116,13 @@ public:
   using const_pointer = const T *;
 
   // forward iterator creation methods.
-  LLVM_ATTRIBUTE_ALWAYS_INLINE
+  inline
   iterator begin() { return (iterator)this->BeginX; }
-  LLVM_ATTRIBUTE_ALWAYS_INLINE
+  inline
   const_iterator begin() const { return (const_iterator)this->BeginX; }
-  LLVM_ATTRIBUTE_ALWAYS_INLINE
+  inline
   iterator end() { return (iterator)this->EndX; }
-  LLVM_ATTRIBUTE_ALWAYS_INLINE
+  inline
   const_iterator end() const { return (const_iterator)this->EndX; }
 
 protected:

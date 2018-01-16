@@ -53,7 +53,7 @@ public:
 
   SmallSet() = default;
 
-  LLVM_NODISCARD bool empty() const {
+  bool empty() const {
     return Vector.empty() && Set.empty();
   }
 
