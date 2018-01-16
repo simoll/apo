@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <vector>
 #include <cassert>
@@ -462,7 +463,8 @@ struct DerStats {
   double getMisses() const { return 1.0 - getClearedScore(); }
 
   void print(std::ostream&out) const {
-    out << "Model stats. Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << "). Stops " << stops << "\n";
+    const int fpPrec = 6;
+    out << std::fixed << std::setprecision(fpPrec) << "Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << "). Stops " << stops << "\n";
   }
 };
 
@@ -551,7 +553,6 @@ struct APO {
 
 // training
   int numSamples;//
-  int batchTrainSteps; // = 4;
 
 // number of simulation batches
   APO(const std::string & taskFile, const std::string & _cpPrefix)
@@ -611,15 +612,16 @@ struct APO {
 
   void train() {
     const int numSamples = model.max_batch_size;
-    const int numEvalSamples = std::min<int>(4096, model.max_batch_size * 16);
+    const int numEvalSamples = std::min<int>(4096, model.max_batch_size * 32);
 
+
+    // hold-out evaluation set
+    ProgramVec evalProgs(numEvalSamples, nullptr);
+    generatePrograms(evalProgs);
     std::cerr << "numSamples = " << numSamples << "\n"
               << "numEvalSamples = " << numEvalSamples << "\n";
 
   // training
-    const int batchTrainSteps = 4;
-
-  // number of simulation batches
     assert(minStubLen > 0 && "can not generate program within constraints");
 
     const int dotStep = logRate / 10;
@@ -635,18 +637,20 @@ struct APO {
         montOpt.stats.print(std::cerr) << "\n";
         montOpt.stats = MonteCarloOptimizer::Stats();
 
-      // evaluating current model
-        ProgramVec evalProgs(numEvalSamples, nullptr);
-        generatePrograms(evalProgs);
-
         // random sampling based (uniform sampling, nio model)
         auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
 
-        // one shot (model based sampling)
-        auto modelDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
+        // one shot (model based)
+        auto oneShotDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
 
-        DerStats S = ScoreDerivations(refDerVec, modelDerVec);
-        S.print(std::cerr);
+        // model-guided sampling
+        const int guidedSamples = 4;
+        auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples);
+
+        DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
+        DerStats guidedStats = ScoreDerivations(refDerVec, guidedDerVec);
+        std::cerr << "\tOne shot "; oneShotStats.print(std::cerr);
+        std::cerr << "\tGuided   "; guidedStats.print(std::cerr);
 
         // store model
         std::stringstream ss;
@@ -702,11 +706,13 @@ struct APO {
         auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
 
       // query model to improve
+#if 0
         const int racketThreshold = logRate; // ATM
         if (g > racketThreshold) {
           auto modelDerVec = montOpt.searchDerivations(nextProgs, 0.0, maxExplorationDepth, 1);
           derVec = FilterBest(derVec, modelDerVec);
         }
+#endif
 
   #if 0
         IF_DEBUG {
@@ -725,7 +731,7 @@ struct APO {
 
       // train model
         Model::Losses L;
-        model.train_dist(progVec, refResults, batchTrainSteps, logRate ? &L : nullptr);
+        model.train_dist(progVec, refResults, logRate ? &L : nullptr);
 
         if (loggedRound) {
           std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";

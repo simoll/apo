@@ -64,6 +64,8 @@ public:
   int num_Rules; // number of active rules
   const int max_Operands = 2;
 
+  int batch_train_steps; // number of updates per training
+
   int translateOperand(node_t idx) const;
   int encodeOperand(const Statement & stat, node_t opIdx) const;
   int encodeOpCode(const Statement & stat) const;
@@ -95,7 +97,7 @@ public:
     std::ostream& print(std::ostream & out) const;
   };
 
-  void train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, Losses * oLoss);
+  void train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
 
   Statistics query_stats();
 
