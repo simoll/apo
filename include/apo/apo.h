@@ -806,11 +806,12 @@ struct APO {
         const int guidedSamples = 4;
         auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples);
 
-        int stops = CountStops(refDerVec);
+        int numStops = CountStops(refDerVec);
         DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
         DerStats guidedStats = ScoreDerivations(refDerVec, guidedDerVec);
 
-        std::cerr << ". Stops  " << stops << "\n";
+        double stopRatio = numStops / (double) numSamples;
+        std::cerr << ". Stops  " << stopRatio << "\n";
         std::cerr << "\tOne shot "; oneShotStats.print(std::cerr);
         std::cerr << "\tGuided   "; guidedStats.print(std::cerr);
 
