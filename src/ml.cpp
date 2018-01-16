@@ -311,7 +311,7 @@ struct Batch {
 };
 
 // train model on a batch of programs (returns loss)
-void
+std::thread
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
@@ -328,7 +328,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
       batch.encode_Program(i, P);
       batch.encode_Result(i, results[s + i]);
     }
-    batchVec->push_back(std::move(batch));
+    batchVec->push_back(batch);
   }
 
   // synchronize with pending training session
@@ -371,13 +371,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
     delete batchVec;
   });
 
-  if (oLosses) {
-    workerThread.join();
-    // wait for results
-  } else {
-    // let thread run in background
-    workerThread.detach();
-  }
+  return workerThread;
 }
 
 void
@@ -433,8 +427,8 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 }
 #endif
 
-void
-Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx, bool blocking) {
+std::thread
+Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
   Program emptyP(num_Params, {}); // the empty program
 
   auto batchVec = new std::vector<Batch>();
@@ -465,9 +459,8 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       continue;
     }
 
-    batchVec->push_back(std::move(batch));
+    batchVec->push_back(batch);
   }
-
 
   auto workerThread = std::thread([this, batchVec, &oResultDistVec, startIdx]{
     std::lock_guard<std::mutex> guard(modelMutex);
@@ -511,8 +504,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     delete batchVec;
   });
 
-  if (blocking) { workerThread.join(); }
-  else workerThread.detach();
+  return workerThread;
 }
 
 // set learning rate

@@ -109,7 +109,7 @@ public:
     std::ostream& print(std::ostream & out) const;
   };
 
-  void train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
+  std::thread train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
 
   Statistics query_stats();
 
@@ -119,7 +119,7 @@ public:
 #endif
 
   // distribution over selections
-  void infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, bool blocking=true);
+  std::thread infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx);
 
   // returns a plain STOP result
   ResultDist createStopResult() const;

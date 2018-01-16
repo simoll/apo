@@ -172,7 +172,8 @@ struct MonteCarloOptimizer {
 
     // pre-compute initial program distribution
     ResultDistVec initialProgDist(progVec.size());
-    model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+    std::thread handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+    handle.join();
 
     // number of derivation walks
     for (int r = 0; r < numOptRounds; ++r) {
@@ -181,8 +182,10 @@ struct MonteCarloOptimizer {
       ProgramVec roundProgs = Clone(progVec);
 
       ResultDistVec modelRewriteDist = initialProgDist;
+
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
+        std::thread inferThread;
         for (int startIdx = 0; startIdx < numSamples; startIdx += model.max_batch_size) {
           int endIdx = std::min<int>(numSamples, startIdx + model.max_batch_size);
           int nextEndIdx = std::min<int>(numSamples, endIdx + model.max_batch_size);
@@ -191,14 +194,17 @@ struct MonteCarloOptimizer {
           if ((derStep > 0)) {
             if (startIdx == 0) {
               // first instance -> run inference for first and second batch
-              model.infer_dist(modelRewriteDist, roundProgs, startIdx, endIdx, true); // TODO also pipeline with the derivation loop
-            } else {
-              model.flush(); // wait until result for this iteration becomes available
+              inferThread = model.infer_dist(modelRewriteDist, roundProgs, startIdx, endIdx); // TODO also pipeline with the derivation loop
             }
+            inferThread.join(); // join with last inference thread
 
-            if (endIdx < nextEndIdx) {
+            if (endIdx < nextEndIdx) {// there is a batch coming after this one
               // start infering dist for next batch
-              model.infer_dist(modelRewriteDist, roundProgs, endIdx, nextEndIdx, false);
+              assert(!inferThread.joinable());
+              inferThread = model.infer_dist(modelRewriteDist, roundProgs, endIdx, nextEndIdx);
+            } else { // no more batches for this derivation step
+              assert(!inferThread.joinable());
+              inferThread = model.infer_dist(modelRewriteDist, roundProgs, endIdx, nextEndIdx);
             }
           }
 
@@ -283,6 +289,8 @@ struct MonteCarloOptimizer {
             break; // all frozen -> early exit
           }
         }
+
+        if (inferThread.joinable()) inferThread.join();
       }
     }
 
@@ -308,7 +316,7 @@ struct MonteCarloOptimizer {
 
     // pre-compute initial program distribution
     ResultDistVec initialProgDist(progVec.size());
-    if (useModel) { model.infer_dist(initialProgDist, progVec, 0, progVec.size()); }
+    if (useModel) { model.infer_dist(initialProgDist, progVec, 0, progVec.size()).join(); }
 
     // number of derivation walks
     for (int r = 0; r < numOptRounds; ++r) {
@@ -320,7 +328,7 @@ struct MonteCarloOptimizer {
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
         // use cached probabilities if possible
-        if ((derStep > 0) && useModel) { model.infer_dist(modelRewriteDist, roundProgs, 0, roundProgs.size()); }
+        if ((derStep > 0) && useModel) { model.infer_dist(modelRewriteDist, roundProgs, 0, roundProgs.size()).join(); }
 
         int frozen = 0;
 
@@ -864,7 +872,7 @@ struct APO {
 
       // train model
       Model::Losses L;
-      model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
+      std::thread trainThread = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
       // pick an action per program and drop STOP-ped programs
       int numNextProgs = montOpt.sampleActions(refResults, rewrites, nextProgs, progVec);
@@ -874,8 +882,10 @@ struct APO {
       generatePrograms(progVec, numNextProgs, numSamples);
 
       if (loggedRound) {
-        model.flush(); // wait until the model query has completed
+        trainThread.join();
         std::cerr << "\t"; L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
+      } else {
+        trainThread.detach();
       }
     }
   }
