@@ -24,6 +24,7 @@
 
 #include <sstream>
 
+#include <time.h>
 #include <vector>
 // #include "tensorflow/cc/client/client_session.h"
 // #include "tensorflow/cc/ops/standard_ops.h"
@@ -785,12 +786,23 @@ struct APO {
     // TESTING
     model.setLearningRate(0.0001);
 
+    clock_t roundTotal = 0;
+    size_t numTimedRounds = 0;
     std::cerr << "\n-- Training --";
     for (size_t g = 0; g < numRounds; ++g) {
       bool loggedRound = (g % logRate == 0);
       if (loggedRound) {
         auto stats = model.query_stats();
-        std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr); std::cerr << ") -\n";
+        std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr);
+        if (g == 0) {
+          std::cerr << ") -\n";
+        } else {
+          // report round timing statistics
+          double avgRoundTime = (roundTotal / (double) numTimedRounds) / CLOCKS_PER_SEC;
+          std::cerr << ", avgRoundTime=" << avgRoundTime << " s ) -\n";
+          roundTotal = 0;
+          numTimedRounds = 0;
+        }
 
       // print MCTS statistics
         montOpt.stats.print(std::cerr);
@@ -824,6 +836,8 @@ struct APO {
         if (g % dotStep == 0) { std::cerr << "."; }
       }
 
+
+      clock_t startRound = clock();
 
     // compute all one-step derivations
       std::vector<std::pair<int, Rewrite>> rewrites;
@@ -881,6 +895,11 @@ struct APO {
 
       // fill up with new programs
       generatePrograms(progVec, numNextProgs, numSamples);
+      auto endRound = clock();
+
+      // statistics
+      roundTotal += (endRound - startRound);
+      numTimedRounds++;
 
       if (loggedRound) {
         trainThread.join();

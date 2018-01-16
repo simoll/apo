@@ -5,10 +5,11 @@
 #include <vector>
 #include <set>
 #include <cstdint>
+#include "apo/ADT/SmallSet.h"
 
 namespace apo {
 
-using NodeSet = std::set<int32_t>;
+using NodeSet = llvm::SmallSet<int32_t, 4>;
 
 static bool
 rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes) {
