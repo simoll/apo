@@ -460,8 +460,11 @@ struct DerStats {
   double getMisses() const { return 1.0 - getClearedScore(); }
 
   void print(std::ostream&out) const {
-    const int fpPrec = 6;
-    out << std::fixed << std::setprecision(fpPrec) << "Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << ")\n";
+    std::streamsize ss = out.precision();
+    const int fpPrec = 4;
+    out << std::fixed << std::setprecision(fpPrec)
+      << " " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << ")\n"
+      << std::setprecision(ss) << std::defaultfloat; // restore
   }
 };
 
@@ -704,11 +707,18 @@ struct APO {
       }
 
       // best-effort search for optimal program
-      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+      auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+
+      const int startRacketRound = logRate;
+      if (g >= startRacketRound) {
+        // model-driven search
+        auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, maxExplorationDepth, 10);
+        refDerVec = FilterBest(refDerVec, guidedDerVec);
+      }
 
       // decode reference ResultDistVec from detected derivations
       ResultDistVec refResults;
-      montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+      montOpt.populateRefResults(refResults, refDerVec, rewrites, nextProgs, progVec);
 
       // train model
       Model::Losses L;
