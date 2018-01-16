@@ -31,6 +31,9 @@ int main(int argc, char ** argv) {
 
     // create time-stamped checkpoint (model state) path
     const std::string cpPrefix = GetCheckpointPath();
+    std::stringstream ss;
+    ss << "mkdir -p " << cpPrefix;
+    system(ss.str().c_str());
 
     APO apo(taskFile, cpPrefix);
 
