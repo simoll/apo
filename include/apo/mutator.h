@@ -11,14 +11,9 @@ struct Rewrite {
   int ruleId;
   bool leftMatch;
 
-  static Rewrite
-  fromModel(int pc, int r) {
-    return Rewrite{pc, r / 2, (bool) (r % 2)};
-  }
-
   int
   getEnumId() const {
-    return (ruleId * 2) + (int) leftMatch;
+    return (ruleId * 2) + (leftMatch ? 1 : 0);
   }
 
   std::ostream& print(std::ostream& out) const {

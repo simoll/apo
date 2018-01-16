@@ -125,9 +125,17 @@ public:
 
   // translate flat actionId to Rewrite
   Rewrite toRewrite(int actionId) const {
+    // decode ruleEnumId/pc
     int ruleEnumId = actionId % num_Rules;
     int pc = actionId / num_Rules;
-    return Rewrite::fromModel(ruleEnumId, pc);
+
+    // decode leftMatch / rid
+    int ruleId = ruleEnumId / 2;
+    bool ruleLeftMatch = (ruleEnumId % 2 == 1);
+
+    auto rew = Rewrite{pc, ruleId, ruleLeftMatch};
+    assert(toActionID(rew) == actionId);
+    return rew;
   }
 
   static void shutdown();
