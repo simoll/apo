@@ -4,9 +4,9 @@ maxStubLen 12
 minMutations 3
 maxMutations 5
 pExpand 0.7
-mcDerivationSteps 3
 maxExplorationDepth 4
 pRandom 1.0
 numOptRounds 120
 logRate 200
-numGames 1000000
+numRounds 1000000
+saveModel 1
