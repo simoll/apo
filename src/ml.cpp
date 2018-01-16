@@ -507,7 +507,14 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
 // set learning rate
 void
 Model::setLearningRate(float v) {
-  abort(); // TODO implement
+  Tensor rateTensor(DT_FLOAT, TensorShape());
+  rateTensor.scalar<float>()() = v;
+
+  FeedDict dict = {
+      {"new_learning_rate", rateTensor}
+  };
+
+  TF_CHECK_OK( session->Run(dict, {"set_learning_rate"}, {}, nullptr) );
 }
 
 Model::Statistics

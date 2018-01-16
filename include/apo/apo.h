@@ -455,16 +455,22 @@ struct DerStats {
   double longerDer; // ref.score == model.score BUT model.der > ref.der
   double betterScore; // model.score < ref.score
   double shorterDer; // ref.score == model.score AND model.der < ref.der
-  double stops;
 
   double getClearedScore() const { return matched + longerDer + betterScore + shorterDer; }
   double getMisses() const { return 1.0 - getClearedScore(); }
 
   void print(std::ostream&out) const {
     const int fpPrec = 6;
-    out << std::fixed << std::setprecision(fpPrec) << "Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << "). Stops " << stops << "\n";
+    out << std::fixed << std::setprecision(fpPrec) << "Cleared " << getClearedScore() << "  (matched " << matched << ", longerDer "<< longerDer << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore << ")\n";
   }
 };
+
+int
+CountStops(const DerivationVec & derVec) {
+  int a = 0;
+  for (const auto & der : derVec) a += (der.shortestDerivation == 0);
+  return a;
+}
 
 DerStats
 ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) {
@@ -472,14 +478,8 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
   size_t numLongerDer = 0;
   size_t numBetterScore = 0;
   size_t numShorterDer = 0;
-  size_t numStops = 0;
 
   for (int i = 0; i < refDer.size(); ++i) {
-    // always STOP baseline
-    if (refDer[i].shortestDerivation == 0) {
-      numStops++;
-    }
-
     // improved over reference result
     if (sampleDer[i].betterThan(refDer[i])) {
       // actual improvements (shorter derivation or better program)
@@ -503,8 +503,7 @@ ScoreDerivations(const DerivationVec & refDer, const DerivationVec & sampleDer) 
     numMatched / (double) refDer.size(),
     numLongerDer / (double) refDer.size(),
     numBetterScore / (double) refDer.size(),
-    numShorterDer / (double) refDer.size(),
-    numStops / (double) refDer.size(),
+    numShorterDer / (double) refDer.size()
   };
 }
 
@@ -630,6 +629,9 @@ struct APO {
     ProgramVec progVec(numSamples, nullptr);
     generatePrograms(progVec, 0, progVec.size());
 
+    // TESTING
+    model.setLearningRate(0.0001);
+
     std::cerr << "\n-- Training --";
     for (size_t g = 0; g < numRounds; ++g) {
       bool loggedRound = (g % logRate == 0);
@@ -638,7 +640,7 @@ struct APO {
         std::cerr << "\n- Round " << g << " ("; stats.print(std::cerr); std::cerr << ") -\n";
 
       // print MCTS statistics
-        montOpt.stats.print(std::cerr) << "\n";
+        montOpt.stats.print(std::cerr);
         montOpt.stats = MonteCarloOptimizer::Stats();
 
         // random sampling based (uniform sampling, nio model)
@@ -651,8 +653,11 @@ struct APO {
         const int guidedSamples = 4;
         auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples);
 
+        int stops = CountStops(refDerVec);
         DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
         DerStats guidedStats = ScoreDerivations(refDerVec, guidedDerVec);
+
+        std::cerr << ". Stops  " << stops << "\n";
         std::cerr << "\tOne shot "; oneShotStats.print(std::cerr);
         std::cerr << "\tGuided   "; guidedStats.print(std::cerr);
 
