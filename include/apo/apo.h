@@ -721,7 +721,7 @@ struct APO {
   // random program options
     taskName = task.get_or_fail<std::string>("name"); //3; // minimal progrm stub len (excluding params and return)
 
-    numSamples = model.max_batch_size;
+    numSamples = task.get_or_fail<int>("numSamples"); //3; // minimal progrm stub len (excluding params and return
     minStubLen = task.get_or_fail<int>("minStubLen"); //3; // minimal progrm stub len (excluding params and return)
     maxStubLen = task.get_or_fail<int>("maxStubLen"); //4; // maximal program stub len (excluding params and return)
     minMutations = task.get_or_fail<int>("minMutations");// 1; // max number of program mutations
@@ -764,15 +764,13 @@ struct APO {
   }
 
   void train() {
-    const int numSamples = model.max_batch_size;
     const int numEvalSamples = std::min<int>(4096, model.max_batch_size * 32);
+    std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
 
     // hold-out evaluation set
     ProgramVec evalProgs(numEvalSamples, nullptr);
     generatePrograms(evalProgs, 0, evalProgs.size());
-    std::cerr << "numSamples = " << numSamples << "\n"
-              << "numEvalSamples = " << numEvalSamples << "\n";
 
   // training
     assert(minStubLen > 0 && "can not generate program within constraints");
@@ -822,7 +820,7 @@ struct APO {
         DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
         DerStats guidedStats = ScoreDerivations(refDerVec, guidedDerVec);
 
-        double stopRatio = numStops / (double) numSamples;
+        double stopRatio = numStops / (double) refDerVec.size();
         std::cerr << ". Stops  " << stopRatio << "\n";
         std::cerr << "\tOne shot "; oneShotStats.print(std::cerr);
         std::cerr << "\tGuided   "; guidedStats.print(std::cerr);

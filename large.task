@@ -1,12 +1,13 @@
 name large
 minStubLen 3
 maxStubLen 12
-minMutations 3
-maxMutations 5
+minMutations 4
+maxMutations 6
 pExpand 0.7
-maxExplorationDepth 4
+maxExplorationDepth 10
 pRandom 1.0
 numOptRounds 120
 logRate 200
 numRounds 1000000
 saveModel 1
+numSamples 64

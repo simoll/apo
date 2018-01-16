@@ -10,3 +10,4 @@ numOptRounds 100
 logRate 100
 numRounds 1000000
 saveModel 0
+numSamples 64
