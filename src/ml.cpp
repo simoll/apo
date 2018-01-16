@@ -64,13 +64,14 @@ Model::Model(const std::string & saverPrefix, const std::string & configFile, in
 // parse shared configuration
   {
       Parser confParser(configFile);
-      prog_length = confParser.get<int>("prog_length");
-      num_Params = confParser.get<int>("num_Params");
-      max_batch_size = confParser.get<int>("batch_size");
-      max_Rules = confParser.get<int>("max_Rules");
+      prog_length = confParser.get_or_fail<int>("prog_length");
+      num_Params = confParser.get_or_fail<int>("num_Params");
+      max_batch_size = confParser.get_or_fail<int>("batch_size");
+      max_Rules = confParser.get_or_fail<int>("max_Rules");
+      batch_train_steps = confParser.get_or_fail<int>("batch_train_steps");
   }
 
-  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", max_batch_size=" << max_batch_size << ", max_Rules=" << max_Rules << "\n";
+  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", max_batch_size=" << max_batch_size << ", max_Rules=" << max_Rules << ", batch_train_steps=" << batch_train_steps << "\n";
 
   if (num_Rules > max_Rules) {
     std::cerr << "Model does not support mode than " << max_Rules << " rules at a time! Aborting..\n";
@@ -297,7 +298,7 @@ struct Batch {
 
 // train model on a batch of programs (returns loss)
 void
-Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num_steps, Losses * oLosses) {
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
   const int batch_size = max_batch_size;
@@ -317,7 +318,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, int num
     std::vector<tensorflow::Tensor> outputs;
 
     // std::cout << " Training on batch " << s << "\n";
-    for (int i = 0; i < num_steps; ++i) {
+    for (int i = 0; i < batch_train_steps; ++i) {
       outputs.clear();
       TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
       // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
