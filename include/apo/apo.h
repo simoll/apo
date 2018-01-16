@@ -148,9 +148,151 @@ struct MonteCarloOptimizer {
     return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
   }
 
-  // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec
   searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
+    if (pRandom < 1.0) return searchDerivations_ModelDriven(progVec, pRandom, maxDist, numOptRounds);
+    else return searchDerivations_Default(progVec, pRandom, maxDist, numOptRounds);
+  }
+
+  // optimized version for model-based seaerch
+  DerivationVec
+  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
+    assert(pRandom < 1.0 && "use _Generic implementation instead");
+
+    const int numSamples = progVec.size();
+    std::uniform_real_distribution<float> ruleRand(0, 1);
+
+    // start with STOP derivation
+    std::vector<Derivation> states;
+    for (int i = 0; i < progVec.size(); ++i) {
+      states.emplace_back(*progVec[i]);
+    }
+
+#define IF_DEBUG_DER if (false)
+
+    // pre-compute initial program distribution
+    ResultDistVec initialProgDist(progVec.size());
+    model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+
+    // number of derivation walks
+    for (int r = 0; r < numOptRounds; ++r) {
+
+      // re-start from initial program
+      ProgramVec roundProgs = Clone(progVec);
+
+      ResultDistVec modelRewriteDist = initialProgDist;
+      for (int derStep = 0; derStep < maxDist; ++derStep) {
+
+        for (int startIdx = 0; startIdx < numSamples; startIdx += model.max_batch_size) {
+          int endIdx = std::min<int>(numSamples, startIdx + model.max_batch_size);
+          int nextEndIdx = std::min<int>(numSamples, endIdx + model.max_batch_size);
+
+          // use cached probabilities if possible
+          if ((derStep > 0)) {
+            if (startIdx == 0) {
+              // first instance -> run inference for first and second batch
+              model.infer_dist(modelRewriteDist, roundProgs, startIdx, endIdx, true); // TODO also pipeline with the derivation loop
+            } else {
+              model.flush(); // wait until result for this iteration becomes available
+            }
+
+            if (endIdx < nextEndIdx) {
+              // start infering dist for next batch
+              model.infer_dist(modelRewriteDist, roundProgs, endIdx, nextEndIdx, false);
+            }
+          }
+
+          int frozen = 0;
+
+          #pragma omp parallel for reduction(+:frozen)
+          for (int t = startIdx; t < endIdx; ++t) {
+            // freeze if derivation exceeds model
+            if (roundProgs[t]->size() >= model.prog_length) {
+              ++frozen;
+              continue;
+            }
+
+            IF_DEBUG_DER if (derStep == 0) {
+              std::cerr << "Initial prog " << t << ":\n";
+              roundProgs[t]->dump();
+            }
+
+          // pick & apply a rewrite
+            Rewrite rewrite;
+            bool success = false;
+            bool signalsStop = false;
+
+          // loop until rewrite succeeds (or stop)
+            const size_t failureLimit = 10;
+            bool checkedDists = false; // sample distributions have been sanitized
+            size_t failureCount = 0;
+            while (!signalsStop && !success) {
+              bool uniRule;
+              uniRule = (ruleRand(randGen()) <= pRandom);
+
+              if (uniRule) {
+                // uniform random rewrite
+                rewrite = mut.mutate(*roundProgs[t], 1);
+                IF_DEBUG_DER {
+                  std::cerr << "after random rewrite!\n";
+                  roundProgs[t]->dump();
+                }
+                success = true; // mutation always succeeeds
+                signalsStop = false;
+              } else {
+                // sanitize distributions drawn from model
+                if (!checkedDists &&
+                    !IsValidDistribution(modelRewriteDist[t].actionDist)) {
+                  stats.invalidModelDists++;
+                  signalsStop = true;
+                  break;
+                }
+                checkedDists = true; // model returned proper distributions for rule and target
+
+                // use model to apply rule
+                success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
+                if (!success) failureCount++;
+
+                // avoid infinite loops by failing after @failureLimit
+                signalsStop = (failureCount >= failureLimit);
+              }
+            }
+
+            stats.derivationFailures += (failureCount >= failureLimit);
+
+          // don't step over STOP
+            if (signalsStop) {
+              ++frozen;
+              continue;
+            }
+
+          // derived program to large for model -> freeze
+            if (roundProgs[t]->size() > model.prog_length) {
+              ++frozen;
+              continue;
+            }
+
+          // Otw, update incumbent
+            // mutated program
+            int currScore = GetProgramScore(*roundProgs[t]);
+            Derivation thisDer(currScore, derStep + 1);
+            if (thisDer.betterThan(states[t])) { states[t] = thisDer; }
+          }
+
+          if (frozen == numSamples) {
+            break; // all frozen -> early exit
+          }
+        }
+      }
+    }
+
+#undef IF_DEBUG_DER
+    return states;
+  }
+
+  // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
+  DerivationVec
+  searchDerivations_Default(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
     const int numSamples = progVec.size();
     std::uniform_real_distribution<float> ruleRand(0, 1);
 
@@ -165,8 +307,8 @@ struct MonteCarloOptimizer {
 #define IF_DEBUG_DER if (false)
 
     // pre-compute initial program distribution
-    ResultDistVec initialProgDist;
-    if (useModel) initialProgDist = model.infer_dist(progVec, true);
+    ResultDistVec initialProgDist(progVec.size());
+    if (useModel) { model.infer_dist(initialProgDist, progVec, 0, progVec.size()); }
 
     // number of derivation walks
     for (int r = 0; r < numOptRounds; ++r) {
@@ -178,7 +320,7 @@ struct MonteCarloOptimizer {
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
         // use cached probabilities if possible
-        if ((derStep > 0) && useModel) modelRewriteDist = model.infer_dist(roundProgs, true); // fail silently
+        if ((derStep > 0) && useModel) { model.infer_dist(modelRewriteDist, roundProgs, 0, roundProgs.size()); }
 
         int frozen = 0;
 

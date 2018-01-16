@@ -18,7 +18,8 @@ LIBS=-ltensorflow_framework \
     $(TFLOW)/python/framework/fast_tensor_util.so \
     $(TFLOW)/contrib/rnn/python/ops/_lstm_ops.so \
     -lcuda \
-    -lpython3
+    -lpython3 \
+    -lpthread
 LIBPATH=-L${TFLOW}
 
 LDFLAGS=-Wl,--allow-multiple-definition -Wl,--whole-archive ${LIBPATH} ${LIBS}
@@ -32,7 +33,7 @@ CXX=clang++ -std=c++14 ${OPTFLAGS}
 METAGRAPH=build/rdn.meta
 
 apo: $(OBJECTS) ${METAGRAPH} Makefile make.conf
-	$(CXX) ${CFLAGS} ${OBJECTS} -o $@ $(LDFLAGS)
+	$(CXX) ${CFLAGS} ${OBJECTS} ${LIBS} -o $@ $(LDFLAGS)
 
 build/%.o: src/%.cpp Makefile $(HEADERS) make.conf
 	mkdir -p $(dir $@)

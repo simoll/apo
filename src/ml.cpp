@@ -205,6 +205,8 @@ using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
 struct Batch {
   const Model & model;
 
+  int size() const { return batch_size; }
+
   int batch_size;
   // program emcoding
   Tensor oc_feed;
@@ -431,20 +433,17 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 }
 #endif
 
-ResultDistVec
-Model::infer_dist(const ProgramVec& progs, bool failSilently) {
-  int num_Samples = progs.size();
-  ResultDistVec results;
-
+void
+Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx, bool blocking) {
   Program emptyP(num_Params, {}); // the empty program
 
-  Batch batch(*this, max_batch_size);
-  for (int s = 0; s < num_Samples; s += max_batch_size) {
+  auto batchVec = new std::vector<Batch>();
+  for (int s = startIdx; s < endIdx; s += max_batch_size) {
     bool allEmpty = true;
 
     // detect remainder batch
-    int batch_size = std::min<int>(max_batch_size, num_Samples - s);
-    batch.resize(batch_size);
+    int batch_size = std::min<int>(max_batch_size, endIdx - s);
+    Batch batch(*this, batch_size);
 
     std::vector<bool> skippedProgVec(progs.size(), false);
     for (int i = 0; i < batch_size; ++i) {
@@ -460,52 +459,60 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
 
     if (allEmpty) {
       // early continue
-      for (int i = 0; i < batch_size; ++i) {
-        results.push_back(createResultDist());
+      for (int i = startIdx; i < endIdx; ++i) {
+        oResultDistVec[i] = createResultDist();
       }
       continue;
     }
 
-    // The session will initialize the outputs
-    std::vector<tensorflow::Tensor> outputs;
-
-    {
-      std::lock_guard<std::mutex> guard(modelMutex);
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
-    }
-
-    // writer.add_summary(summary, i)
-    auto stopDistTensor = outputs[0];
-    auto targetDistTensor = outputs[1];
-    auto actionDistTensor = outputs[2];
-
-    auto stopDist_Mapped = stopDistTensor.tensor<float, 1>();
-    auto targetDist_Mapped = targetDistTensor.tensor<float, 2>();
-    auto actionDist_Mapped = actionDistTensor.tensor<float, 3>();
-
-    // rescale to combined target-rule distribution
-    for (int i = 0; i < batch_size; ++i) {
-      ResultDist res = createResultDist();
-      res.stopDist = stopDist_Mapped(i);
-      for (int t = 0; t < prog_length; ++t) {
-        float pTarget = targetDist_Mapped(i, t);
-
-        // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
-        for (int r = 0; r < num_Rules; ++r) {
-          auto pAction = actionDist_Mapped(i, t, r);
-          // std::cerr << i << " " << t << " " << r << "  :  " << pAction << "\n";
-          int i = t*num_Rules + r;
-          assert(0 <= i && i < res.actionDist.size());
-          res.actionDist[i] = pAction * pTarget;
-        }
-      }
-
-      res.normalize();
-      results.push_back(res);
-    }
+    batchVec->push_back(std::move(batch));
   }
 
-  return results;
+
+  auto workerThread = std::thread([this, batchVec, &oResultDistVec, startIdx]{
+    std::lock_guard<std::mutex> guard(modelMutex);
+
+    for (auto & batch : *batchVec) {
+      // The session will initialize the outputs
+      std::vector<tensorflow::Tensor> outputs;
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
+
+      // writer.add_summary(summary, i)
+      auto stopDistTensor = outputs[0];
+      auto targetDistTensor = outputs[1];
+      auto actionDistTensor = outputs[2];
+
+      auto stopDist_Mapped = stopDistTensor.tensor<float, 1>();
+      auto targetDist_Mapped = targetDistTensor.tensor<float, 2>();
+      auto actionDist_Mapped = actionDistTensor.tensor<float, 3>();
+
+      // rescale to combined target-rule distribution
+      for (int i = 0; i < batch.size(); ++i) {
+        ResultDist res = createResultDist();
+        res.stopDist = stopDist_Mapped(i);
+        for (int t = 0; t < prog_length; ++t) {
+          float pTarget = targetDist_Mapped(i, t);
+
+          // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
+          for (int r = 0; r < num_Rules; ++r) {
+            auto pAction = actionDist_Mapped(i, t, r);
+            // std::cerr << i << " " << t << " " << r << "  :  " << pAction << "\n";
+            int i = t*num_Rules + r;
+            assert(0 <= i && i < res.actionDist.size());
+            res.actionDist[i] = pAction * pTarget;
+          }
+        }
+
+        res.normalize();
+        oResultDistVec[startIdx + i] = res;
+      }
+    }
+
+    delete batchVec;
+  });
+
+  if (blocking) { workerThread.join(); }
+  else workerThread.detach();
 }
 
 // set learning rate

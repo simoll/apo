@@ -28,6 +28,8 @@ struct ResultDist {
   float stopDist; // [0,1]
   CatDist actionDist; // [prog_length x num_Rules] -> [0,1]
 
+  ResultDist() {}
+
   ResultDist(int numRules, int numTargets)
   : stopDist(0.0)
   , actionDist(numTargets * numRules, 0.0)
@@ -117,7 +119,7 @@ public:
 #endif
 
   // distribution over selections
-  ResultDistVec infer_dist(const ProgramVec& progs, bool failSilently=false);
+  void infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, bool blocking=true);
 
   // returns a plain STOP result
   ResultDist createStopResult() const;
