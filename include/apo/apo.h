@@ -357,23 +357,21 @@ struct MonteCarloOptimizer {
     }
   }
 
-  // sample a target based on the reference distributions
-  ProgramVec
-  sampleActions(const ProgramVec & roundProgs, ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, bool & allStop) {
+  // sample a target based on the reference distributions (discards STOP programs)
+  int
+  sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, ProgramVec & oProgs) {
 #define IF_DEBUG_SAMPLE if (false)
-    allStop = true;
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
-    ProgramVec actionProgs;
-    actionProgs.reserve(roundProgs.size());
+    int numGenerated = 0;
 
     int rewriteIdx = 0;
     int nextSampleWithRewrite = rewrites.empty() ? std::numeric_limits<int>::max() : rewrites[rewriteIdx].first;
     for (int s = 0; s < refResults.size(); ++s) {
-      IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << actionProgs.size() << "\n"; }
+      IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << refResults.size() << "\n"; }
       if (s < nextSampleWithRewrite) {
         // no rewrite available -> STOP
-        actionProgs.push_back(roundProgs[s]);
+        // actionProgs.push_back(roundProgs[s]);
         continue;
       }
 
@@ -383,7 +381,7 @@ struct MonteCarloOptimizer {
       for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
 
         // model picks stop?
-        bool shouldStop = pRand(randGen()) <= 1.0;
+        bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
 
         // valid distributions?
         if (!shouldStop && !IsValidDistribution(refResults[s].actionDist)) {
@@ -405,17 +403,17 @@ struct MonteCarloOptimizer {
             if ((rewrites[i].second == randomRew)
             ) {
               assert(i < nextProgs.size());
-              actionProgs.push_back(nextProgs[i]);
+              // actionProgs.push_back(nextProgs[i]);
+              oProgs[numGenerated++] = nextProgs[i];
               hit = true;
               break;
             }
           }
 
           // proper action
-          allStop = false;
         } else {
           // STOP action
-          actionProgs.push_back(roundProgs[s]);
+          // actionProgs.push_back(roundProgs[s]);
           hit = true;
           break;
         }
@@ -430,7 +428,7 @@ struct MonteCarloOptimizer {
         // refResults[s].dump();
         // abort(); // this should never happen
 
-        actionProgs.push_back(roundProgs[s]); // soft failure
+        // actionProgs.push_back(roundProgs[s]); // soft failure
       }
 
       // advance to next progam with rewrites
@@ -443,9 +441,9 @@ struct MonteCarloOptimizer {
       }
     }
 
-    assert(actionProgs.size() == roundProgs.size());
-    return actionProgs;
+    // assert(actionProgs.size() == roundProgs.size()); // no longer the case since STOP programs get dropped
 #undef IF_DEBUG_SAMPLE
+    return numGenerated;
   }
 
 #undef IF_DEBUG_MV
@@ -549,7 +547,9 @@ struct APO {
 
 // eval round interval
   int logRate;
-  size_t numGames;
+  size_t numRounds;
+
+  bool saveCheckpoints; // save model checkpoints at @logRate
 
 // training
   int numSamples;//
@@ -582,20 +582,22 @@ struct APO {
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
 
     logRate = task.get_or_fail<int>("logRate"); // 10; // number of round followed by an evaluation
-    numGames = task.get_or_fail<size_t>("numGames"); // 10; // number of round followed by an evaluation
+    numRounds = task.get_or_fail<size_t>("numRounds"); // 10; // number of round followed by an evaluation
 
-    std::cerr << "Storing checkpoints to prefix " << cpPrefix << "\n";
+    saveCheckpoints = task.get_or_fail<int>("saveModel") != 0; // save model checkpoints at @logRate
+
+    if (saveCheckpoints) { std::cerr << "Saving checkpoints to prefix " << cpPrefix << "\n"; }
 
   // initialize thread safe random number generators
     InitRandom();
   }
 
   void
-  generatePrograms(ProgramVec & progVec) {
+  generatePrograms(ProgramVec & progVec, size_t startIdx, size_t endIdx) {
     std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
     std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-    for (int i = 0; i < progVec.size(); ++i) {
+    for (int i = startIdx; i < endIdx; ++i) {
       std::shared_ptr<Program> P = nullptr;
       do {
         int stubLen = stubRand(randGen());
@@ -617,7 +619,7 @@ struct APO {
 
     // hold-out evaluation set
     ProgramVec evalProgs(numEvalSamples, nullptr);
-    generatePrograms(evalProgs);
+    generatePrograms(evalProgs, 0, evalProgs.size());
     std::cerr << "numSamples = " << numSamples << "\n"
               << "numEvalSamples = " << numEvalSamples << "\n";
 
@@ -626,8 +628,12 @@ struct APO {
 
     const int dotStep = logRate / 10;
 
+  // Seed program generator
+    ProgramVec progVec(numSamples, nullptr);
+    generatePrograms(progVec, 0, progVec.size());
+
     std::cerr << "\n-- Training --";
-    for (size_t g = 0; g < numGames; ++g) {
+    for (size_t g = 0; g < numRounds; ++g) {
       bool loggedRound = (g % logRate == 0);
       if (loggedRound) {
         auto stats = model.query_stats();
@@ -655,102 +661,66 @@ struct APO {
         // store model
         std::stringstream ss;
         ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
-        model.saveCheckpoint(ss.str());
+        if (saveCheckpoints) model.saveCheckpoint(ss.str());
 
       } else {
         if (g % dotStep == 0) { std::cerr << "."; }
       }
 
 
-  // Generating training programs
-      ProgramVec progVec(numSamples, nullptr);
-      generatePrograms(progVec);
+    // compute all one-step derivations
+      std::vector<std::pair<int, Rewrite>> rewrites;
+      ProgramVec nextProgs;
+      const int preAllocFactor = 16;
+      rewrites.reserve(preAllocFactor * progVec.size());
+      nextProgs.reserve(preAllocFactor * progVec.size());
 
+      // #pragma omp parallel for ordered
+      for (int t = 0; t < progVec.size(); ++t) {
+        for (int r = 0; r < rules.size(); ++r) {
+          for (int j = 0; j < 2; ++j) {
+            for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
+              bool leftMatch = (bool) j;
 
-    // explore all actions from current program
-      for (int depth = 0; depth < mcDerivationSteps; ++depth) {
+              auto * clonedProg = new Program(*progVec[t]);
+              if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
+                // TODO clone after match (or render into copy)
+                delete clonedProg;
+                continue;
+              }
 
-      // compute all one-step derivations
-        std::vector<std::pair<int, Rewrite>> rewrites;
-        ProgramVec nextProgs;
-        const int preAllocFactor = 16;
-        rewrites.reserve(preAllocFactor * progVec.size());
-        nextProgs.reserve(preAllocFactor * progVec.size());
-
-        // #pragma omp parallel for ordered
-        for (int t = 0; t < progVec.size(); ++t) {
-          for (int r = 0; r < rules.size(); ++r) {
-            for (int j = 0; j < 2; ++j) {
-              for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) { // skip return
-                bool leftMatch = (bool) j;
-
-                auto * clonedProg = new Program(*progVec[t]);
-                if (!expMut.tryApply(*clonedProg, pc, r, leftMatch)) {
-                  // TODO clone after match (or render into copy)
-                  delete clonedProg;
-                  continue;
-                }
-
-                // compact list of programs resulting from a single action
-                // #pragma omp ordered
-                {
-                  nextProgs.emplace_back(clonedProg);
-                  rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
-                }
+              // compact list of programs resulting from a single action
+              // #pragma omp ordered
+              {
+                nextProgs.emplace_back(clonedProg);
+                rewrites.emplace_back(t, Rewrite{pc, r, leftMatch});
               }
             }
           }
         }
+      }
 
       // best-effort search for optimal program
-        auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
-
-      // query model to improve
-#if 0
-        const int racketThreshold = logRate; // ATM
-        if (g > racketThreshold) {
-          auto modelDerVec = montOpt.searchDerivations(nextProgs, 0.0, maxExplorationDepth, 1);
-          derVec = FilterBest(derVec, modelDerVec);
-        }
-#endif
-
-  #if 0
-        IF_DEBUG {
-          std::cerr << "Best derivations:\n";
-          for (int i = 0; i < derVec.size(); ++i) {
-            derVec[i].dump();
-            nextProgs[i]->dump();
-            std::cerr << "\n";
-          }
-        }
-  #endif
+      auto derVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
 
       // decode reference ResultDistVec from detected derivations
-        ResultDistVec refResults;
-        montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
+      ResultDistVec refResults;
+      montOpt.populateRefResults(refResults, derVec, rewrites, nextProgs, progVec);
 
       // train model
-        Model::Losses L;
-        model.train_dist(progVec, refResults, logRate ? &L : nullptr);
+      Model::Losses L;
+      model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
-        if (loggedRound) {
-          std::cerr << "At " << depth << " : "; L.print(std::cerr) << "\n";
-        }
+      // pick an action per program and drop STOP-ped programs
+      int numNextProgs = montOpt.sampleActions(refResults, rewrites, nextProgs, progVec);
+      double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
 
-      // pick an action per program and advance
-        bool allStop;
-        progVec = montOpt.sampleActions(progVec, refResults, rewrites, nextProgs, allStop);
-        // FIXME delete unused program objects
+      // fill up with new programs
+      generatePrograms(progVec, numNextProgs, numSamples);
 
-        if (allStop) break; // early exit if no progress was made
+      if (loggedRound) {
+        std::cerr << "\t"; L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
       }
-
-  #if 0
-      for (int i = 0; i < progVec.size(); ++i) {
-        std::cerr << "Optimized program " << i << ":\n";
-        progVec[i]->dump();
-      }
-  #endif
     }
   }
 

@@ -2,8 +2,18 @@
 #include "apo/shared.h"
 #include "apo/ml.h"
 #include <iostream>
+#include <sstream>
+#include <ctime>
 
 using namespace apo;
+
+std::string
+GetCheckpointPath() {
+  std::time_t T = std::time(nullptr);
+  std::stringstream buffer;
+  buffer << "cp/" << std::put_time(std::gmtime(&T), "%Y-%m-%d_%H:%M:%S");
+  return buffer.str();
+}
 
 int main(int argc, char ** argv) {
   // initialize thread safe random number generators
@@ -17,8 +27,11 @@ int main(int argc, char ** argv) {
 
   // train command
   if (cmd == "train") {
-    const std::string cpPrefix = "cp/";
-    std::string taskFile = argv[2];
+    const std::string taskFile = argv[2];
+
+    // create time-stamped checkpoint (model state) path
+    const std::string cpPrefix = GetCheckpointPath();
+
     APO apo(taskFile, cpPrefix);
 
     apo.train();

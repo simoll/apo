@@ -319,9 +319,9 @@ with tf.Session() as sess:
     tf.summary.scalar('loss', loss)
 
     # learning rate configuration
-    starter_learning_rate = 0.1
+    starter_learning_rate = 0.01
     end_learning_rate = 0.0001
-    decay_steps = 4* 100000
+    decay_steps = 10000
     learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
                                               decay_steps, end_learning_rate,
                                               power=0.5, name="learning_rate")
