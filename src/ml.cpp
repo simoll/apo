@@ -12,6 +12,8 @@
 #include <cassert>
 #include <string>
 
+#include <thread>
+
 using namespace tensorflow;
 // namespace tf = tensorflow;
 
@@ -55,6 +57,10 @@ Model::init_tflow() {
   return 0;
 }
 
+Model::~Model() {
+  // wait until workerThread frees lock
+  std::lock_guard<std::mutex> guard(modelMutex);
+}
 
 Model::Model(const std::string & saverPrefix, const std::string & configFile, int _numRules)
 : num_Rules(_numRules)
@@ -127,9 +133,12 @@ Model::Model(const std::string & saverPrefix, const std::string & configFile, in
 
 void
 Model::loadCheckpoint(const std::string & checkPointFile) {
+
   // Read weights from the saved checkpoint
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
+
+  std::lock_guard<std::mutex> guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -143,9 +152,12 @@ Model::loadCheckpoint(const std::string & checkPointFile) {
 
 void
 Model::saveCheckpoint(const std::string & checkPointFile) {
+
   // Read weights from the saved checkpoint
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
+
+  std::lock_guard<std::mutex> guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -304,46 +316,71 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
   const int batch_size = max_batch_size;
   assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
 
-  Losses L{0.0, 0.0, 0.0};
-  Batch batch(*this, max_batch_size);
+  std::vector<Batch> * batchVec = new std::vector<Batch>();
 
+  // encode programs in current thread
   for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
+    Batch batch(*this, max_batch_size);
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       batch.encode_Program(i, P);
       batch.encode_Result(i, results[s + i]);
     }
+    batchVec->push_back(std::move(batch));
+  }
 
-    // The session will initialize the outputs
-    std::vector<tensorflow::Tensor> outputs;
+  // synchronize with pending training session
+  std::thread workerThread([this, batchVec, oLosses, num_Samples]{
+    std::lock_guard<std::mutex> guard(modelMutex);
+    Losses L{0.0, 0.0, 0.0};
 
-    // std::cout << " Training on batch " << s << "\n";
-    for (int i = 0; i < batch_train_steps; ++i) {
-      outputs.clear();
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
-      // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
-      // writer.add_summary(summary, i)
+    for (Batch & batch : *batchVec) {
+      // The session will initialize the outputs
+      std::vector<tensorflow::Tensor> outputs;
+
+      // std::cout << " Training on batch " << s << "\n";
+      for (int i = 0; i < batch_train_steps; ++i) {
+        outputs.clear();
+        TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
+        // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
+        // writer.add_summary(summary, i)
+      }
+
+      if (oLosses) {
+        TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_target_loss", "mean_action_loss"}, {}, &outputs) );
+        float pStopLoss = outputs[0].scalar<float>()(0);
+        float pTargetLoss = outputs[1].scalar<float>()(0);
+        float pActionLoss = outputs[2].scalar<float>()(0);
+
+        // std::cout << loss_out << "\n";
+        L.stopLoss += (double) pStopLoss;
+        L.targetLoss += (double) pTargetLoss;
+        L.actionLoss += (double) pActionLoss;
+      }
     }
 
     if (oLosses) {
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_target_loss", "mean_action_loss"}, {}, &outputs) );
-      float pStopLoss = outputs[0].scalar<float>()(0);
-      float pTargetLoss = outputs[1].scalar<float>()(0);
-      float pActionLoss = outputs[2].scalar<float>()(0);
-
-      // std::cout << loss_out << "\n";
-      L.stopLoss += (double) pStopLoss;
-      L.targetLoss += (double) pTargetLoss;
-      L.actionLoss += (double) pActionLoss;
+      double numBatches = num_Samples / (double) max_batch_size;
+      oLosses->stopLoss = L.stopLoss / numBatches;
+      oLosses->targetLoss = L.targetLoss / numBatches;
+      oLosses->actionLoss = L.actionLoss / numBatches;
     }
-  }
+
+    delete batchVec;
+  });
 
   if (oLosses) {
-    double numBatches = num_Samples / (double) max_batch_size;
-    oLosses->stopLoss = L.stopLoss / numBatches;
-    oLosses->targetLoss = L.targetLoss / numBatches;
-    oLosses->actionLoss = L.actionLoss / numBatches;
+    workerThread.join();
+    // wait for results
+  } else {
+    // let thread run in background
+    workerThread.detach();
   }
+}
+
+void
+Model::flush() {
+  std::lock_guard<std::mutex> guard(modelMutex);
 }
 
 #if 0
@@ -394,43 +431,6 @@ Model::train(const ProgramVec& progs, const std::vector<Result>& results, int nu
 }
 #endif
 
-#if 0
-ResultVec
-Model::infer_likely(const ProgramVec& progs) {
-  int num_Samples = progs.size();
-  const int batch_size = max_batch_size;
-  assert((num_Samples % batch_size == 0) && "TODO implement varying sized batches");
-
-  ResultVec results;
-
-  Batch batch(*this, batch_size);
-  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
-    for (int i = 0; i < batch_size; ++i) {
-      const Program & P = *progs[s + i];
-      batch.encode_Program(i, P);
-    }
-
-    // The session will initialize the outputs
-    std::vector<tensorflow::Tensor> outputs;
-
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_rule", "pred_target"}, {}, &outputs) );
-    // writer.add_summary(summary, i)
-    auto ruleTensor = outputs[0];
-    auto targetTensor = outputs[1];
-
-    auto rule_Mapped = ruleTensor.tensor<int, 1>();
-    auto target_Mapped = targetTensor.tensor<int, 1>();
-    assert(max_Rules == ruleTensor.dim_size(1));
-
-    for (int i = 0; i < batch_size; ++i) {
-      results.push_back(Result{rule_Mapped(i), target_Mapped(i)});
-    }
-  }
-
-  return results;
-}
-#endif
-
 ResultDistVec
 Model::infer_dist(const ProgramVec& progs, bool failSilently) {
   int num_Samples = progs.size();
@@ -469,7 +469,11 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
     // The session will initialize the outputs
     std::vector<tensorflow::Tensor> outputs;
 
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
+    {
+      std::lock_guard<std::mutex> guard(modelMutex);
+      TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
+    }
+
     // writer.add_summary(summary, i)
     auto stopDistTensor = outputs[0];
     auto targetDistTensor = outputs[1];
@@ -507,6 +511,7 @@ Model::infer_dist(const ProgramVec& progs, bool failSilently) {
 // set learning rate
 void
 Model::setLearningRate(float v) {
+
   Tensor rateTensor(DT_FLOAT, TensorShape());
   rateTensor.scalar<float>()() = v;
 
@@ -514,13 +519,19 @@ Model::setLearningRate(float v) {
       {"new_learning_rate", rateTensor}
   };
 
-  TF_CHECK_OK( session->Run(dict, {"set_learning_rate"}, {}, nullptr) );
+  {
+    std::lock_guard<std::mutex> guard(modelMutex);
+    TF_CHECK_OK( session->Run(dict, {"set_learning_rate"}, {}, nullptr) );
+  }
 }
 
 Model::Statistics
 Model::query_stats() {
   std::vector<tensorflow::Tensor> outputs;
-  TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
+  {
+    std::lock_guard<std::mutex> guard(modelMutex);
+    TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
+  }
   double learning_rate = outputs[0].scalar<float>()();
   size_t global_step = outputs[1].scalar<int>()();
   return Model::Statistics{global_step, learning_rate};

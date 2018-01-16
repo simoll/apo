@@ -732,11 +732,11 @@ struct APO {
       generatePrograms(progVec, numNextProgs, numSamples);
 
       if (loggedRound) {
+        model.flush(); // wait until the model query has completed
         std::cerr << "\t"; L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
       }
     }
   }
-
 };
 
 

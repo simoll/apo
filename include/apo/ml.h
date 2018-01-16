@@ -8,6 +8,9 @@
 #include "apo/mutator.h"
 #include "apo/extmath.h"
 
+#include <thread>
+#include <mutex>
+
 // MetaGraph
 #include <tensorflow/core/protobuf/meta_graph.pb.h>
 
@@ -53,6 +56,9 @@ class Model {
 
   tf::MetaGraphDef graph_def;
 
+  // asynchronous training support
+  std::mutex modelMutex;
+
 // graph definition
 
   // TODO read from shared config file
@@ -79,8 +85,12 @@ public:
     void print(std::ostream & out) const;
   };
 
+  // wait until workerThread has finished (modelMutex is avilable)
+  void flush();
+
 public:
   Model(const std::string & saverPrefix, const std::string & configFile, int num_Rules);
+  ~Model();
 
   void loadCheckpoint(const std::string & checkPointFile);
   void saveCheckpoint(const std::string & checkPointFile);
