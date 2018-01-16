@@ -15,7 +15,7 @@
 #define LLVM_ADT_SMALLVECTOR_H
 
 #include "apo/ADT/iterator_range.h"
-#include "llvm/Support/AlignOf.h"
+#include "apo/ADT/AlignOf.h"
 // #include "llvm/Support/Compiler.h"
 #include "apo/ADT/MathExtras.h"
 #include "apo/ADT/type_traits.h"
