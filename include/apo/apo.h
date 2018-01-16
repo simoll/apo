@@ -540,7 +540,6 @@ struct APO {
   static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
 
 // mc search options
-  int mcDerivationSteps; //1; // number of derivations
   int maxExplorationDepth; //maxMutations + 1; // best-effort search depth
   double pRandom; //1.0; // probability of ignoring the model for inference
   int numOptRounds; //50; // number of optimization retries
@@ -576,7 +575,6 @@ struct APO {
     maxMutations = task.get_or_fail<int>("maxMutations");// 1; // max number of program mutations
 
   // mc search options
-    mcDerivationSteps = task.get_or_fail<int>("mcDerivationSteps"); //1; // number of derivations
     maxExplorationDepth = task.get_or_fail<int>("maxExplorationDepth"); //maxMutations + 1; // best-effort search depth
     pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
