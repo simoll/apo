@@ -242,10 +242,11 @@ with tf.Session() as sess:
       # variables (all [state_size])
       with tf.variable_scope("relu_state"):
         m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
-        v_init = tf.truncated_normal([in_size], dtype=data_type())
+        v_bias_init = tf.truncated_normal([in_size], dtype=data_type())
+        v_project_init = tf.truncated_normal([in_size], dtype=data_type())
         m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
-        v_bias = tf.get_variable("v_bias", initializer=v_init, trainable=True)
-        v_project = tf.get_variable("v_project", initializer=v_init, trainable=True)
+        v_bias = tf.get_variable("v_bias", initializer=v_bias_init, trainable=True)
+        v_project = tf.get_variable("v_project", initializer=v_project_init, trainable=True)
 
       # target probability unit
       def target_unit(batch):
@@ -261,8 +262,34 @@ with tf.Session() as sess:
 
       return target_unit
 
+    def make_linear(in_size):
+      # target probability [0, 1] per node
+      # variables (all [state_size])
+      with tf.variable_scope("linear_state"):
+        m_init = tf.truncated_normal([in_size, in_size], dtype=data_type())
+        v_bias_init = tf.truncated_normal([in_size], dtype=data_type())
+        v_project_init = tf.truncated_normal([in_size], dtype=data_type())
+        m_trans = tf.get_variable("m_trans", initializer=m_init, trainable=True)
+        v_bias = tf.get_variable("v_bias", initializer=v_bias_init, trainable=True)
+        v_project = tf.get_variable("v_project", initializer=v_project_init, trainable=True)
+
+      # target probability unit
+      def target_unit(batch):
+        # dense layer (todo accumulate state)
+        # with tf.variable_scope("dense", reuse=len(accu) > 0):
+        #   t = tf.layers.dense(inputs=batch, units=1)[0]
+
+        with tf.variable_scope("linear"):
+          elem_trans = tf.matmul(batch, m_trans) + v_bias
+          t = tf.reduce_sum(v_project * elem_trans, axis=1)
+        return t
+
+      return target_unit
+
+
     ### target logits ###
     pool = tf.reduce_sum(outputs, axis=0) #[batch_size]
+
     with tf.variable_scope("target"):
       cell = make_relu(state_size * 2)
       accu=[]
@@ -274,9 +301,10 @@ with tf.Session() as sess:
 
     ### stop logit ###
     with tf.variable_scope("stop"):
-      stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
+      cell = make_linear(state_size * 3)
+      stop_logit = cell(tf.concat([pool, state[0], state[1]], axis=1)) # based on last layer RNN output state
 
-    pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
+    pred_stop_dist = tf.sigmoid(stop_logit, name="pred_stop_dist") # only positive values?????????????
 
     ### rule logits ###
     with tf.variable_scope("rules"):
@@ -300,7 +328,7 @@ with tf.Session() as sess:
     target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in") # target distribution (over instructions (per program))
 
     # training #
-    stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
+    stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
     action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=action_in, logits=action_logits, dim=-1) # [batch_size]
     target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
 

@@ -82,7 +82,14 @@ Model::Model(const std::string & saverPrefix, const std::string & configFile, in
       batch_train_steps = confParser.get_or_fail<int>("batch_train_steps");
   }
 
-  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", train_batch_size=" << train_batch_size << ", infer_batch_size=" << infer_batch_size << ", max_Rules=" << max_Rules << ", batch_train_steps=" << batch_train_steps << "\n";
+  std::cerr
+    << "Model (apo). prog_length=" << prog_length
+               << ", num_Params=" << num_Params
+               << ", train_batch_size=" << train_batch_size
+               << ", infer_batch_size=" << infer_batch_size
+               << ", max_Rules=" << max_Rules
+               << ", num_Rules=" << num_Rules
+               << ", batch_train_steps=" << batch_train_steps << "\n";
 
   if (num_Rules > max_Rules) {
     std::cerr << "Model does not support mode than " << max_Rules << " rules at a time! Aborting..\n";
@@ -439,6 +446,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       for (int i = 0; i < batch.size(); ++i) {
         ResultDist res = createResultDist();
         res.stopDist = stopDist_Mapped(i);
+        // std::cerr << res.stopDist << "\n";
         for (int t = 0; t < prog_length; ++t) {
           float pTarget = targetDist_Mapped(i, t);
 
@@ -521,11 +529,6 @@ ResultDist::normalize() {
   Normalize(actionDist);
 }
 
-
-bool
-ResultDist::isStop() const {
-  return stopDist == 1.0;
-}
 
 
 std::ostream&
