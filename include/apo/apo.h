@@ -661,6 +661,7 @@ struct APO {
   int maxExplorationDepth; //maxMutations + 1; // best-effort search depth
   double pRandom; //1.0; // probability of ignoring the model for inference
   int numOptRounds; //50; // number of optimization retries
+  int numEvalOptRounds; //50; // number of optimization retries
 
 // eval round interval
   int logRate;
@@ -697,6 +698,8 @@ struct APO {
     pRandom = task.get_or_fail<double>("pRandom"); //1.0; // probability of ignoring the model for inference
     numOptRounds = task.get_or_fail<int>("numOptRounds"); //50; // number of optimization retries
 
+    numEvalOptRounds = task.get_or_fail<int>("numEvalOptRounds"); // eval opt rounds used in evaluation
+
     logRate = task.get_or_fail<int>("logRate"); // 10; // number of round followed by an evaluation
     numRounds = task.get_or_fail<size_t>("numRounds"); // 10; // number of round followed by an evaluation
 
@@ -732,10 +735,11 @@ struct APO {
     const int numEvalSamples = std::min<int>(4096, model.train_batch_size * 32);
     std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
-
     // hold-out evaluation set
     ProgramVec evalProgs(numEvalSamples, nullptr);
     generatePrograms(evalProgs, 0, evalProgs.size());
+    auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numEvalOptRounds, false);
+    auto bestEvalDerVec = refEvalDerVec;
 
   // training
     assert(minStubLen > 0 && "can not generate program within constraints");
@@ -771,24 +775,28 @@ struct APO {
         montOpt.stats.print(std::cerr);
         montOpt.stats = MonteCarloOptimizer::Stats();
 
-        // random sampling based (uniform sampling, nio model)
-        auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds, false);
-
         // one shot (model based)
-        auto oneShotDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1, false);
+        auto oneShotEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1, false);
 
         // model-guided sampling
         const int guidedSamples = 4;
-        auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
+        auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
 
-        int numStops = CountStops(refDerVec);
-        DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
-        DerStats guidedStats = ScoreDerivations(refDerVec, guidedDerVec);
+        int numStops = CountStops(refEvalDerVec);
+        DerStats oneShotStats = ScoreDerivations(refEvalDerVec, oneShotEvalDerVec);
+        DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
 
-        double stopRatio = numStops / (double) refDerVec.size();
+        // improve best-known solution on the go
+        bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
+        bestEvalDerVec = FilterBest(bestEvalDerVec, oneShotEvalDerVec);
+        DerStats bestStats = ScoreDerivations(refEvalDerVec, bestEvalDerVec);
+
+        double stopRatio = numStops / (double) refEvalDerVec.size();
         std::cerr << ". Stops  " << stopRatio << "\n";
-        std::cerr << "\tOne shot "; oneShotStats.print(std::cerr);
-        std::cerr << "\tGuided   "; guidedStats.print(std::cerr);
+        std::cerr << "\tOne shot  "; oneShotStats.print(std::cerr);
+        std::cerr << "\tGuided    "; guidedStats.print(std::cerr);
+        std::cerr << "\tIncumbent "; bestStats.print(std::cerr);
+
 
         // store model
         std::stringstream ss;

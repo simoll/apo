@@ -6,8 +6,9 @@ maxMutations 3
 pExpand 0.7
 maxExplorationDepth 4
 pRandom 1.0
-numOptRounds 100
+numOptRounds 10
+numEvalOptRounds 400
 logRate 100
 numRounds 1000000
 saveModel 0
-numSamples 64
+numSamples 32

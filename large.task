@@ -7,6 +7,7 @@ pExpand 0.7
 maxExplorationDepth 10
 pRandom 1.0
 numOptRounds 120
+numEvalOptRounds 1000
 logRate 200
 numRounds 1000000
 saveModel 1
