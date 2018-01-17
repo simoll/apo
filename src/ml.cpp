@@ -37,23 +37,24 @@ Model::init_tflow() {
     (void) platform;
   } else {
     // running without GPUs
-    // std::cout << "CPU_STAT: " << gpuStatus.ToString() << "\n";
-    // return 1;
+    std::cerr << "GPU_STAT: " << gpuStatus.ToString() << "\n";
+    return 1;
   }
 
 
    // Initialize a tensorflow session
   SessionOptions opts;
   opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.95);
-  opts.config.mutable_gpu_options()->set_allow_growth(true);
+  opts.config.mutable_gpu_options()->set_allow_growth(false);
 
   Status status = NewSession(opts, &session);
 
   if (!status.ok()) {
-    std::cout << "NEW_SESSION: " << status.ToString() << "\n";
+    std::cerr << "NEW_SESSION: " << status.ToString() << "\n";
     return 1;
   }
 
+  std::cerr << "Tensorflow initialized.\n";
   return 0;
 }
 
