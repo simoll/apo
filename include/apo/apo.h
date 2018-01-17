@@ -105,6 +105,7 @@ struct MonteCarloOptimizer {
   int maxGenLen;
   Mutator mut;
 
+  const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
 
   MonteCarloOptimizer(RuleVec & _rules, Model & _model)
   : stats()
@@ -126,7 +127,7 @@ struct MonteCarloOptimizer {
       return true;
     }
 
-    size_t keepGoing = 10; // 10 sampling attempts
+    size_t keepGoing = 2;
     int targetId, ruleId;
     bool validPc;
     Rewrite rew;
@@ -150,15 +151,15 @@ struct MonteCarloOptimizer {
   }
 
   DerivationVec
-  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
-    if (pRandom < 1.0) return searchDerivations_ModelDriven(progVec, pRandom, maxDist, numOptRounds);
-    else return searchDerivations_Default(progVec, pRandom, maxDist, numOptRounds);
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds, bool allowFallback) {
+    if (pRandom < 1.0) return searchDerivations_ModelDriven(progVec, pRandom, maxDist, numOptRounds, allowFallback);
+    else return searchDerivations_Default(progVec, maxDist, numOptRounds);
   }
 
   // optimized version for model-based seaerch
   DerivationVec
-  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
-    assert(pRandom < 1.0 && "use _Generic implementation instead");
+  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds, const bool useRandomFallback) {
+    assert(pRandom < 1.0 && "use _Debug implementation instead");
 
     const int numSamples = progVec.size();
     std::uniform_real_distribution<float> ruleRand(0, 1);
@@ -187,9 +188,9 @@ struct MonteCarloOptimizer {
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
         std::thread inferThread;
-        for (int startIdx = 0; startIdx < numSamples; startIdx += model.max_batch_size) {
-          int endIdx = std::min<int>(numSamples, startIdx + model.max_batch_size);
-          int nextEndIdx = std::min<int>(numSamples, endIdx + model.max_batch_size);
+        for (int startIdx = 0; startIdx < numSamples; startIdx += model.infer_batch_size) {
+          int endIdx = std::min<int>(numSamples, startIdx + model.infer_batch_size);
+          int nextEndIdx = std::min<int>(numSamples, endIdx + model.infer_batch_size);
 
           // use cached probabilities if possible
           if ((derStep > 0)) {
@@ -230,42 +231,42 @@ struct MonteCarloOptimizer {
             bool signalsStop = false;
 
           // loop until rewrite succeeds (or stop)
-            const size_t failureLimit = 10;
-            bool checkedDists = false; // sample distributions have been sanitized
-            size_t failureCount = 0;
-            while (!signalsStop && !success) {
-              bool uniRule;
-              uniRule = (ruleRand(randGen()) <= pRandom);
+            bool uniRule;
+            uniRule = (ruleRand(randGen()) <= pRandom);
 
-              if (uniRule) {
-                // uniform random rewrite
-                rewrite = mut.mutate(*roundProgs[t], 1);
-                IF_DEBUG_DER {
-                  std::cerr << "after random rewrite!\n";
-                  roundProgs[t]->dump();
-                }
-                success = true; // mutation always succeeeds
-                signalsStop = false;
-              } else {
-                // sanitize distributions drawn from model
-                if (!checkedDists &&
-                    !IsValidDistribution(modelRewriteDist[t].actionDist)) {
-                  stats.invalidModelDists++;
-                  signalsStop = true;
-                  break;
-                }
-                checkedDists = true; // model returned proper distributions for rule and target
-
-                // use model to apply rule
+            // try to apply the model first
+            if (!uniRule) {
+              bool validDist = IsValidDistribution(modelRewriteDist[t].actionDist);
+              if (validDist) {
                 success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
-                if (!success) failureCount++;
+              }
 
-                // avoid infinite loops by failing after @failureLimit
-                signalsStop = (failureCount >= failureLimit);
+              if (!success || !validDist) {
+                if (useRandomFallback) {
+                  uniRule = true; // fall back to uniform application
+                } else {
+                  signalsStop = true; // STOP on derivation failures
+                }
+
+                // stats
+                if (!validDist) {
+                  stats.invalidModelDists++;
+                } else {
+                  stats.derivationFailures++;
+                }
               }
             }
 
-            stats.derivationFailures += (failureCount >= failureLimit);
+          // uniform random mutation
+            if (uniRule) {
+              rewrite = mut.mutate(*roundProgs[t], 1);
+              IF_DEBUG_DER {
+                std::cerr << "after random rewrite!\n";
+                roundProgs[t]->dump();
+              }
+              success = true; // mutation always succeeeds
+              signalsStop = false;
+            }
 
           // don't step over STOP
             if (signalsStop) {
@@ -301,11 +302,9 @@ struct MonteCarloOptimizer {
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec
-  searchDerivations_Default(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds) {
+  searchDerivations_Default(const ProgramVec & progVec, const int maxDist, const int numOptRounds) {
     const int numSamples = progVec.size();
     std::uniform_real_distribution<float> ruleRand(0, 1);
-
-    const bool useModel = pRandom != 1.0;
 
     // start with STOP derivation
     std::vector<Derivation> states;
@@ -317,7 +316,6 @@ struct MonteCarloOptimizer {
 
     // pre-compute initial program distribution
     ResultDistVec initialProgDist(progVec.size());
-    if (useModel) { model.infer_dist(initialProgDist, progVec, 0, progVec.size()).join(); }
 
     // number of derivation walks
     for (int r = 0; r < numOptRounds; ++r) {
@@ -325,12 +323,9 @@ struct MonteCarloOptimizer {
       // re-start from initial program
       ProgramVec roundProgs = Clone(progVec);
 
-      ResultDistVec modelRewriteDist = initialProgDist;
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
         // use cached probabilities if possible
-        if ((derStep > 0) && useModel) { model.infer_dist(modelRewriteDist, roundProgs, 0, roundProgs.size()).join(); }
-
         int frozen = 0;
 
         #pragma omp parallel for reduction(+:frozen)
@@ -348,46 +343,16 @@ struct MonteCarloOptimizer {
 
         // pick & apply a rewrite
           Rewrite rewrite;
-          bool success = false;
           bool signalsStop = false;
 
         // loop until rewrite succeeds (or stop)
-          const size_t failureLimit = 10;
-          bool checkedDists = false; // sample distributions have been sanitized
-          size_t failureCount = 0;
-          while (!signalsStop && !success) {
-            bool uniRule;
-            uniRule = !useModel || (ruleRand(randGen()) <= pRandom);
-
-            if (uniRule) {
-              // uniform random rewrite
-              rewrite = mut.mutate(*roundProgs[t], 1);
-              IF_DEBUG_DER {
-                std::cerr << "after random rewrite!\n";
-                roundProgs[t]->dump();
-              }
-              success = true; // mutation always succeeeds
-              signalsStop = false;
-            } else {
-              // sanitize distributions drawn from model
-              if (!checkedDists &&
-                  !IsValidDistribution(modelRewriteDist[t].actionDist)) {
-                stats.invalidModelDists++;
-                signalsStop = true;
-                break;
-              }
-              checkedDists = true; // model returned proper distributions for rule and target
-
-              // use model to apply rule
-              success = tryApplyModel(*roundProgs[t], rewrite, modelRewriteDist[t], signalsStop);
-              if (!success) failureCount++;
-
-              // avoid infinite loops by failing after @failureLimit
-              signalsStop = (failureCount >= failureLimit);
-            }
+          // uniform random rewrite
+          rewrite = mut.mutate(*roundProgs[t], 1);
+          IF_DEBUG_DER {
+            std::cerr << "after random rewrite!\n";
+            roundProgs[t]->dump();
           }
-
-          stats.derivationFailures += (failureCount >= failureLimit);
+          signalsStop = false;
 
         // don't step over STOP
           if (signalsStop) {
@@ -764,7 +729,7 @@ struct APO {
   }
 
   void train() {
-    const int numEvalSamples = std::min<int>(4096, model.max_batch_size * 32);
+    const int numEvalSamples = std::min<int>(4096, model.train_batch_size * 32);
     std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
 
@@ -807,14 +772,14 @@ struct APO {
         montOpt.stats = MonteCarloOptimizer::Stats();
 
         // random sampling based (uniform sampling, nio model)
-        auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds);
+        auto refDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numOptRounds, false);
 
         // one shot (model based)
-        auto oneShotDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1);
+        auto oneShotDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1, false);
 
         // model-guided sampling
         const int guidedSamples = 4;
-        auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples);
+        auto guidedDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
 
         int numStops = CountStops(refDerVec);
         DerStats oneShotStats = ScoreDerivations(refDerVec, oneShotDerVec);
@@ -870,12 +835,12 @@ struct APO {
       }
 
       // best-effort search for optimal program
-      auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds);
+      auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds, false);
 
       const int startRacketRound = logRate;
       if (g >= startRacketRound) {
         // model-driven search
-        auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, maxExplorationDepth, 10);
+        auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, maxExplorationDepth, 4, true);
         refDerVec = FilterBest(refDerVec, guidedDerVec);
       }
 

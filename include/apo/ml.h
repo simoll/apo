@@ -65,7 +65,8 @@ class Model {
 
   // TODO read from shared config file
 public:
-  int max_batch_size; // = 4;
+  int infer_batch_size; // = 4;
+  int train_batch_size; // = 4;
   int prog_length; // maximal program length
   int num_Params; // = 5;
   int max_Rules; //  maximal number of rules supported by model

@@ -73,12 +73,13 @@ Model::Model(const std::string & saverPrefix, const std::string & configFile, in
       Parser confParser(configFile);
       prog_length = confParser.get_or_fail<int>("prog_length");
       num_Params = confParser.get_or_fail<int>("num_Params");
-      max_batch_size = confParser.get_or_fail<int>("batch_size");
+      train_batch_size = confParser.get_or_fail<int>("train_batch_size"); // training mini batch size
+      infer_batch_size = confParser.get_or_fail<int>("infer_batch_size"); // inference mini batch size
       max_Rules = confParser.get_or_fail<int>("max_Rules");
       batch_train_steps = confParser.get_or_fail<int>("batch_train_steps");
   }
 
-  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", max_batch_size=" << max_batch_size << ", max_Rules=" << max_Rules << ", batch_train_steps=" << batch_train_steps << "\n";
+  std::cerr << "Model (apo). prog_length=" << prog_length << ", num_Params=" << num_Params << ", train_batch_size=" << train_batch_size << ", infer_batch_size=" << infer_batch_size << ", max_Rules=" << max_Rules << ", batch_train_steps=" << batch_train_steps << "\n";
 
   if (num_Rules > max_Rules) {
     std::cerr << "Model does not support mode than " << max_Rules << " rules at a time! Aborting..\n";
@@ -316,15 +317,14 @@ std::thread
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
-  const int batch_size = max_batch_size;
-  assert((num_Samples % batch_size == 0) && "TODO implement varying sized training");
+  assert((num_Samples % train_batch_size == 0) && "TODO implement varying sized training");
 
   std::vector<Batch> * batchVec = new std::vector<Batch>();
 
   // encode programs in current thread
-  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
-    Batch batch(*this, max_batch_size);
-    for (int i = 0; i < batch_size; ++i) {
+  for (int s = 0; s + train_batch_size - 1 < num_Samples; s += train_batch_size) {
+    Batch batch(*this, train_batch_size);
+    for (int i = 0; i < train_batch_size; ++i) {
       const Program & P = *progs[s + i];
       batch.encode_Program(i, P);
       batch.encode_Result(i, results[s + i]);
@@ -363,7 +363,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
     }
 
     if (oLosses) {
-      double numBatches = num_Samples / (double) max_batch_size;
+      double numBatches = num_Samples / (double) train_batch_size;
       oLosses->stopLoss = L.stopLoss / numBatches;
       oLosses->targetLoss = L.targetLoss / numBatches;
       oLosses->actionLoss = L.actionLoss / numBatches;
@@ -380,64 +380,16 @@ Model::flush() {
   std::lock_guard<std::mutex> guard(modelMutex);
 }
 
-#if 0
-double
-Model::train(const ProgramVec& progs, const std::vector<Result>& results, int num_steps) {
-  int num_Samples = progs.size();
-  assert(results.size() == num_Samples);
-
-  double avgCorrect = 0.0;
-  Batch batch(*this);
-
-  for (int s = 0; s + batch_size - 1 < num_Samples; s += batch_size) {
-    for (int i = 0; i < batch_size; ++i) {
-      const Program & P = *progs[s + i];
-      batch.encode_Program(i, P);
-      batch.encode_Result(i, results[s + i]);
-    }
-
-    // The session will initialize the outputs
-    std::vector<tensorflow::Tensor> outputs;
-
-    // std::cout << " Training on batch " << s << "\n";
-    for (int i = 0; i < num_steps; ++i) {
-      outputs.clear();
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_op"}, &outputs) );
-      // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
-      // writer.add_summary(summary, i)
-    }
-
-    TF_CHECK_OK( session->Run(batch.buildFeed(), {"pCorrect_op"}, {}, &outputs) );
-    // writer.add_summary(summary, i)
-    auto pCorrect = outputs[0].scalar<float>()(0);
-    // std::cout << loss_out << "\n";
-    avgCorrect += (double) pCorrect;
-  }
-
-  // Grab the first output (we only evaluated one graph node: "c")
-  // and convert the node to a scalar representation.
-
-  // (There are similar methods for vectors and matrices here:
-  // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/public/tensor.h)
-
-  // Print the results
-  // std::cout << output_c() << "\n"; // 30
-
-  int numBatches = num_Samples / batch_size;
-  return avgCorrect / (double) numBatches;
-}
-#endif
-
 std::thread
 Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
   Program emptyP(num_Params, {}); // the empty program
 
   auto batchVec = new std::vector<Batch>();
-  for (int s = startIdx; s < endIdx; s += max_batch_size) {
+  for (int s = startIdx; s < endIdx; s += infer_batch_size) {
     bool allEmpty = true;
 
     // detect remainder batch
-    int batch_size = std::min<int>(max_batch_size, endIdx - s);
+    int batch_size = std::min<int>(infer_batch_size, endIdx - s);
     Batch batch(*this, batch_size);
 
     std::vector<bool> skippedProgVec(progs.size(), false);
@@ -527,11 +479,10 @@ Model::setLearningRate(float v) {
 
 Model::Statistics
 Model::query_stats() {
+  std::lock_guard<std::mutex> guard(modelMutex);
+
   std::vector<tensorflow::Tensor> outputs;
-  {
-    std::lock_guard<std::mutex> guard(modelMutex);
-    TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
-  }
+  TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
   double learning_rate = outputs[0].scalar<float>()();
   size_t global_step = outputs[1].scalar<int>()();
   return Model::Statistics{global_step, learning_rate};
