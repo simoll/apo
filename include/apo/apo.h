@@ -82,17 +82,21 @@ struct MonteCarloOptimizer {
     size_t sampleActionFailures; // failures to sample actions
     size_t invalidModelDists; // # detected invalid rule/dist distributions from model
     size_t derivationFailures; // # failed derivations
+    size_t validModelDerivations; // # successful model-driven derivations
+
     Stats()
     : sampleActionFailures(0)
     , invalidModelDists(0)
     , derivationFailures(0)
+    , validModelDerivations(0)
     {}
 
     std::ostream& print(std::ostream& out) const {
-      out << "MCOpt::Stats {"
+      out << "MCOpt::Stats   "
           << "sampleActionFailures " << sampleActionFailures
           << ", invalidModelDists " << invalidModelDists
-          << ", derivationFailures " << derivationFailures << "}";
+          << ", derivationFailures " << derivationFailures
+          << ", validModelDerivations " << validModelDerivations;
       return out;
     }
   };
@@ -254,6 +258,8 @@ struct MonteCarloOptimizer {
                 } else {
                   stats.derivationFailures++;
                 }
+              } else {
+                stats.validModelDerivations++;
               }
             }
 
