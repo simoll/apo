@@ -108,6 +108,7 @@ struct MonteCarloOptimizer {
 
   int maxGenLen;
   Mutator mut;
+  const float stopThreshold = 0.8;
 
   const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
 
@@ -126,7 +127,7 @@ struct MonteCarloOptimizer {
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
     // should we stop?
-    if (pRand(randGen()) <= res.stopDist) {
+    if (res.stopDist > stopThreshold) {
       signalsStop = true;
       return true;
     }
