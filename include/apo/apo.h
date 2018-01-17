@@ -556,8 +556,7 @@ struct MonteCarloOptimizer {
         std::cerr << "\n Sample " << s << ":\n";
         progVec[s]->dump();
         std::cerr << "Result ";
-        if (result.isStop()) std::cerr << "STOP!\n";
-        else result.dump();
+        result.dump();
       }
     }
   }
