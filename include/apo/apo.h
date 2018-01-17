@@ -51,6 +51,11 @@ struct Derivation {
   , shortestDerivation(0)
   {}
 
+  Derivation()
+  : bestScore(std::numeric_limits<int>::max())
+  , shortestDerivation(0)
+  {}
+
   std::ostream& print(std::ostream & out) const {
     out << "Derivation (bestScore=" << bestScore << ", dist=" << shortestDerivation << ")"; return out;
   }
@@ -120,6 +125,40 @@ struct MonteCarloOptimizer {
   , mut(rules, 0.1) // greedy shrinking mutator
   {}
 
+  bool
+  greedyApplyModel(Program & P, Rewrite & rew, ResultDist & res, bool & signalsStop) {
+    std::uniform_real_distribution<float> pRand(0, 1.0);
+
+    // should we stop?
+    if (res.stopDist > stopThreshold) {
+      signalsStop = true;
+      return true;
+    }
+
+    // take random most-likely event
+    signalsStop = false;
+
+    // visit actions in descending order
+    bool success = false;
+
+    // std::cerr << "BEGIN GREEDY\n";
+    VisitDescending(res.actionDist, [this, &P, &success, &rew](float pMass, int actionId) {
+      if (pMass <= EPS) {
+        // noise
+        success = false;
+        return false;
+      }
+      // std::cerr << "GREEDY " << pMass << " " << actionId << "\n";
+
+      rew = model.toRewrite(actionId);
+      if (rew.pc >= P.size() - 1) return true; // keep going -> invalid sample
+
+      success = mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
+      return !success;
+    });
+
+    return success;
+  }
 
   bool
   tryApplyModel(Program & P, Rewrite & rewrite, ResultDist & res, bool & signalsStop) {
@@ -147,14 +186,57 @@ struct MonteCarloOptimizer {
 
   // failed to sample a valid rule application -> STOP
     if (!validPc) {
-      signalsStop = true;
-      return true;
+      return false;
     }
 
   // Otw, rely on the mutator to do the job
     return mut.tryApply(P, rew.pc, rew.ruleId, rew.leftMatch);
   }
 
+  // run greedy model based derivation
+  DerivationVec
+  greedyDerivation(const ProgramVec & origProgVec, const int maxDist) {
+    ProgramVec progVec = Clone(origProgVec);
+
+    DerivationVec states(progVec.size());
+    std::vector<bool> alreadyStopped(origProgVec.size(), false);
+    for (int derStep = 0; derStep < maxDist; ++derStep) {
+
+      // compute distribution
+      ResultDistVec actionDistVec(progVec.size());
+      model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
+
+      // greedily sample most likely outcome
+      int frozen = 0;
+      #pragma omp parallel for reduction(+:frozen)
+      for (int t = 0; t < progVec.size(); ++t) {
+        if (alreadyStopped[t]) continue;
+
+        Rewrite rew;
+        bool signalsStop = false;
+        greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
+
+        // STOP by model violation?
+        if (progVec[t]->size() > model.prog_length) {
+          signalsStop = true;
+        }
+
+        // don't step over STOP
+        if (signalsStop) {
+          alreadyStopped[t] = true;
+          ++frozen;
+          states[t] = Derivation(GetProgramScore(*progVec[t]), derStep);
+          continue;
+        }
+      }
+
+      if (frozen == progVec.size()) break; // early exit
+    }
+
+    return states;
+  }
+
+  // random trajectory based model (or uniform dist) sampling
   DerivationVec
   searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds, bool allowFallback) {
     if (pRandom < 1.0) return searchDerivations_ModelDriven(progVec, pRandom, maxDist, numOptRounds, allowFallback);
@@ -785,25 +867,31 @@ struct APO {
         montOpt.stats = MonteCarloOptimizer::Stats();
 
         // one shot (model based)
-        auto oneShotEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1, false);
+        // auto oneShotEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, 1, false);
 
         // model-guided sampling
         const int guidedSamples = 4;
         auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
 
+        // greedy (most likely action)
+        auto greedyEvalDerVec = montOpt.greedyDerivation(evalProgs, maxExplorationDepth);
+
         int numStops = CountStops(refEvalDerVec);
-        DerStats oneShotStats = ScoreDerivations(refEvalDerVec, oneShotEvalDerVec);
+        // DerStats oneShotStats = ScoreDerivations(refEvalDerVec, oneShotEvalDerVec);
         DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
+        DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyEvalDerVec);
 
         // improve best-known solution on the go
         bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
-        bestEvalDerVec = FilterBest(bestEvalDerVec, oneShotEvalDerVec);
+        // bestEvalDerVec = FilterBest(bestEvalDerVec, oneShotEvalDerVec);
+        bestEvalDerVec = FilterBest(bestEvalDerVec, greedyEvalDerVec);
         DerStats bestStats = ScoreDerivations(refEvalDerVec, bestEvalDerVec);
 
         double stopRatio = numStops / (double) refEvalDerVec.size();
         std::cerr << ". Stops  " << stopRatio << "\n";
-        std::cerr << "\tOne shot  "; oneShotStats.print(std::cerr);
-        std::cerr << "\tGuided    "; guidedStats.print(std::cerr);
+        std::cerr << "\tGreedy    "; greedyStats.print(std::cerr);
+        // std::cerr << "\tOne shot  "; oneShotStats.print(std::cerr);
+        std::cerr << "\tSampled   "; guidedStats.print(std::cerr);
         std::cerr << "\tIncumbent "; bestStats.print(std::cerr);
 
 

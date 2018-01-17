@@ -6,6 +6,9 @@
 #include <vector>
 #include <cassert>
 #include <iostream>
+#include <functional>
+
+#include "apo/ADT/SmallVector.h"
 
 #define EPS 0.00001
 
@@ -29,6 +32,73 @@ IsValidDistribution(const CatDist & catDist) {
     sum += v;
   }
   return sum + EPS >= 1.0;
+}
+
+static void
+VisitDescending(const CatDist & catDist, std::function<bool(float, int)> handlerFunc) {
+// collect events with highest probability mass
+  float topMass = 2.0; // entries can not be larger than 1.0
+
+  bool keepGoing = true;
+  do {
+    float maxMass = 0.0;
+
+    llvm::SmallVector<int, 2> likelyEventVec;
+    for (int i = 0; i < catDist.size(); ++i) {
+      float thisMass = catDist[i];
+      if (thisMass >= topMass) continue; // skip
+
+      // new incumbent mass
+      if (thisMass > maxMass) {
+        likelyEventVec.clear();
+        maxMass = thisMass;
+      }
+
+      // collect all events with this mass
+      if (thisMass == maxMass) {
+        likelyEventVec.push_back(i);
+      }
+    }
+
+    // no event seen
+    if (likelyEventVec.empty()) return;
+
+    // visit all events with highest admissable mass
+    for (int event : likelyEventVec) {
+      keepGoing = handlerFunc(maxMass, event);
+      if (!keepGoing) return;
+    }
+
+    topMass = maxMass; // lower the cap
+  } while (keepGoing);
+}
+
+static int
+SampleMostLikely(const CatDist & catDist, double p) {
+// collect events with highest probability mass
+  float maxMass = 0.0;
+  llvm::SmallVector<int, 2> likelyEventVec;
+
+  for (int i = 0; i < catDist.size(); ++i) {
+    if (catDist[i] > maxMass) {
+      likelyEventVec.clear();
+      maxMass = catDist[i];
+    }
+    if (catDist[i] == maxMass) {
+      likelyEventVec.push_back(i);
+    }
+  }
+
+  // invalid distribution
+  if (maxMass <= 0.0) return -1;
+
+  // otw, sample among most likely
+  assert(likelyEventVec.size() > 0);
+
+  if (likelyEventVec.size() == 1) { return likelyEventVec[0]; }
+  int idx = floor(likelyEventVec.size() * p);
+  assert(0 <= idx && idx < likelyEventVec.size());
+  return idx;
 }
 
 static int
