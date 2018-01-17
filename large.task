@@ -12,3 +12,4 @@ logRate 200
 numRounds 1000000
 saveModel 1
 numSamples 64
+racketStartRound 1000

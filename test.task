@@ -11,3 +11,5 @@ numEvalOptRounds 100
 logRate 10
 numRounds 1000
 saveModel 0
+numSamples 32
+racketStartRound 1000

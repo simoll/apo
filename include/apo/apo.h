@@ -672,7 +672,8 @@ struct APO {
 
 // eval round interval
   int logRate;
-  size_t numRounds;
+  size_t numRounds; // total training rounds
+  size_t racketStartRound; // round when the racket should start (model based query)
 
   bool saveCheckpoints; // save model checkpoints at @logRate
 
@@ -709,6 +710,7 @@ struct APO {
 
     logRate = task.get_or_fail<int>("logRate"); // 10; // number of round followed by an evaluation
     numRounds = task.get_or_fail<size_t>("numRounds"); // 10; // number of round followed by an evaluation
+    racketStartRound = task.get_or_fail<size_t>("racketStartRound"); // 10; // number of round followed by an evaluation
 
     saveCheckpoints = task.get_or_fail<int>("saveModel") != 0; // save model checkpoints at @logRate
 
@@ -852,8 +854,7 @@ struct APO {
       // best-effort search for optimal program
       auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, maxExplorationDepth, numOptRounds, false);
 
-      const int startRacketRound = logRate;
-      if (g >= startRacketRound) {
+      if (g >= racketStartRound) {
         // model-driven search
         auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, maxExplorationDepth, 4, true);
         refDerVec = FilterBest(refDerVec, guidedDerVec);
