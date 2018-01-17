@@ -47,6 +47,9 @@ Model::init_tflow() {
   opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.95);
   opts.config.mutable_gpu_options()->set_allow_growth(false);
 
+  // TODO enable XLA (single threaded only)
+  // opts.config.mutable_graph_options()->mutable_optimizer_options()->set_global_jit_level(OptimizerOptions_GlobalJitLevel_ON_1);
+
   Status status = NewSession(opts, &session);
 
   if (!status.ok()) {
