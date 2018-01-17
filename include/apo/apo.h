@@ -166,7 +166,7 @@ struct MonteCarloOptimizer {
     std::uniform_real_distribution<float> pRand(0, 1.0);
 
     // should we stop?
-    if (res.stopDist > stopThreshold) {
+    if (pRand(randGen()) <= res.stopDist) {
       signalsStop = true;
       return true;
     }
