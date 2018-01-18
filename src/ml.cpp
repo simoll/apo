@@ -300,13 +300,12 @@ struct Batch {
       // std::cerr << "T " << batch_id << " " << t << "  :  " << pTarget << "\n";
       target_Mapped(batch_id, t) = pTarget;
       for (int r = 0; r < model.max_Rules; ++r) {
+        float pAction = 0.0;
         if (r < model.num_Rules && (pTarget > 0.0)) {
-          auto pAction = result.actionDist[t * model.num_Rules + r] / pTarget;
+          pAction = result.actionDist[t * model.num_Rules + r] / pTarget;
           // std::cerr << "B " << batch_id << " " << t << " " << r << "  :  " << pAction << "\n";
-          action_Mapped(batch_id, t, r) = pAction;
-        } else {
-          action_Mapped(batch_id, t, r) = 0.0;
         }
+        action_Mapped(batch_id, t, r) = pAction;
       }
     }
   }
