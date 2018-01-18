@@ -316,7 +316,7 @@ with tf.Session() as sess:
       for batch in outputs:
         J = tf.concat([batch, pool], axis=1)
         with tf.variable_scope("", reuse=len(accu) > 0):
-          rule_bit = tf.layers.dense(inputs=J, activation=tf.nn.tanh, units=max_Rules, name="layer")
+          rule_bit = tf.layers.dense(inputs=J, activation=tf.identity, units=max_Rules, name="layer")
         accu.append(rule_bit)
     action_logits = tf.transpose(accu, [1, 0, 2]) # [batch_size x prog_length x max_Rules]
 
