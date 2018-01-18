@@ -9,18 +9,18 @@
 namespace apo {
 #ifdef APO_ASYNC_TASKS
   // enable asynchronous joinable tasks
-  using Task = std::thraad;
+  using Task = std::thread;
   using TaskMutex = std::mutex;
 
-  struct MutexGuard {
+  struct Mutex_guard {
     std::lock_guard<std::mutex> _mutex;
-    MutexGuard(std::mutex & mutex) : _mutex(mutex) {}
+    Mutex_guard(std::mutex & mutex) : _mutex(mutex) {}
   };
 
   template<class T>
   struct Lock_guard {
     std::lock_guard<T> _guard;
-    lock_guard(T & t) : _guard(t) {}
+    Lock_guard(T & t) : _guard(t) {}
   };
 
 #else

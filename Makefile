@@ -5,6 +5,8 @@ SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
 HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
+FLAGS=
+
 include make.conf
 
 INC=-Isrc/ \
@@ -17,14 +19,26 @@ LIBS=-ltensorflow_framework \
     $(TFLOW)/python/_pywrap_tensorflow_internal.so \
     $(TFLOW)/python/framework/fast_tensor_util.so \
     $(TFLOW)/contrib/rnn/python/ops/_lstm_ops.so \
-    -lcuda \
     -lpython3 \
     -lpthread
 LIBPATH=-L${TFLOW}
 
+# enable TensorFlow on the GPU
+ifdef APO_ENABLE_CUDA
+    LIBS:=${LIBS} -lcuda
+    FLAGS:=${FLAGS} -DAPO_ENABLE_CUDA
+endif
+
+# enable asynchronous model queries
+# this should only be enabled if (APO_ENABLE_CUDA) is set as well and a GPU is available on the system
+# otherwise openmp threads will compete with TensorFlows internal threads got the CPUs, helping nobody
+ifdef APO_ASYNC_TASKS
+  FLAGS:=${FLAGS} -DAPO_ASYNC_TASKS
+endif
+
 LDFLAGS=-Wl,--allow-multiple-definition -Wl,--whole-archive ${LIBPATH} ${LIBS}
 
-CFLAGS=${INC}
+CFLAGS=${INC} ${FLAGS}
 
 PYTHON=python3
 

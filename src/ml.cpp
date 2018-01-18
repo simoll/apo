@@ -25,6 +25,9 @@ Model::init_tflow() {
   if (initialized) return 0;
   initialized = true;
 
+  SessionOptions opts;
+
+#ifdef APO_ENABLE_CUDA
   Status gpuStatus = ValidateGPUMachineManager();
   if (gpuStatus.ok()) {
     // Returns the GPU machine manager singleton, creating it and
@@ -39,11 +42,14 @@ Model::init_tflow() {
     return 1;
   }
 
-
    // Initialize a tensorflow session
-  SessionOptions opts;
   opts.config.mutable_gpu_options()->set_per_process_gpu_memory_fraction(0.95);
   opts.config.mutable_gpu_options()->set_allow_growth(false);
+
+  std::cerr << "model: build with GPU support.\n";
+#else
+  std::cerr << "model: build without GPU support.\n";
+#endif
 
   // TODO enable XLA (single threaded only)
   // opts.config.mutable_graph_options()->mutable_optimizer_options()->set_global_jit_level(OptimizerOptions_GlobalJitLevel_ON_1);
