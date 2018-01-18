@@ -113,7 +113,7 @@ struct MonteCarloOptimizer {
 
   int maxGenLen;
   Mutator mut;
-  const float stopThreshold = 0.8;
+  const float stopThreshold = 0.5;
 
   const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
 
@@ -842,7 +842,7 @@ struct APO {
     generatePrograms(progVec, 0, progVec.size());
 
     // TESTING
-    model.setLearningRate(0.0001);
+    // model.setLearningRate(0.0001); // works well
 
     clock_t roundTotal = 0;
     size_t numTimedRounds = 0;
