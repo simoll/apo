@@ -199,6 +199,8 @@ struct MonteCarloOptimizer {
     ProgramVec progVec = Clone(origProgVec);
 
     DerivationVec states(progVec.size());
+
+    int frozen = 0;
     std::vector<bool> alreadyStopped(origProgVec.size(), false);
     for (int derStep = 0; derStep < maxDist; ++derStep) {
 
@@ -207,7 +209,6 @@ struct MonteCarloOptimizer {
       model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
 
       // greedily sample most likely outcome
-      int frozen = 0;
       #pragma omp parallel for reduction(+:frozen)
       for (int t = 0; t < progVec.size(); ++t) {
         if (alreadyStopped[t]) continue;
@@ -221,11 +222,11 @@ struct MonteCarloOptimizer {
           signalsStop = true;
         }
 
-        // don't step over STOP
-        if (signalsStop) {
+        // STOP when signalled (our in last iteration)
+        if (signalsStop || derStep + 1 >= maxDist) {
+          states[t] = Derivation(GetProgramScore(*progVec[t]), derStep);
           alreadyStopped[t] = true;
           ++frozen;
-          states[t] = Derivation(GetProgramScore(*progVec[t]), derStep);
           continue;
         }
       }
