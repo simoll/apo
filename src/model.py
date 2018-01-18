@@ -300,11 +300,15 @@ with tf.Session() as sess:
     target_logits = tf.transpose(accu, [1, 0])
 
     ### stop logit ###
-    with tf.variable_scope("stop"):
-      cell = make_linear(state_size * 3)
-      stop_logit = cell(tf.concat([pool, state[0], state[1]], axis=1)) # based on last layer RNN output state
+    # with tf.variable_scope("stop"):
+    #   cell = make_linear(state_size)
+    #   stop_logit = cell(pool) # based on last layer RNN output state
 
-    pred_stop_dist = tf.sigmoid(stop_logit, name="pred_stop_dist") # only positive values?????????????
+    # pred_stop_dist = tf.sigmoid(stop_logit, name="pred_stop_dist") # only positive values?????????????
+    with tf.variable_scope("stop"):
+       stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
+
+    pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
 
     ### rule logits ###
     with tf.variable_scope("rules"):
@@ -328,7 +332,8 @@ with tf.Session() as sess:
     target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in") # target distribution (over instructions (per program))
 
     # training #
-    stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
+    # stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
+    stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
     action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=action_in, logits=action_logits, dim=-1) # [batch_size]
     target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
 
@@ -348,7 +353,7 @@ with tf.Session() as sess:
 
     if True:
     # learning rate configuration
-      starter_learning_rate = 0.0001
+      starter_learning_rate = 0.001
       # end_learning_rate = 0.0001
       decay_steps = 1000
       decay_rate = 0.99
