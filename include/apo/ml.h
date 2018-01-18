@@ -8,8 +8,7 @@
 #include "apo/mutator.h"
 #include "apo/extmath.h"
 
-#include <thread>
-#include <mutex>
+#include "apo/task.h"
 
 // MetaGraph
 #include <tensorflow/core/protobuf/meta_graph.pb.h>
@@ -58,7 +57,7 @@ class Model {
   tf::MetaGraphDef graph_def;
 
   // asynchronous training support
-  std::mutex modelMutex;
+  TaskMutex modelMutex;
 
 // graph definition
 
@@ -109,7 +108,7 @@ public:
     std::ostream& print(std::ostream & out) const;
   };
 
-  std::thread train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
+  Task train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
 
   Statistics query_stats();
 
@@ -119,7 +118,7 @@ public:
 #endif
 
   // distribution over selections
-  std::thread infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx);
+  Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx);
 
   // returns a plain STOP result
   ResultDist createStopResult() const;

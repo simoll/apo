@@ -21,6 +21,7 @@
 #include "apo/program.h"
 #include "apo/rpg.h"
 #include "apo/mutator.h"
+#include "apo/task.h"
 
 #include <sstream>
 
@@ -262,7 +263,7 @@ struct MonteCarloOptimizer {
 
     // pre-compute initial program distribution
     ResultDistVec initialProgDist(progVec.size());
-    std::thread handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+    Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
     handle.join();
 
     // number of derivation walks
@@ -275,7 +276,7 @@ struct MonteCarloOptimizer {
 
       for (int derStep = 0; derStep < maxDist; ++derStep) {
 
-        std::thread inferThread;
+        Task inferThread;
         for (int startIdx = 0; startIdx < numSamples; startIdx += model.infer_batch_size) {
           int endIdx = std::min<int>(numSamples, startIdx + model.infer_batch_size);
           int nextEndIdx = std::min<int>(numSamples, endIdx + model.infer_batch_size);
@@ -945,7 +946,7 @@ struct APO {
 
       // train model
       Model::Losses L;
-      std::thread trainThread = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
+      Task trainThread = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
       // pick an action per program and drop STOP-ped programs
       int numNextProgs = montOpt.sampleActions(refResults, rewrites, nextProgs, progVec);

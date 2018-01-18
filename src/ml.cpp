@@ -12,8 +12,6 @@
 #include <cassert>
 #include <string>
 
-#include <thread>
-
 using namespace tensorflow;
 // namespace tf = tensorflow;
 
@@ -63,7 +61,7 @@ Model::init_tflow() {
 
 Model::~Model() {
   // wait until workerThread frees lock
-  std::lock_guard<std::mutex> guard(modelMutex);
+  Mutex_guard guard(modelMutex);
 }
 
 Model::Model(const std::string & saverPrefix, const std::string & configFile, int _numRules)
@@ -150,7 +148,7 @@ Model::loadCheckpoint(const std::string & checkPointFile) {
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
 
-  std::lock_guard<std::mutex> guard(modelMutex);
+  Mutex_guard guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -169,7 +167,7 @@ Model::saveCheckpoint(const std::string & checkPointFile) {
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
 
-  std::lock_guard<std::mutex> guard(modelMutex);
+  Mutex_guard guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -323,7 +321,7 @@ struct Batch {
 };
 
 // train model on a batch of programs (returns loss)
-std::thread
+Task
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
@@ -343,8 +341,8 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
   }
 
   // synchronize with pending training session
-  std::thread workerThread([this, batchVec, oLosses, num_Samples]{
-    std::lock_guard<std::mutex> guard(modelMutex);
+  Task workerThread([this, batchVec, oLosses, num_Samples]{
+    Mutex_guard guard(modelMutex);
     Losses L{0.0, 0.0, 0.0};
 
     for (Batch & batch : *batchVec) {
@@ -387,10 +385,10 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
 
 void
 Model::flush() {
-  std::lock_guard<std::mutex> guard(modelMutex);
+  Mutex_guard guard(modelMutex);
 }
 
-std::thread
+Task
 Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
   Program emptyP(num_Params, {}); // the empty program
 
@@ -425,8 +423,8 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     batchVec->push_back(batch);
   }
 
-  auto workerThread = std::thread([this, batchVec, &oResultDistVec, startIdx]{
-    std::lock_guard<std::mutex> guard(modelMutex);
+  auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx]{
+    Mutex_guard guard(modelMutex);
 
     for (auto & batch : *batchVec) {
       // The session will initialize the outputs
@@ -483,14 +481,14 @@ Model::setLearningRate(float v) {
   };
 
   {
-    std::lock_guard<std::mutex> guard(modelMutex);
+    Mutex_guard guard(modelMutex);
     TF_CHECK_OK( session->Run(dict, {"set_learning_rate"}, {}, nullptr) );
   }
 }
 
 Model::Statistics
 Model::query_stats() {
-  std::lock_guard<std::mutex> guard(modelMutex);
+  Mutex_guard guard(modelMutex);
 
   std::vector<tensorflow::Tensor> outputs;
   TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
