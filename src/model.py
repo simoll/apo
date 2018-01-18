@@ -316,13 +316,13 @@ with tf.Session() as sess:
       for batch in outputs:
         J = tf.concat([batch, pool], axis=1)
         with tf.variable_scope("", reuse=len(accu) > 0):
-          rule_bit = tf.layers.dense(inputs=J, activation=tf.nn.relu, units=max_Rules, name="layer")
+          rule_bit = tf.layers.dense(inputs=J, activation=tf.nn.tanh, units=max_Rules, name="layer")
         accu.append(rule_bit)
     action_logits = tf.transpose(accu, [1, 0, 2]) # [batch_size x prog_length x max_Rules]
 
     ## predictions ##
     # distributions
-    tf.nn.softmax(logits=action_logits,name="pred_action_dist")
+    tf.nn.sigmoid(action_logits,name="pred_action_dist")
     tf.nn.softmax(logits=target_logits,name="pred_target_dist")
 
     ### reference input & training ###
@@ -334,20 +334,23 @@ with tf.Session() as sess:
     # training #
     # stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
     stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
-    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=action_in, logits=action_logits, dim=-1) # [batch_size]
+
+    num_action_elems = prog_length * max_Rules
+    per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
+    action_loss = tf.reduce_mean(per_action_loss, axis=1)
+
     target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
 
     # TODO check that this is actually correct
-    action_loss = tf.nn.softmax_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, prog_length * max_Rules]), logits=tf.reshape(action_logits, [-1, prog_length * max_Rules]), dim=-1) # [batch_size]
-    move_losses = action_loss + target_loss # [batch_size]
+    move_losses = action_loss + target_loss 
 
     # conditional loss (only penalize rule/target if !stop_in)
     loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
     tf.identity(loss, "loss")
 
     mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
-    mean_action_loss = tf.reduce_mean((1.0 - stop_in) *action_loss, name="mean_action_loss")
-    mean_target_loss = tf.reduce_mean((1.0 - stop_in) *target_loss, name="mean_target_loss")
+    mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss")
+    mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
 
     tf.summary.scalar('loss', loss)
 
