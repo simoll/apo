@@ -583,57 +583,48 @@ struct MonteCarloOptimizer {
       // Otw, sample an action
       const int numRetries = 100;
       bool hit = false;
+      bool checkedDist = false;
       for (int t = 0; !hit && (t < numRetries); ++t) { // FIXME consider a greedy strategy
 
         // model picks stop?
         bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
 
+        if (shouldStop) {
+          hit = true;
+          break;
+        }
+
         // valid distributions?
-        if (!shouldStop && !IsValidDistribution(refResults[s].actionDist)) {
+        if (!checkedDist && !IsValidDistribution(refResults[s].actionDist)) {
+          checkedDist = true;
           hit = false;
           break;
         }
 
         // try to apply the action
-        if (!shouldStop) {
-          int actionId = SampleCategoryDistribution(refResults[s].actionDist, pRand(randGen()));
-          Rewrite randomRew = model.toRewrite(actionId);
-          IF_DEBUG_SAMPLE { std::cerr << "PICK: "; randomRew.print(std::cerr) << "\n";}
+        int actionId = SampleCategoryDistribution(refResults[s].actionDist, pRand(randGen()));
+        Rewrite randomRew = model.toRewrite(actionId);
+        IF_DEBUG_SAMPLE { std::cerr << "PICK: "; randomRew.print(std::cerr) << "\n";}
 
-          // scan through legal actions until hit
-          for (int i = rewriteIdx;
-              i < rewrites.size() && rewrites[i].first == s;
-              ++i)
-          {
-            if ((rewrites[i].second == randomRew)
-            ) {
-              assert(i < nextProgs.size());
-              // actionProgs.push_back(nextProgs[i]);
-              oProgs[numGenerated++] = nextProgs[i];
-              hit = true;
-              break;
-            }
+        // scan through legal actions until hit
+        for (int i = rewriteIdx;
+            i < rewrites.size() && rewrites[i].first == s;
+            ++i)
+        {
+          if ((rewrites[i].second == randomRew)
+          ) {
+            assert(i < nextProgs.size());
+            // actionProgs.push_back(nextProgs[i]);
+            oProgs[numGenerated++] = nextProgs[i];
+            hit = true;
+            break;
           }
-
-          // proper action
-        } else {
-          // STOP action
-          // actionProgs.push_back(roundProgs[s]);
-          hit = true;
-          break;
         }
       }
 
       // could not hit -> STOP
       if (!hit) {
         stats.sampleActionFailures++;
-
-        // std::cerr << "---- Could not sample action!!! -----\n";
-        // roundProgs[s]->dump();
-        // refResults[s].dump();
-        // abort(); // this should never happen
-
-        // actionProgs.push_back(roundProgs[s]); // soft failure
       }
 
       // advance to next progam with rewrites
