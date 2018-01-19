@@ -294,8 +294,11 @@ with tf.Session() as sess:
       cell = make_relu(state_size * 2)
       accu=[]
       for batch in outputs:
-        J = tf.concat([batch, pool], axis=1)
-        accu.append(cell(J))
+        J = tf.concat([batch, pool], axis=1) # TODO factor out pool transformation (redundant)
+        with tf.variable_scope("instance", reuse=len(accu) > 0):
+          pc_target_logit = tf.layers.dense(inputs=net_out, activation=tf.identity, units=1)[:, 0]
+        accu.append(pc_target_logit)
+        # accu.append(cell(J))
     # [prog_length x batch_size] -> [batch_size x prog_length]
     target_logits = tf.transpose(accu, [1, 0])
 
@@ -323,7 +326,7 @@ with tf.Session() as sess:
     ## predictions ##
     # distributions
     tf.nn.sigmoid(action_logits,name="pred_action_dist")
-    tf.nn.softmax(logits=target_logits,name="pred_target_dist")
+    tf.nn.sigmoid(target_logits,name="pred_target_dist")
 
     ### reference input & training ###
     # reference input #
@@ -339,9 +342,9 @@ with tf.Session() as sess:
     per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
     action_loss = tf.reduce_mean(per_action_loss, axis=1)
 
-    target_loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_in, logits=target_logits, dim=-1) # [batch_size]
+    target_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=target_in, logits=target_logits), axis=1) # [batch_size]
 
-    # TODO check that this is actually correct
+    # cummulative action loss
     move_losses = action_loss + target_loss 
 
     # conditional loss (only penalize rule/target if !stop_in)
