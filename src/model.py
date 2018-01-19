@@ -306,9 +306,9 @@ with tf.Session() as sess:
 
     # pred_stop_dist = tf.sigmoid(stop_logit, name="pred_stop_dist") # only positive values?????????????
     with tf.variable_scope("stop"):
-       stop_layer = tf.layers.dense(inputs=net_out, activation=tf.nn.relu, units=1)[:, 0]
+       stop_logits = tf.layers.dense(inputs=net_out, activation=tf.identity, units=1)[:, 0]
 
-    pred_stop_dist = tf.identity(stop_layer, name="pred_stop_dist")
+    pred_stop_dist = tf.sigmoid(stop_logits, name="pred_stop_dist")
 
     ### rule logits ###
     with tf.variable_scope("rules"):
@@ -333,7 +333,7 @@ with tf.Session() as sess:
 
     # training #
     # stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
-    stop_loss = tf.losses.mean_squared_error(stop_in, pred_stop_dist) # []
+    stop_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=stop_in, logits=stop_logits) # []
 
     num_action_elems = prog_length * max_Rules
     per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
