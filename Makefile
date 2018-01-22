@@ -24,7 +24,8 @@ LIBS=-ltensorflow_framework \
 LIBPATH=-L${TFLOW}
 
 # enable TensorFlow on the GPU
-ifdef APO_ENABLE_CUDA
+# APO_ENABLE_CUDA:=1
+ifeq ($(strip $(APO_ENABLE_CUDA)),1)
     LIBS:=${LIBS} -lcuda
     FLAGS:=${FLAGS} -DAPO_ENABLE_CUDA
 endif
@@ -32,7 +33,7 @@ endif
 # enable asynchronous model queries
 # this should only be enabled if (APO_ENABLE_CUDA) is set as well and a GPU is available on the system
 # otherwise openmp threads will compete with TensorFlows internal threads got the CPUs, helping nobody
-ifdef APO_ASYNC_TASKS
+ifeq ($(strip $(APO_ASYNC_TASKS)),1)
   FLAGS:=${FLAGS} -DAPO_ASYNC_TASKS
 endif
 
