@@ -114,7 +114,7 @@ struct MonteCarloOptimizer {
 
   int maxGenLen;
   Mutator mut;
-  const float stopThreshold = 0.5;
+  const float stopThreshold = 0.8;
 
   const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
 
@@ -195,11 +195,21 @@ struct MonteCarloOptimizer {
   }
 
   // run greedy model based derivation
-  DerivationVec
+  struct GreedyResult {
+    DerivationVec greedyVec; // stop at STOP
+    DerivationVec bestVec; // best derivation within @maxDist
+  };
+
+  GreedyResult
   greedyDerivation(const ProgramVec & origProgVec, const int maxDist) {
     ProgramVec progVec = Clone(origProgVec);
 
     DerivationVec states(progVec.size());
+
+    DerivationVec bestStates; bestStates.reserve(progVec.size());
+    for (int t = 0; t < progVec.size(); ++t) {
+      bestStates.push_back(Derivation(*progVec[t]));
+    }
 
     int frozen = 0;
     std::vector<bool> alreadyStopped(origProgVec.size(), false);
@@ -214,28 +224,34 @@ struct MonteCarloOptimizer {
       for (int t = 0; t < progVec.size(); ++t) {
         if (alreadyStopped[t]) continue;
 
+        // fetch action
         Rewrite rew;
         bool signalsStop = false;
         greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
-
-        // STOP by model violation?
         if (progVec[t]->size() > model.prog_length) {
+          // STOP by exceeding model limits
           signalsStop = true;
         }
 
-        // STOP when signalled (our in last iteration)
+        Derivation currState(GetProgramScore(*progVec[t]), derStep);
+
+        // track best solution
+        if (currState.betterThan(bestStates[t])) {
+          bestStates[t] = currState;
+        }
+
+        // STOP when signalled (or in last iteration)
         if (signalsStop || derStep + 1 >= maxDist) {
-          states[t] = Derivation(GetProgramScore(*progVec[t]), derStep);
+          states[t] = currState;
           alreadyStopped[t] = true;
           ++frozen;
-          continue;
         }
       }
 
       if (frozen == progVec.size()) break; // early exit
     }
 
-    return states;
+    return GreedyResult{states, bestStates};
   }
 
   // random trajectory based model (or uniform dist) sampling
@@ -819,9 +835,15 @@ struct APO {
     std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
     // hold-out evaluation set
+    std::cerr << "-- Buildling eval set (" << numEvalSamples << " samples, " << numEvalOptRounds << " optRounds) --\n";
     ProgramVec evalProgs(numEvalSamples, nullptr);
     generatePrograms(evalProgs, 0, evalProgs.size());
     auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, maxExplorationDepth, numEvalOptRounds, false);
+
+    int numStops = CountStops(refEvalDerVec);
+    double stopRatio = numStops / (double) refEvalDerVec.size();
+    std::cerr << "Stop ratio  " << stopRatio << ".\n";
+
     auto bestEvalDerVec = refEvalDerVec;
 
   // training
@@ -838,7 +860,7 @@ struct APO {
 
     clock_t roundTotal = 0;
     size_t numTimedRounds = 0;
-    std::cerr << "\n-- Training --";
+    std::cerr << "\n-- Training --\n";
     for (size_t g = 0; g < numRounds; ++g) {
       bool loggedRound = (g % logRate == 0);
       if (loggedRound) {
@@ -855,7 +877,7 @@ struct APO {
         }
 
       // print MCTS statistics
-        montOpt.stats.print(std::cerr);
+        montOpt.stats.print(std::cerr) << "\n";
         montOpt.stats = MonteCarloOptimizer::Stats();
 
         // one shot (model based)
@@ -866,31 +888,31 @@ struct APO {
         auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
 
         // greedy (most likely action)
-        auto greedyEvalDerVec = montOpt.greedyDerivation(evalProgs, maxExplorationDepth);
+        auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, maxExplorationDepth);
 
-        int numStops = CountStops(refEvalDerVec);
         // DerStats oneShotStats = ScoreDerivations(refEvalDerVec, oneShotEvalDerVec);
+        DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
+        std::cerr << "\tGreedy (STOP) "; greedyStats.print(std::cerr); // apply most-likely action, respect STOP
+
+        DerStats bestGreedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
+        std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr); // one random trajectory, ignore S
+
         DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
-        DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyEvalDerVec);
+        std::cerr << "\tSampled       "; guidedStats.print(std::cerr); // best of 4 random trajectories, ignore STOP
 
         // improve best-known solution on the go
         bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
-        // bestEvalDerVec = FilterBest(bestEvalDerVec, oneShotEvalDerVec);
-        bestEvalDerVec = FilterBest(bestEvalDerVec, greedyEvalDerVec);
+        bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.greedyVec);
+        bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.bestVec);
         DerStats bestStats = ScoreDerivations(refEvalDerVec, bestEvalDerVec);
-
-        double stopRatio = numStops / (double) refEvalDerVec.size();
-        std::cerr << ". Stops  " << stopRatio << "\n";
-        std::cerr << "\tGreedy    "; greedyStats.print(std::cerr);
-        // std::cerr << "\tOne shot  "; oneShotStats.print(std::cerr);
-        std::cerr << "\tSampled   "; guidedStats.print(std::cerr);
-        std::cerr << "\tIncumbent "; bestStats.print(std::cerr);
-
+        std::cerr << "\tIncumbent     "; bestStats.print(std::cerr); // best of all sampling strategies (improving over time)
 
         // store model
-        std::stringstream ss;
-        ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
-        if (saveCheckpoints) model.saveCheckpoint(ss.str());
+        if (saveCheckpoints) {
+          std::stringstream ss;
+          ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
+          model.saveCheckpoint(ss.str());
+        }
 
       } else {
         if (g % dotStep == 0) { std::cerr << "."; }
