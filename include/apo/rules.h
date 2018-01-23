@@ -9,7 +9,7 @@
 
 namespace apo {
 
-using NodeSet = llvm::SmallSet<int32_t, 4>;
+using NodeSet = llvm::SmallSet<int32_t, 8>;
 
 static bool
 rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes) {
