@@ -337,6 +337,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
   // encode programs in current thread
   for (int s = 0; s + train_batch_size - 1 < num_Samples; s += train_batch_size) {
     Batch batch(*this, train_batch_size);
+    #pragma omp parallel for shared(batch,progs)
     for (int i = 0; i < train_batch_size; ++i) {
       const Program & P = *progs[s + i];
       batch.encode_Program(i, P);
@@ -406,6 +407,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     Batch batch(*this, batch_size);
 
     std::vector<bool> skippedProgVec(progs.size(), false);
+    #pragma omp parallel for shared(batch, skippedProgVec, allEmpty)
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > prog_length) {
