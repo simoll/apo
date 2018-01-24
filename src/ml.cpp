@@ -1,6 +1,5 @@
 #include "apo/ml.h"
 
-#include "apo/parser.h"
 #include "apo/extmath.h"
 #include "apo/config.h"
 
@@ -70,33 +69,17 @@ Model::~Model() {
   Mutex_guard guard(modelMutex);
 }
 
-Model::Model(const std::string & saverPrefix, const std::string & configFile, int _numRules)
+Model::Model(const std::string & saverPrefix, const ModelConfig & modelConfig, int _numRules)
 : num_Rules(_numRules)
+, config(modelConfig)
 {
   init_tflow(); // make sure tensorflow session works as expected
 
 // parse shared configuration
-  {
-      Parser confParser(configFile);
-      prog_length = confParser.get_or_fail<int>("prog_length");
-      num_Params = confParser.get_or_fail<int>("num_Params");
-      train_batch_size = confParser.get_or_fail<int>("train_batch_size"); // training mini batch size
-      infer_batch_size = confParser.get_or_fail<int>("infer_batch_size"); // inference mini batch size
-      max_Rules = confParser.get_or_fail<int>("max_Rules");
-      batch_train_steps = confParser.get_or_fail<int>("batch_train_steps");
-  }
+  config.print(std::cerr) << "\n";
 
-  std::cerr
-    << "Model (apo). prog_length=" << prog_length
-               << ", num_Params=" << num_Params
-               << ", train_batch_size=" << train_batch_size
-               << ", infer_batch_size=" << infer_batch_size
-               << ", max_Rules=" << max_Rules
-               << ", num_Rules=" << num_Rules
-               << ", batch_train_steps=" << batch_train_steps << "\n";
-
-  if (num_Rules > max_Rules) {
-    std::cerr << "Model does not support mode than " << max_Rules << " rules at a time! Aborting..\n";
+  if (num_Rules > config.max_Rules) {
+    std::cerr << "Model does not support mode than " << config.max_Rules << " rules at a time! Aborting..\n";
     abort();
   }
 
@@ -198,7 +181,7 @@ Model::translateOperand(node_t idx) const {
   if (idx < 0) {
     return -idx;
   } else {
-    return num_Params + idx;
+    return config.num_Params + idx;
   }
 }
 
@@ -238,28 +221,28 @@ struct Batch {
   Batch(const Model & _model, int _batch_size)
   : model(_model)
   , batch_size(_batch_size)
-  , oc_feed(DT_INT32, TensorShape({batch_size, model.prog_length}))
-  , firstOp_feed(DT_INT32, TensorShape({batch_size, model.prog_length}))
-  , sndOp_feed(DT_INT32,   TensorShape({batch_size, model.prog_length}))
+  , oc_feed(DT_INT32, TensorShape({batch_size, model.config.prog_length}))
+  , firstOp_feed(DT_INT32, TensorShape({batch_size, model.config.prog_length}))
+  , sndOp_feed(DT_INT32,   TensorShape({batch_size, model.config.prog_length}))
   , length_feed(DT_INT32,  TensorShape({batch_size}))
 
   , stop_feed(DT_FLOAT,  TensorShape({batch_size}))
-  , target_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length}))
-  , action_feed(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}))
+  , target_feed(DT_FLOAT,  TensorShape({batch_size, model.config.prog_length}))
+  , action_feed(DT_FLOAT,  TensorShape({batch_size, model.config.prog_length, model.config.max_Rules}))
   {}
 
   void resize(int new_size) {
     if (new_size == batch_size) return;
     batch_size = new_size;
 
-    oc_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
-    firstOp_feed = Tensor(DT_INT32, TensorShape({batch_size, model.prog_length}));
-    sndOp_feed = Tensor(DT_INT32,   TensorShape({batch_size, model.prog_length}));
+    oc_feed = Tensor(DT_INT32, TensorShape({batch_size, model.config.prog_length}));
+    firstOp_feed = Tensor(DT_INT32, TensorShape({batch_size, model.config.prog_length}));
+    sndOp_feed = Tensor(DT_INT32,   TensorShape({batch_size, model.config.prog_length}));
     length_feed = Tensor(DT_INT32,  TensorShape({batch_size}));
 
     stop_feed = Tensor(DT_FLOAT,  TensorShape({batch_size}));
-    target_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length}));
-    action_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.prog_length, model.max_Rules}));
+    target_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.config.prog_length}));
+    action_feed = Tensor(DT_FLOAT,  TensorShape({batch_size, model.config.prog_length, model.config.max_Rules}));
   }
 
   void encode_Program(int batch_id, const Program & prog) {
@@ -269,14 +252,14 @@ struct Batch {
     auto sndOp_Mapped = sndOp_feed.tensor<int, 2>();
     auto length_Mapped = length_feed.tensor<int, 1>();
 
-    assert((prog.size() <= model.prog_length) && "program size exceeds model limits");
+    assert((prog.size() <= model.config.prog_length) && "program size exceeds model limits");
 
     for (int t = 0; t < prog.size(); ++t) {
       oc_Mapped(batch_id, t) = model.encodeOpCode(prog.code[t]);
       firstOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 0);
       sndOp_Mapped(batch_id, t) = model.encodeOperand(prog.code[t], 1);
     }
-    for (int t = prog.size(); t < model.prog_length; ++t) {
+    for (int t = prog.size(); t < model.config.prog_length; ++t) {
       oc_Mapped(batch_id, t) = 0;
       firstOp_Mapped(batch_id, t) = 0;
       sndOp_Mapped(batch_id, t) = 0;
@@ -291,7 +274,7 @@ struct Batch {
     // std::cerr << "S " << result.stopDist << "\n";
     auto target_Mapped = target_feed.tensor<float, 2>();
     auto action_Mapped = action_feed.tensor<float, 3>();
-    for (int t = 0; t < model.prog_length; ++t) {
+    for (int t = 0; t < model.config.prog_length; ++t) {
       double pTarget = 0.0;
       for (int r = 0; r < model.num_Rules; ++r) {
         pTarget += result.actionDist[t * model.num_Rules + r];
@@ -299,7 +282,7 @@ struct Batch {
 
       // std::cerr << "T " << batch_id << " " << t << "  :  " << pTarget << "\n";
       target_Mapped(batch_id, t) = pTarget;
-      for (int r = 0; r < model.max_Rules; ++r) {
+      for (int r = 0; r < model.config.max_Rules; ++r) {
         float pAction = 0.0;
         if (r < model.num_Rules && (pTarget > 0.0)) {
           pAction = result.actionDist[t * model.num_Rules + r] / pTarget;
@@ -330,15 +313,15 @@ Task
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
-  assert((num_Samples % train_batch_size == 0) && "TODO implement varying sized training");
+  assert((num_Samples % config.train_batch_size == 0) && "TODO implement varying sized training");
 
   std::vector<Batch> * batchVec = new std::vector<Batch>();
 
   // encode programs in current thread
-  for (int s = 0; s + train_batch_size - 1 < num_Samples; s += train_batch_size) {
-    Batch batch(*this, train_batch_size);
+  for (int s = 0; s + config.train_batch_size - 1 < num_Samples; s += config.train_batch_size) {
+    Batch batch(*this, config.train_batch_size);
     #pragma omp parallel for shared(batch,progs)
-    for (int i = 0; i < train_batch_size; ++i) {
+    for (int i = 0; i < config.train_batch_size; ++i) {
       const Program & P = *progs[s + i];
       batch.encode_Program(i, P);
       batch.encode_Result(i, results[s + i]);
@@ -377,7 +360,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
     }
 
     if (oLosses) {
-      double numBatches = num_Samples / (double) train_batch_size;
+      double numBatches = num_Samples / (double) config.train_batch_size;
       oLosses->stopLoss = L.stopLoss / numBatches;
       oLosses->targetLoss = L.targetLoss / numBatches;
       oLosses->actionLoss = L.actionLoss / numBatches;
@@ -396,21 +379,21 @@ Model::flush() {
 
 Task
 Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
-  Program emptyP(num_Params, {}); // the empty program
+  Program emptyP(config.num_Params, {}); // the empty program
 
   auto batchVec = new std::vector<Batch>();
-  for (int s = startIdx; s < endIdx; s += infer_batch_size) {
+  for (int s = startIdx; s < endIdx; s += config.infer_batch_size) {
     bool allEmpty = true;
 
     // detect remainder batch
-    int batch_size = std::min<int>(infer_batch_size, endIdx - s);
+    int batch_size = std::min<int>(config.infer_batch_size, endIdx - s);
     Batch batch(*this, batch_size);
 
     std::vector<bool> skippedProgVec(progs.size(), false);
     #pragma omp parallel for shared(batch, skippedProgVec, allEmpty)
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
-      if (P.size() > prog_length) {
+      if (P.size() > config.prog_length) {
         batch.encode_Program(i, emptyP);
         skippedProgVec[i] = true;
       } else {
@@ -452,7 +435,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
         ResultDist res = createResultDist();
         res.stopDist = stopDist_Mapped(i);
         // std::cerr << res.stopDist << "\n";
-        for (int t = 0; t < prog_length; ++t) {
+        for (int t = 0; t < config.prog_length; ++t) {
           float pTarget = targetDist_Mapped(i, t);
 
           // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
@@ -518,7 +501,7 @@ Model::createStopResult() const {
 }
 
 ResultDist
-Model::createEmptyResult() const { return ResultDist(num_Rules, prog_length); }
+Model::createEmptyResult() const { return ResultDist(num_Rules, config.prog_length); }
 
 void
 ResultDist::print(std::ostream & out) const {

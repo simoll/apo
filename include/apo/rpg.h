@@ -3,6 +3,8 @@
 
 #include <random>
 #include "apo/program.h"
+#include <queue>
+#include "apo/ruleBook.h"
 
 namespace apo {
 
@@ -91,11 +93,12 @@ struct RPG {
     }
   }
 
-  RPG(const RuleVec & rules, int _numParams)
+  RPG(const RuleBook & ruleBook, int _numParams)
   : numParams(_numParams)
   {
     std::set<data_t> seen;
-    for (auto & rule : rules) {
+    // FIXME factor this out
+    for (auto & rule : ruleBook.rewritePairs) {
       collectConstants(rule.lhs, seen);
       collectConstants(rule.rhs, seen);
     }

@@ -7,6 +7,7 @@
 #include "apo/program.h"
 #include "apo/mutator.h"
 #include "apo/extmath.h"
+#include "apo/modelConfig.h"
 
 #include "apo/task.h"
 
@@ -63,12 +64,15 @@ class Model {
 
   // TODO read from shared config file
 public:
-  int infer_batch_size; // = 4;
-  int train_batch_size; // = 4;
-  int prog_length; // maximal program length
-  int num_Params; // = 5;
-  int max_Rules; //  maximal number of rules supported by model
+  // int infer_batch_size; // = 4;
+  // int train_batch_size; // = 4;
   int num_Rules; // number of active rules
+
+  // int prog_length; // maximal program length
+  // int num_Params; // = 5;
+  // int max_Rules; //  maximal number of rules supported by model
+  const ModelConfig & config;
+
   const int max_Operands = 2;
 
   int batch_train_steps; // number of updates per training
@@ -77,7 +81,7 @@ public:
   int encodeOperand(const Statement & stat, node_t opIdx) const;
   int encodeOpCode(const Statement & stat) const;
 
-  ResultDist createResultDist() { return ResultDist(num_Rules, prog_length); }
+  ResultDist createResultDist() { return ResultDist(num_Rules, config.prog_length); }
 
   // internal learning statistics
   struct Statistics {
@@ -90,7 +94,7 @@ public:
   void flush();
 
 public:
-  Model(const std::string & saverPrefix, const std::string & configFile, int num_Rules);
+  Model(const std::string & saverPrefix, const ModelConfig & _modelConfig, int num_Rules);
   ~Model();
 
   void loadCheckpoint(const std::string & checkPointFile);
@@ -128,26 +132,6 @@ public:
 
   // set learning rate
   void setLearningRate(float v);
-
-  int toActionID(const Rewrite rew) const {
-    int ruleEnumId = rew.getEnumId();
-    return rew.pc * num_Rules + ruleEnumId;
-  }
-
-  // translate flat actionId to Rewrite
-  Rewrite toRewrite(int actionId) const {
-    // decode ruleEnumId/pc
-    int ruleEnumId = actionId % num_Rules;
-    int pc = actionId / num_Rules;
-
-    // decode leftMatch / rid
-    int ruleId = ruleEnumId / 2;
-    bool ruleLeftMatch = (ruleEnumId % 2 == 1);
-
-    auto rew = Rewrite{pc, ruleId, ruleLeftMatch};
-    assert(toActionID(rew) == actionId);
-    return rew;
-  }
 
   static void shutdown();
 };

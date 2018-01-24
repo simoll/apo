@@ -1,5 +1,5 @@
-#ifndef APO_RULES_H
-#define APO_RULES_H
+#ifndef APO_REWRITING_H
+#define APO_REWRITING_H
 
 #include "apo/program.h"
 #include <vector>
@@ -9,7 +9,7 @@
 
 namespace apo {
 
-using NodeSet = llvm::SmallSet<int32_t, 8>;
+using NodeSet = llvm::SmallSet<node_t, 8>;
 
 static bool
 rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes) {
@@ -130,9 +130,10 @@ ErasePattern(Program & prog, int pc, const Program & pattern) {
 }
 
 
-struct Rule {
+struct RewritePair {
   Program lhs;
   Program rhs;
+  bool symmetric;
 
   bool isExpanding(bool leftMatch) const {
     return getMatchProg(leftMatch).size() < getRewriteProg(leftMatch).size();
@@ -156,9 +157,16 @@ struct Rule {
     if (matchLeft) return rhs; else return lhs;
   }
 
-  Rule(Program _lhs, Program _rhs)
+  RewritePair(Program _lhs, Program _rhs)
   : lhs(_lhs)
   , rhs(_rhs)
+  , symmetric(false)
+  {}
+
+  RewritePair(Program _lhs, Program _rhs, bool isSymmetric)
+  : lhs(_lhs)
+  , rhs(_rhs)
+  , symmetric(isSymmetric)
   {}
 
   bool match_ext(bool matchLeft, const Program & prog, int pc, NodeVec & holes, NodeSet & matchedNodes) const {
@@ -171,14 +179,18 @@ struct Rule {
   }
 
   void print(std::ostream & out) const {
-    out << "Rule [[ lhs = "; lhs.print(out);
+    out << "RewritePair " ;
+    if (symmetric) out << "S ";
+    out << "[[ lhs = "; lhs.print(out);
     out << "rhs = ";
     rhs.print(out);
     out << "]]\n";
   }
 
   void print(std::ostream & out, bool leftMatch) const {
-    out << "Rule [[ from = "; getMatchProg(leftMatch).print(out);
+    out << "RewritePair ";
+    if (symmetric) out << "S ";
+    out << "[[ from = "; getMatchProg(leftMatch).print(out);
     out << "to = ";
     getRewriteProg(leftMatch).print(out);
     out << "]]\n";
@@ -238,14 +250,14 @@ struct Rule {
   }
 };
 
-using RuleVec = std::vector<Rule>;
+using RewritePairVec = std::vector<RewritePair>;
 
 
 // create a basic rule set
 static
-RuleVec
-BuildRules() {
-  RuleVec rules;
+RewritePairVec
+BuildRewritePairs() {
+  RewritePairVec rules;
 
   // (%b + %a) - %b --> %a
   {
@@ -259,7 +271,8 @@ BuildRules() {
   for_such(IsCommutative, [&](OpCode oc){
     rules.emplace_back(
       Program(2, {Statement(oc, -1, -2), build_ret(0)}),
-      Program(2, {Statement(oc, -2, -1), build_ret(0)})
+      Program(2, {Statement(oc, -2, -1), build_ret(0)}),
+      true // symmetric
     );
   });
 
@@ -322,11 +335,7 @@ BuildRules() {
 
 
 
-// rewrite rule lhs -> rhs
-
-
-
 
 } // namespace apo
 
-#endif // APO_RULES_H
+#endif // APO_REWRITING_H
