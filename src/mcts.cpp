@@ -125,7 +125,7 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, RewriteAction &rewrite,
 
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const int maxDist) {
+                                      const IntVec & maxDistVec) {
   ProgramVec progVec = Clone(origProgVec);
 
   DerivationVec states(progVec.size());
@@ -138,7 +138,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 
   int frozen = 0;
   std::vector<bool> alreadyStopped(origProgVec.size(), false);
-  for (int derStep = 0; derStep < maxDist; ++derStep) {
+  for (int derStep = 0; frozen < progVec.size(); ++derStep) {
 
     // compute distribution
     ResultDistVec actionDistVec(progVec.size());
@@ -149,6 +149,13 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
     for (int t = 0; t < progVec.size(); ++t) {
       if (alreadyStopped[t])
         continue;
+
+      // exceed self inflicted derivation limit -> STOP here
+      if (derStep >= maxDistVec[t]) {
+        alreadyStopped[t] = true;
+        ++frozen;
+        continue;
+      }
 
       // fetch action
       RewriteAction rew;
@@ -167,7 +174,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
       }
 
       // STOP when signalled (or in last iteration)
-      if (signalsStop || derStep + 1 >= maxDist) {
+      if (signalsStop) {
         states[t] = currState;
         alreadyStopped[t] = true;
         ++frozen;
@@ -184,19 +191,19 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 // random trajectory based model (or uniform dist) sampling
 DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
                                                      const double pRandom,
-                                                     const int maxDist,
+                                                     const IntVec & maxDistVec,
                                                      const int numOptRounds,
                                                      bool allowFallback) {
   if (pRandom < 1.0)
-    return searchDerivations_ModelDriven(progVec, pRandom, maxDist,
+    return searchDerivations_ModelDriven(progVec, pRandom, maxDistVec,
                                          numOptRounds, allowFallback);
   else
-    return searchDerivations_Default(progVec, maxDist, numOptRounds);
+    return searchDerivations_Default(progVec, maxDistVec, numOptRounds);
 }
 
 // optimized version for model-based seaerch
 DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
-    const ProgramVec &progVec, const double pRandom, const int maxDist,
+    const ProgramVec &progVec, const double pRandom, const std::vector<int> & maxDistVec,
     const int numOptRounds, const bool useRandomFallback) {
   assert(pRandom < 1.0 && "use _Debug implementation instead");
 
@@ -216,6 +223,10 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
   Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
   handle.join();
 
+  // pre-compute maximal derivation distance
+  int commonMaxDist = 0;
+  for (int d : maxDistVec) commonMaxDist = std::max(commonMaxDist, d);
+
   // number of derivation walks
   for (int r = 0; r < numOptRounds; ++r) {
 
@@ -224,7 +235,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
     ResultDistVec modelRewriteDist = initialProgDist;
 
-    for (int derStep = 0; derStep < maxDist; ++derStep) {
+    for (int derStep = 0; derStep < commonMaxDist; ++derStep) {
 
       Task inferThread;
       for (int startIdx = 0; startIdx < numSamples;
@@ -260,6 +271,11 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
 #pragma omp parallel for reduction(+ : frozen)
         for (int t = startIdx; t < endIdx; ++t) {
+          // self inflicted timeout
+          if (derStep >= maxDistVec[t]) {
+            ++frozen;
+            continue;
+          }
           // freeze if derivation exceeds model
           if (roundProgs[t]->size() >= model.config.prog_length) {
             ++frozen;
@@ -356,7 +372,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 // search for a best derivation (best-reachable program (1.) through rewrites
 // with minimal derivation sequence (2.))
 DerivationVec MonteCarloOptimizer::searchDerivations_Default(
-    const ProgramVec &progVec, const int maxDist, const int numOptRounds) {
+    const ProgramVec &progVec, const std::vector<int> & maxDistVec, const int numOptRounds) {
   const int numSamples = progVec.size();
   std::uniform_real_distribution<float> ruleRand(0, 1);
 
@@ -377,17 +393,16 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
     // re-start from initial program
     ProgramVec roundProgs = Clone(progVec);
 
-    for (int derStep = 0; derStep < maxDist; ++derStep) {
-
-      // use cached probabilities if possible
-      int frozen = 0;
-
-#pragma omp parallel for reduction(+ : frozen)
-      for (int t = 0; t < numSamples; ++t) {
+    // use cached probabilities if possible
+#pragma omp parallel for
+    for (int t = 0; t < numSamples; ++t) {
+      bool keepGoing = true;
+      const int maxDist = maxDistVec[t];
+      for (int derStep = 0; derStep < maxDist && keepGoing; ++derStep) { // TODO track max distance per program
         // freeze if derivation exceeds model
         if (roundProgs[t]->size() >= model.config.prog_length) {
-          ++frozen;
-          continue;
+          keepGoing = false;
+          break;
         }
 
         IF_DEBUG_DER if (derStep == 0) {
@@ -406,18 +421,18 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
           std::cerr << "after random rewrite!\n";
           roundProgs[t]->dump();
         }
-        signalsStop = false;
+        signalsStop = false; // HACK to always keep going
 
         // don't step over STOP
         if (signalsStop) {
-          ++frozen;
-          continue;
+          keepGoing = false;
+          break;
         }
 
         // derived program to large for model -> freeze
         if (roundProgs[t]->size() > model.config.prog_length) {
-          ++frozen;
-          continue;
+          keepGoing = false;
+          break;
         }
 
         // Otw, update incumbent
@@ -427,10 +442,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
         if (thisDer.betterThan(states[t])) {
           states[t] = thisDer;
         }
-      }
-
-      if (frozen == numSamples) {
-        break; // all frozen -> early exit
       }
     }
   }
@@ -538,10 +549,14 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
 }
 
 // sample a target based on the reference distributions (discards STOP programs)
+
+// int sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ProgramVec & oProgs, IntVec & oMaxDer);
 int MonteCarloOptimizer::sampleActions(ResultDistVec &refResults,
                                        const CompactedRewrites &rewrites,
                                        const ProgramVec &nextProgs,
-                                       ProgramVec &oProgs) {
+                                       const IntVec & nextMaxDerVec,
+                                       ProgramVec &oProgs,
+                                       IntVec & oMaxDer) {
 #define IF_DEBUG_SAMPLE if (false)
   std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -595,7 +610,9 @@ int MonteCarloOptimizer::sampleActions(ResultDistVec &refResults,
         if ((rewrites[i].second == randomRew)) {
           assert(i < nextProgs.size());
           // actionProgs.push_back(nextProgs[i]);
-          oProgs[numGenerated++] = nextProgs[i];
+          int progIdx = numGenerated++;
+          oProgs[progIdx] = nextProgs[i];
+          oMaxDer[progIdx] = std::max(1, nextMaxDerVec[i] - 1); // carry on unless there is an explicit STOP
           hit = true;
           break;
         }

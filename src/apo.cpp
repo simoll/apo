@@ -43,8 +43,7 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   minStubLen = task.get_or_fail<int>("minStubLen"); // 3; // minimal progrm stub
                                                     // len (excluding params and
                                                     // return)
-  maxStubLen =
-      task.get_or_fail<int>("maxStubLen"); // 4; // maximal program
+  maxStubLen = task.get_or_fail<int>("maxStubLen"); // 4; // maximal program
                                            // stub len (excluding params
                                            // and return)
   minMutations = task.get_or_fail<int>(
@@ -53,25 +52,17 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
       "maxMutations"); // 1; // max number of program mutations
 
   // mc search options
-  maxExplorationDepth = task.get_or_fail<int>(
-      "maxExplorationDepth"); // maxMutations + 1; // best-effort search depth
-  pRandom = task.get_or_fail<double>(
-      "pRandom"); // 1.0; // probability of ignoring the model for inference
-  numOptRounds = task.get_or_fail<int>(
-      "numOptRounds"); // 50; // number of optimization retries
+  extraExplorationDepth = task.get_or_fail<int>("extraExplorationDepth"); // additional derivation steps beyond known number of mutations
+  maxExplorationDepth = task.get_or_fail<int>( "maxExplorationDepth"); // maxMutations + 1; // best-effort search depth
+  pRandom = task.get_or_fail<double>( "pRandom"); // 1.0; // probability of ignoring the model for inference
+  numOptRounds = task.get_or_fail<int>( "numOptRounds"); // 50; // number of optimization retries
+  numEvalOptRounds = task.get_or_fail<int>( "numEvalOptRounds"); // eval opt rounds used in evaluation
 
-  numEvalOptRounds = task.get_or_fail<int>(
-      "numEvalOptRounds"); // eval opt rounds used in evaluation
+  logRate = task.get_or_fail<int>( "logRate"); // 10; // number of round followed by an evaluation
+  numRounds = task.get_or_fail<size_t>( "numRounds"); // 10; // number of round followed by an evaluation
+  racketStartRound = task.get_or_fail<size_t>( "racketStartRound"); // 10; // number of round followed by an evaluation
 
-  logRate = task.get_or_fail<int>(
-      "logRate"); // 10; // number of round followed by an evaluation
-  numRounds = task.get_or_fail<size_t>(
-      "numRounds"); // 10; // number of round followed by an evaluation
-  racketStartRound = task.get_or_fail<size_t>(
-      "racketStartRound"); // 10; // number of round followed by an evaluation
-
-  saveCheckpoints = task.get_or_fail<int>("saveModel") !=
-                    0; // save model checkpoints at @logRate
+  saveCheckpoints = task.get_or_fail<int>("saveModel") != 0; // save model checkpoints at @logRate
 
   if (saveCheckpoints) {
     std::cerr << "Saving checkpoints to prefix " << cpPrefix << "\n";
@@ -81,22 +72,24 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   InitRandom();
 }
 
-void APO::generatePrograms(ProgramVec &progVec, size_t startIdx,
+void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, size_t startIdx,
                            size_t endIdx) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
   for (int i = startIdx; i < endIdx; ++i) {
     std::shared_ptr<Program> P = nullptr;
+    int mutSteps = 0;
     do {
       int stubLen = stubRand(randGen());
-      int mutSteps = mutRand(randGen());
+      mutSteps = mutRand(randGen());
       P.reset(rpg.generate(stubLen));
 
       assert(P->size() <= modelConfig.prog_length);
       expMut.mutate(*P, mutSteps); // mutate at least once
     } while (P->size() > modelConfig.prog_length);
 
+    maxDerVec[i] = std::min(mutSteps + extraExplorationDepth, maxExplorationDepth);
     progVec[i] = std::shared_ptr<Program>(P);
   }
 }
@@ -109,9 +102,10 @@ void APO::train() {
   std::cerr << "-- Buildling eval set (" << numEvalSamples << " samples, "
             << numEvalOptRounds << " optRounds) --\n";
   ProgramVec evalProgs(numEvalSamples, nullptr);
-  generatePrograms(evalProgs, 0, evalProgs.size());
+  IntVec evalDistVec(numEvalSamples, 0);
+  generatePrograms(evalProgs, evalDistVec, 0, evalProgs.size());
   auto refEvalDerVec = montOpt.searchDerivations(
-      evalProgs, 1.0, maxExplorationDepth, numEvalOptRounds, false);
+      evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
 
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();
@@ -126,12 +120,14 @@ void APO::train() {
 
   // Seed program generator
   ProgramVec progVec(numSamples, nullptr);
-  generatePrograms(progVec, 0, progVec.size());
+  IntVec maxDistVec(progVec.size(), 0);
+  generatePrograms(progVec, maxDistVec, 0, progVec.size());
 
   // TESTING
   // model.setLearningRate(0.0001); // works well
 
   clock_t roundTotal = 0;
+  clock_t derTotal = 0;
   size_t numTimedRounds = 0;
   std::cerr << "\n-- Training --\n";
   for (size_t g = 0; g < numRounds; ++g) {
@@ -144,10 +140,11 @@ void APO::train() {
         std::cerr << ") -\n";
       } else {
         // report round timing statistics
-        double avgRoundTime =
-            (roundTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
-        std::cerr << ", avgRoundTime=" << avgRoundTime << " s ) -\n";
+        double avgRoundTime = (roundTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
+        double avgDerTime = (derTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
+        std::cerr << ", avgRoundTime=" << avgRoundTime << " s, avgDerTime=" << avgDerTime << " s ) -\n";
         roundTotal = 0;
+        derTotal = 0;
         numTimedRounds = 0;
       }
 
@@ -162,11 +159,11 @@ void APO::train() {
       // model-guided sampling
       const int guidedSamples = 4;
       auto guidedEvalDerVec = montOpt.searchDerivations(
-          evalProgs, 0.0, maxExplorationDepth, guidedSamples, false);
+          evalProgs, 0.0, evalDistVec, guidedSamples, false);
 
       // greedy (most likely action)
       auto greedyDerVecs =
-          montOpt.greedyDerivation(evalProgs, maxExplorationDepth);
+          montOpt.greedyDerivation(evalProgs, evalDistVec);
 
       // DerStats oneShotStats = ScoreDerivations(refEvalDerVec,
       // oneShotEvalDerVec);
@@ -212,9 +209,11 @@ void APO::train() {
     // compute all one-step derivations
     std::vector<std::pair<int, RewriteAction>> rewrites;
     ProgramVec nextProgs;
+    IntVec nextMaxDistVec;
     const int preAllocFactor = 16;
     rewrites.reserve(preAllocFactor * progVec.size());
     nextProgs.reserve(preAllocFactor * progVec.size());
+    nextMaxDistVec.reserve(preAllocFactor * progVec.size());
 
     // #pragma omp parallel for ordered
     for (int t = 0; t < progVec.size(); ++t) {
@@ -233,6 +232,8 @@ void APO::train() {
           // compact list of programs resulting from a single action
           // #pragma omp ordered
           {
+            int remainingSteps = std::max(1, maxDistVec[t] - 1);
+            nextMaxDistVec.push_back(remainingSteps);
             nextProgs.emplace_back(clonedProg);
             rewrites.emplace_back(t, act);
           }
@@ -240,21 +241,23 @@ void APO::train() {
       }
     }
 
+    clock_t startDer = clock();
     // best-effort search for optimal program
     auto refDerVec = montOpt.searchDerivations(
-        nextProgs, pRandom, maxExplorationDepth, numOptRounds, false);
+        nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
 
     if (g >= racketStartRound) {
       // model-driven search
       auto guidedDerVec = montOpt.searchDerivations(
-          nextProgs, 0.1, maxExplorationDepth, 4, true);
+          nextProgs, 0.1, nextMaxDistVec, 4, true);
       refDerVec = FilterBest(refDerVec, guidedDerVec);
     }
+    clock_t endDer = clock();
+    derTotal += (endDer - startDer);
 
     // decode reference ResultDistVec from detected derivations
     ResultDistVec refResults;
-    montOpt.populateRefResults(refResults, refDerVec, rewrites, nextProgs,
-                               progVec);
+    montOpt.populateRefResults(refResults, refDerVec, rewrites, nextProgs, progVec);
 
     // train model
     Model::Losses L;
@@ -263,11 +266,11 @@ void APO::train() {
 
     // pick an action per program and drop STOP-ped programs
     int numNextProgs =
-        montOpt.sampleActions(refResults, rewrites, nextProgs, progVec);
+        montOpt.sampleActions(refResults, rewrites, nextProgs, nextMaxDistVec, progVec, maxDistVec);
     double dropOutRate = 1.0 - numNextProgs / (double)numSamples;
 
     // fill up with new programs
-    generatePrograms(progVec, numNextProgs, numSamples);
+    generatePrograms(progVec, maxDistVec, numNextProgs, numSamples);
     auto endRound = clock();
 
     // statistics

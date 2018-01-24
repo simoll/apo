@@ -15,6 +15,8 @@
 
 namespace apo {
 
+using IntVec = std::vector<int>;
+
 int GetProgramScore(const Program &P);
 
 struct Derivation {
@@ -99,19 +101,19 @@ struct MonteCarloOptimizer {
   };
 
   GreedyResult
-  greedyDerivation(const ProgramVec & origProgVec, const int maxDist);
+  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec);
 
   // random trajectory based model (or uniform dist) sampling
   DerivationVec
-  searchDerivations(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds, bool allowFallback);
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback);
 
   // optimized version for model-based seaerch
   DerivationVec
-  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const int maxDist, const int numOptRounds, const bool useRandomFallback);
+  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback);
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec
-  searchDerivations_Default(const ProgramVec & progVec, const int maxDist, const int numOptRounds);
+  searchDerivations_Default(const ProgramVec & progVec, const IntVec & maxDist, const int numOptRounds);
 
   using CompactedRewrites = const std::vector<std::pair<int, RewriteAction>>;
 
@@ -121,8 +123,7 @@ struct MonteCarloOptimizer {
   void
   populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const ProgramVec & progVec) const;
   // sample a target based on the reference distributions (discards STOP programs)
-  int
-  sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, ProgramVec & oProgs);
+  int sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ProgramVec & oProgs, IntVec & oMaxDer);
 
 #undef IF_DEBUG_MV
 };

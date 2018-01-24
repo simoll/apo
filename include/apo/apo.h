@@ -54,7 +54,8 @@ struct APO {
   static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
 
 // mc search options
-  int maxExplorationDepth; //maxMutations + 1; // best-effort search depth
+  int extraExplorationDepth; // number of derivation steps beyond applied number of mutations
+  int maxExplorationDepth; // maximal exploration depth in any case
   double pRandom; //1.0; // probability of ignoring the model for inference
   int numOptRounds; //50; // number of optimization retries
   int numEvalOptRounds; //50; // number of optimization retries
@@ -73,7 +74,7 @@ struct APO {
   APO(const std::string & taskFile, const std::string & _cpPrefix);
 
   void
-  generatePrograms(ProgramVec & progVec, size_t startIdx, size_t endIdx);
+  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, size_t startIdx, size_t endIdx);
 
   void train();
 };
