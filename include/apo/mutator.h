@@ -105,13 +105,15 @@ struct Mutator {
   void mutate(Program & P, int steps, std::function<void(int pc, int pairId, bool leftMatch, const Program & P)> handler) const {
     if (steps <= 0) return;
 
+    std::uniform_real_distribution<float> shrinkRand(0, 1);
+    std::uniform_int_distribution<int> ruleRand(0, rewritePairs.size() - 1);
+
     for (int i = 0; i < steps; ) {
       // pick a random pc
       std::uniform_int_distribution<int> pcRand(0, P.size() - 2); // don't allow return rewrites
       int pc = pcRand(randGen());
 
       // pick a random rule
-      std::uniform_real_distribution<float> shrinkRand(0, 1);
       bool expandingMatch = shrinkRand(randGen()) < pExpand;
 
       std::uniform_int_distribution<int> flipRand(0, 1);
@@ -137,7 +139,6 @@ struct Mutator {
       if (!hasMatch) continue;
 
       // number of applicable rewritePairs to skip
-      std::uniform_int_distribution<int> ruleRand(0, rewritePairs.size() - 1);
       int numSkips = ruleRand(randGen());
 
       NodeSet matchedNodes;

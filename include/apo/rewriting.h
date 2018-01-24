@@ -12,7 +12,7 @@ namespace apo {
 using NodeSet = llvm::SmallSet<node_t, 8>;
 
 static bool
-rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes) {
+rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patternPc, NodeVec & holes, std::vector<bool> & defined, NodeSet & nodes, int & oMinMatched) {
   // matching a pattern hole
   if (IsArgument(patternPc)) {
     int holeIdx = GetHoleIndex(patternPc);
@@ -33,6 +33,7 @@ rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patt
 
   } else {
     nodes.insert(pc); // keep track of matched nodes
+    oMinMatched = std::min(oMinMatched, pc);
 
     OpCode oc = prog.code[pc].oc;
     if (oc != pattern.code[patternPc].oc) return false;
@@ -43,7 +44,7 @@ rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patt
     } else {
       // generic statement matching
       for (int i = 0; i < 2; ++i) {
-        if (!rec_MatchPattern(prog, prog.code[pc].getOperand(i), pattern, pattern.code[patternPc].getOperand(i), holes, defined, nodes)) return false;
+        if (!rec_MatchPattern(prog, prog.code[pc].getOperand(i), pattern, pattern.code[patternPc].getOperand(i), holes, defined, nodes, oMinMatched)) return false;
       }
       return true;
     }
@@ -60,18 +61,21 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, NodeVec & ho
   std::vector<bool> defined(pattern.numParams, false);
   // match the pattern
   int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
-  bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, matchedNodes);
+  int minMatchedNode = std::numeric_limits<int>::max(); // minimal node in set
+  bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, matchedNodes, minMatchedNode);
   if (Verbose) {
     std::cerr << "op match: " << ok << "\n";
   }
 
   // make sure that holes do not refer to nodes that are part of the match
   for (int i = 0; i < pattern.num_Params(); ++i) {
-    if (IsStatement(holes[i]) && matchedNodes.count(holes[i])) { ok = false; break; }
+    if (!IsStatement(holes[i])) continue;
+    if (holes[i] < minMatchedNode) continue; // below matched nodes
+    if (matchedNodes.count(holes[i])) { ok = false; break; }
   }
 
   // verify that there is no user of a matched node (except for the root)
-  for (int i = 0; ok && (i < prog.size()); ++i) {
+  for (int i = minMatchedNode + 1; ok && (i < prog.size()); ++i) {
     if (!prog.code[i].isOperator()) continue;
 
     for (int o = 0; ok && (o < prog.code[i].num_Operands()); ++o) {
