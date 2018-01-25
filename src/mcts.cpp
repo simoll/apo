@@ -52,7 +52,7 @@ MonteCarloOptimizer::Stats::print(std::ostream &out) const {
 
 
 bool
-MonteCarloOptimizer::greedyApplyModel(Program &P, RewriteAction &rew,
+MonteCarloOptimizer::greedyApplyModel(Program &P, Action &rew,
                                            ResultDist &res, bool &signalsStop) {
   std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -89,7 +89,7 @@ MonteCarloOptimizer::greedyApplyModel(Program &P, RewriteAction &rew,
   return success;
 }
 
-bool MonteCarloOptimizer::tryApplyModel(Program &P, RewriteAction &rewrite,
+bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
                                         ResultDist &res, bool &signalsStop) {
   // sample a random rewrite at a random location (product of rule and target
   // distributions)
@@ -104,7 +104,7 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, RewriteAction &rewrite,
   size_t keepGoing = 2;
   int targetId, ruleId;
   bool validPc;
-  RewriteAction rew;
+  Action rew;
   do {
     // which rule to apply?
     int actionId = SampleCategoryDistribution(res.actionDist, pRand(randGen()));
@@ -158,7 +158,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
       }
 
       // fetch action
-      RewriteAction rew;
+      Action rew;
       bool signalsStop = false;
       greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
       if (progVec[t]->size() > model.config.prog_length) {
@@ -288,7 +288,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
           }
 
           // pick & apply a rewrite
-          RewriteAction rewrite;
+          Action rewrite;
           bool success = false;
           bool signalsStop = false;
 
@@ -411,7 +411,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
         }
 
         // pick & apply a rewrite
-        RewriteAction rewrite;
+        Action rewrite;
         bool signalsStop = false;
 
         // loop until rewrite succeeds (or stop)
@@ -598,7 +598,7 @@ int MonteCarloOptimizer::sampleActions(ResultDistVec &refResults,
       // try to apply the action
       int actionId = SampleCategoryDistribution(refResults[s].actionDist,
                                                 pRand(randGen()));
-      RewriteAction randomRew = ruleBook.toRewriteAction(actionId);
+      Action randomRew = ruleBook.toRewriteAction(actionId);
       IF_DEBUG_SAMPLE {
         std::cerr << "PICK: ";
         randomRew.print(std::cerr) << "\n";

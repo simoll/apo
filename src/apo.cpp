@@ -28,7 +28,7 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
     , ruleBook(modelConfig, rewritePairs)
     , model("build/rdn", modelConfig, ruleBook.num_Rules())
     , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params),
-      expMut(rewritePairs)
+      expMut(ruleBook)
 {
   std::cerr << "Loading task file " << taskFile << "\n";
 
@@ -131,7 +131,7 @@ void APO::train() {
   size_t numTimedRounds = 0;
   std::cerr << "\n-- Training --\n";
   for (size_t g = 0; g < numRounds; ++g) {
-    bool loggedRound = g % logRate == 0;
+    bool loggedRound = (g % logRate == 0) && g > 0;
     if (loggedRound) {
       auto stats = model.query_stats();
       std::cerr << "\n- Round " << g << " (";
@@ -207,7 +207,7 @@ void APO::train() {
     clock_t startRound = clock();
 
     // compute all one-step derivations
-    std::vector<std::pair<int, RewriteAction>> rewrites;
+    std::vector<std::pair<int, Action>> rewrites;
     ProgramVec nextProgs;
     IntVec nextMaxDistVec;
     const int preAllocFactor = 16;
@@ -218,9 +218,9 @@ void APO::train() {
     // #pragma omp parallel for ordered
     for (int t = 0; t < progVec.size(); ++t) {
       for (int r = 0; r < ruleBook.num_Rules(); ++r) {
-        RewriteRule rewRule = ruleBook.getRewriteRule(r);
-        for (int pc = 0; pc + 1 < progVec[t]->size(); ++pc) {
-          RewriteAction act(pc, rewRule.pairId, rewRule.leftToRight);
+        const int progSize= progVec[t]->size();
+        for (int pc = 0; pc + 1 < progSize ; ++pc) {
+          Action act{pc, r};
 
           auto *clonedProg = new Program(*progVec[t]);
           if (!expMut.tryApply(*clonedProg, act)) {

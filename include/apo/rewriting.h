@@ -61,7 +61,7 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, NodeVec & ho
   std::vector<bool> defined(pattern.numParams, false);
   // match the pattern
   int retIndex = pattern.code[pattern.size() - 1].getOperand(0);
-  int minMatchedNode = std::numeric_limits<int>::max(); // minimal node in set
+  int minMatchedNode = pc; // (minimally the match root itself)
   bool ok = rec_MatchPattern(prog, pc, pattern, retIndex, holes, defined, matchedNodes, minMatchedNode);
   if (Verbose) {
     std::cerr << "op match: " << ok << "\n";

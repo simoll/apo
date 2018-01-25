@@ -86,14 +86,14 @@ struct MonteCarloOptimizer {
   , ruleBook(_ruleBook)
   , model(_model)
   , maxGenLen(model.config.prog_length - model.config.num_Params - 1)
-  , mut(ruleBook.rewritePairs) // greedy shrinking mutator
+  , mut(ruleBook) // greedy shrinking mutator
   {}
 
   bool
-  greedyApplyModel(Program & P, RewriteAction & rew, ResultDist & res, bool & signalsStop);
+  greedyApplyModel(Program & P, Action & rew, ResultDist & res, bool & signalsStop);
 
   bool
-  tryApplyModel(Program & P, RewriteAction & rewrite, ResultDist & res, bool & signalsStop);
+  tryApplyModel(Program & P, Action & rewrite, ResultDist & res, bool & signalsStop);
 
   // run greedy model based derivation
   struct GreedyResult {
@@ -116,7 +116,7 @@ struct MonteCarloOptimizer {
   DerivationVec
   searchDerivations_Default(const ProgramVec & progVec, const IntVec & maxDist, const int numOptRounds);
 
-  using CompactedRewrites = const std::vector<std::pair<int, RewriteAction>>;
+  using CompactedRewrites = const std::vector<std::pair<int, Action>>;
 
   // convert detected derivations to refernce distributions
   void

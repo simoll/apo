@@ -4,12 +4,23 @@
 #include "apo/rewriting.h"
 #include "apo/modelConfig.h"
 
+#include <unordered_set>
+#include <unordered_map>
+
 namespace apo {
 
 // generic action wrapper
 struct Action {
   int pc;
   int ruleId;
+
+  std::ostream & print(std::ostream& out) {
+    out << "Action (pc=" << pc << ", ruleId=" << ruleId << ")"; return out;
+  }
+
+  bool operator==(const Action & O) const {
+    return O.pc == pc && O.ruleId == ruleId;
+  }
 };
 
 // rule wrapper for RewritePairs
@@ -24,22 +35,26 @@ struct RewriteRule {
 struct RuleBook {
   const RewritePairVec & rewritePairs;
   std::vector<RewriteRule> rewriteRuleVec;
-  std::unordered_map<unsigned, int> rewriteRuleIndex;
+  std::vector<int> rewriteRuleIndex;
 
-  static int GetRewriteRuleKey(int pairId, bool leftMatch) {
+  static inline int GetRewriteRuleKey(int pairId, bool leftMatch) {
     return (((unsigned) pairId) << 1) | (leftMatch ? 1 : 0);
   }
 
   inline int searchRewriteRuleIndex(int pairId, bool leftMatch) const {
-    auto it = rewriteRuleIndex.find(GetRewriteRuleKey(pairId, leftMatch));
-    assert(it != rewriteRuleIndex.end());
-    return it->second;
+    int key = GetRewriteRuleKey(pairId, leftMatch);
+    assert(0 <= key && key < rewriteRuleIndex.size());
+    int ruleId = rewriteRuleIndex[key];
+    assert(0 <= ruleId && ruleId < rewritePairs.size());
+    return ruleId;
   }
 
   ModelConfig config;
 
   RuleBook(ModelConfig modelConfig, const RewritePairVec & _rewritePairs)
   : rewritePairs(_rewritePairs)
+  , rewriteRuleIndex(rewritePairs.size() * 2, -1) // initialize to poison value
+  , rewriteRuleVec()
   , config(modelConfig)
   {
     for (int i = 0; i < rewritePairs.size(); ++i) {
@@ -53,7 +68,7 @@ struct RuleBook {
     }
   }
 
-  const RewriteRule & getRewriteRule(int ruleId) const { return rewriteRuleVec[ruleId]; }
+  inline const RewriteRule & getRewriteRule(int ruleId) const { return rewriteRuleVec[ruleId]; }
   decltype(rewriteRuleVec.cbegin()) begin() const { return rewriteRuleVec.begin(); }
   decltype(rewriteRuleVec.cend()) end() const { return rewriteRuleVec.end(); }
 
@@ -61,26 +76,48 @@ struct RuleBook {
   int num_Rules() const { return rewriteRuleVec.size(); }
 
   // translate rewrite action to a flat moveID
-  int toActionID(const RewriteAction rew) const {
-    int ruleId = searchRewriteRuleIndex(rew.pairId, rew.leftMatch);
-    return num_Rules() * rew.pc + ruleId;
+  int toActionID(const Action rew) const {
+    return num_Rules() * rew.pc + rew.ruleId;
   }
 
   // only support rewrite actions atm
   bool isRewriteAction(int actionId) const { return true; }
 
   // translate flat moveId to RewriteActions
-  RewriteAction toRewriteAction(int actionId) const {
+  Action toRewriteAction(int actionId) const {
     // decode ruleEnumId/pc
     int ruleId = actionId % num_Rules();
     int pc = actionId / num_Rules();
 
-    const int pairId = rewriteRuleVec[ruleId].pairId;
-    const bool leftMatch = rewriteRuleVec[ruleId].leftToRight;
-
-    auto rew = RewriteAction{pc, pairId, leftMatch};
+    auto rew = Action{pc, ruleId};
     assert(toActionID(rew) == actionId);
     return rew;
+  }
+
+  // RewriteAction wrapping layer
+  inline bool isExpanding(const RewriteRule & rewRule) const {
+    return rewritePairs[rewRule.pairId].isExpanding(rewRule.leftToRight);
+  }
+
+  inline bool matchRule(const RewriteRule & rewRule, const Program & P, int pc, NodeVec &holes) const {
+    NodeSet dummy;
+    return matchRule_ext(rewRule, P, pc, holes, dummy);
+  }
+
+  inline bool matchRule_ext(const RewriteRule & rewRule, const Program & P, int pc, NodeVec & holes, NodeSet & matchedNodes) const {
+    return rewritePairs[rewRule.pairId].match_ext(rewRule.leftToRight, P, pc, holes, matchedNodes);
+  }
+
+  inline void transform(const RewriteRule & rewRule, Program & P, int pc, NodeVec & holes) const {
+    return rewritePairs[rewRule.pairId].rewrite(rewRule.leftToRight, P, pc, holes);
+  }
+
+  inline int getLeftHandHoles(const RewriteRule & rewRule) const {
+    return rewritePairs[rewRule.pairId].getMatchProg(rewRule.leftToRight).num_Params();
+  }
+
+  inline int getRightHandHoles(const RewriteRule & rewRule) const {
+    return rewritePairs[rewRule.pairId].getRewriteProg(rewRule.leftToRight).num_Params();
   }
 };
 
