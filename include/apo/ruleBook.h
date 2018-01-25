@@ -35,25 +35,11 @@ struct RewriteRule {
 struct RuleBook {
   const RewritePairVec & rewritePairs;
   std::vector<RewriteRule> rewriteRuleVec;
-  std::vector<int> rewriteRuleIndex;
-
-  static inline int GetRewriteRuleKey(int pairId, bool leftMatch) {
-    return (((unsigned) pairId) << 1) | (leftMatch ? 1 : 0);
-  }
-
-  inline int searchRewriteRuleIndex(int pairId, bool leftMatch) const {
-    int key = GetRewriteRuleKey(pairId, leftMatch);
-    assert(0 <= key && key < rewriteRuleIndex.size());
-    int ruleId = rewriteRuleIndex[key];
-    assert(0 <= ruleId && ruleId < rewritePairs.size());
-    return ruleId;
-  }
 
   ModelConfig config;
 
   RuleBook(ModelConfig modelConfig, const RewritePairVec & _rewritePairs)
   : rewritePairs(_rewritePairs)
-  , rewriteRuleIndex(rewritePairs.size() * 2, -1) // initialize to poison value
   , rewriteRuleVec()
   , config(modelConfig)
   {
@@ -63,7 +49,6 @@ struct RuleBook {
         bool leftToRight = !(bool) j; // default to lhs -> rhs
         int ruleId = rewriteRuleVec.size();
         rewriteRuleVec.emplace_back(i, leftToRight);
-        rewriteRuleIndex[GetRewriteRuleKey(i, leftToRight)] = ruleId;
       }
     }
   }

@@ -131,7 +131,7 @@ void APO::train() {
   size_t numTimedRounds = 0;
   std::cerr << "\n-- Training --\n";
   for (size_t g = 0; g < numRounds; ++g) {
-    bool loggedRound = (g % logRate == 0) && g > 0;
+    bool loggedRound = (g % logRate == 0);
     if (loggedRound) {
       auto stats = model.query_stats();
       std::cerr << "\n- Round " << g << " (";
