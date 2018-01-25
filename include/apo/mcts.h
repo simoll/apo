@@ -76,6 +76,7 @@ struct MonteCarloOptimizer {
 
   int maxGenLen;
   Mutator mut;
+  const float pSearchExpand = 0.1; // expanding rule probability
   const float stopThreshold = 0.8;
 
   const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
@@ -85,7 +86,7 @@ struct MonteCarloOptimizer {
   , ruleBook(_ruleBook)
   , model(_model)
   , maxGenLen(model.config.prog_length - model.config.num_Params - 1)
-  , mut(ruleBook.rewritePairs, 0.1) // greedy shrinking mutator
+  , mut(ruleBook.rewritePairs) // greedy shrinking mutator
   {}
 
   bool

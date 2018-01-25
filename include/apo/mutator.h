@@ -32,21 +32,19 @@ struct RewriteAction {
 
 struct Mutator {
   const RewritePairVec & rewritePairs;
-  const float pExpand;
 
-  Mutator(const RewritePairVec & _rewritePairs, float _pExpand=0.5)
+  Mutator(const RewritePairVec & _rewritePairs)
   : rewritePairs(_rewritePairs)
-  , pExpand(_pExpand)
   {}
 
   RewriteAction
-  mutate(Program & P, int steps) const {
+  mutate(Program & P, int steps, float pExpand) const {
     RewriteAction mut;
     auto handler=[&mut](int pc, int pairId, bool leftMatch, const Program & P) {
       mut.pc = pc, mut.pairId = pairId; mut.leftMatch = leftMatch;
     };
 
-    mutate(P, steps, handler);
+    mutate(P, steps, pExpand, handler);
 
     return mut;
   }
@@ -102,7 +100,7 @@ struct Mutator {
   }
 
   // apply a random mutating rewrite
-  void mutate(Program & P, int steps, std::function<void(int pc, int pairId, bool leftMatch, const Program & P)> handler) const {
+  void mutate(Program & P, int steps, float pExpand, std::function<void(int pc, int pairId, bool leftMatch, const Program & P)> handler) const {
     if (steps <= 0) return;
 
     std::uniform_real_distribution<float> shrinkRand(0, 1);

@@ -28,7 +28,7 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
     , ruleBook(modelConfig, rewritePairs)
     , model("build/rdn", modelConfig, ruleBook.num_Rules())
     , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params),
-      expMut(rewritePairs, pExpand)
+      expMut(rewritePairs)
 {
   std::cerr << "Loading task file " << taskFile << "\n";
 
@@ -86,7 +86,7 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, size_t start
       P.reset(rpg.generate(stubLen));
 
       assert(P->size() <= modelConfig.prog_length);
-      expMut.mutate(*P, mutSteps); // mutate at least once
+      expMut.mutate(*P, mutSteps, pGenExpand); // mutate at least once
     } while (P->size() > modelConfig.prog_length);
 
     maxDerVec[i] = std::min(mutSteps + extraExplorationDepth, maxExplorationDepth);
@@ -131,7 +131,7 @@ void APO::train() {
   size_t numTimedRounds = 0;
   std::cerr << "\n-- Training --\n";
   for (size_t g = 0; g < numRounds; ++g) {
-    bool loggedRound = (g % logRate == 0);
+    bool loggedRound = g % logRate == 0;
     if (loggedRound) {
       auto stats = model.query_stats();
       std::cerr << "\n- Round " << g << " (";

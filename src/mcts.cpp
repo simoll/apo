@@ -325,7 +325,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
           // uniform random mutation
           if (uniRule) {
-            rewrite = mut.mutate(*roundProgs[t], 1);
+            rewrite = mut.mutate(*roundProgs[t], 1, pSearchExpand);
             IF_DEBUG_DER {
               std::cerr << "after random rewrite!\n";
               roundProgs[t]->dump();
@@ -416,7 +416,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
 
         // loop until rewrite succeeds (or stop)
         // uniform random rewrite
-        rewrite = mut.mutate(*roundProgs[t], 1);
+        rewrite = mut.mutate(*roundProgs[t], 1, pSearchExpand);
         IF_DEBUG_DER {
           std::cerr << "after random rewrite!\n";
           roundProgs[t]->dump();

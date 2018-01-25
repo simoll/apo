@@ -51,7 +51,7 @@ struct APO {
   int maxStubLen; //4; // maximal program stub len (excluding params and return)
   int minMutations;// 1; // max number of program mutations
   int maxMutations;// 1; // max number of program mutations
-  static constexpr double pExpand = 0.7; //0.7; // mutator expansion ratio
+  static constexpr double pGenExpand = 0.7; //0.7; // mutator expansion ratio
 
 // mc search options
   int extraExplorationDepth; // number of derivation steps beyond applied number of mutations
