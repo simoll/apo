@@ -64,6 +64,14 @@ Model::init_tflow() {
   return 0;
 }
 
+void
+Model::shutdown() {
+  if (!initialized) return;
+  session->Close();
+  session = nullptr;
+  initialized = false;
+}
+
 Model::~Model() {
   // wait until workerThread frees lock
   Mutex_guard guard(modelMutex);
@@ -168,13 +176,6 @@ Model::saveCheckpoint(const std::string & checkPointFile) {
   }
 }
 
-void
-Model::shutdown() {
-  if (!initialized) return;
-  session->Close();
-  session = nullptr;
-  initialized = false;
-}
 
 int
 Model::translateOperand(node_t idx) const {
@@ -293,6 +294,16 @@ struct Batch {
     }
   }
 
+  void print(std::ostream& out) const {
+    out << "oc_feed:\n" << oc_feed.tensor<int, 2>() << "\n"
+        << "firstOp_feed:\n" << firstOp_feed.tensor<int, 2>() << "\n"
+        << "sndOp_feed:\n" << sndOp_feed.tensor<int, 2>() << "\n"
+        << "length_feed:\n" << length_feed.tensor<int, 1>() << "\n"
+        << "stop_feed:\n" << stop_feed.tensor<float, 1>() << "\n"
+        << "target_feed:\n" << target_feed.tensor<float, 2>() << "\n"
+        << "action_feed:\n" << action_feed.tensor<float, 3>() << "\n";
+  }
+
   FeedDict
   buildFeed() {
     FeedDict dict = {
@@ -308,9 +319,11 @@ struct Batch {
   }
 };
 
+#define IF_DEBUG_TRAIN if (true)
 // train model on a batch of programs (returns loss)
 Task
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
+  IF_DEBUG_TRAIN std::cerr << "ml::train_dist\n";
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
   assert((num_Samples % config.train_batch_size == 0) && "TODO implement varying sized training");
@@ -320,7 +333,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
   // encode programs in current thread
   for (int s = 0; s + config.train_batch_size - 1 < num_Samples; s += config.train_batch_size) {
     Batch batch(*this, config.train_batch_size);
-    #pragma omp parallel for shared(batch,progs)
+    // #pragma omp parallel for shared(batch,progs)
     for (int i = 0; i < config.train_batch_size; ++i) {
       const Program & P = *progs[s + i];
       batch.encode_Program(i, P);
@@ -335,11 +348,12 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
     Losses L{0.0, 0.0, 0.0};
 
     for (Batch & batch : *batchVec) {
+      IF_DEBUG_TRAIN batch.print(std::cerr);
       // The session will initialize the outputs
       std::vector<tensorflow::Tensor> outputs;
 
       // std::cout << " Training on batch " << s << "\n";
-      for (int i = 0; i < batch_train_steps; ++i) {
+      for (int i = 0; i < config.batch_train_steps; ++i) {
         outputs.clear();
         TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
@@ -371,14 +385,17 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
 
   return workerThread;
 }
+#undef IF_DEBUG_TRAIN
 
 void
 Model::flush() {
   Mutex_guard guard(modelMutex);
 }
 
+#define IF_DEBUG_INFER if (false)
 Task
 Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
+  IF_DEBUG_INFER { std::cerr << "ml::infer_dist start=" << startIdx << ", end=" << endIdx << "\n"; }
   Program emptyP(config.num_Params, {}); // the empty program
 
   auto batchVec = new std::vector<Batch>();
@@ -390,7 +407,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     Batch batch(*this, batch_size);
 
     std::vector<bool> skippedProgVec(progs.size(), false);
-    #pragma omp parallel for shared(batch, skippedProgVec, allEmpty)
+    // #pragma omp parallel for shared(batch, skippedProgVec, allEmpty)
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > config.prog_length) {
@@ -417,6 +434,8 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     Mutex_guard guard(modelMutex);
 
     for (auto & batch : *batchVec) {
+
+      IF_DEBUG_INFER batch.print(std::cerr);
       // The session will initialize the outputs
       std::vector<tensorflow::Tensor> outputs;
       TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
@@ -458,6 +477,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
 
   return workerThread;
 }
+#undef IF_DEBUG_INFER
 
 // set learning rate
 void

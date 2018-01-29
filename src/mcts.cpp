@@ -6,6 +6,8 @@
 #include <iomanip>
 #include <iostream>
 
+#define IF_DEBUG_MC if (false)
+
 namespace apo {
 
 int GetProgramScore(const Program &P) { return P.size(); }
@@ -38,7 +40,6 @@ bool Derivation::operator!=(const Derivation &o) const { return !(*this == o); }
 // optimize the given program @P using @model (or a uniform random rule
 // application using @maxDist) maximal derivation length is @maxDist will return
 // the sequence to the best-seen program (even if the model decides to go on)
-#define IF_DEBUG_MC if (false)
 
 std::ostream &
 MonteCarloOptimizer::Stats::print(std::ostream &out) const {
@@ -646,7 +647,11 @@ int MonteCarloOptimizer::sampleActions(ResultDistVec &refResults,
   return numGenerated;
 }
 
-#undef IF_DEBUG_MV
+#undef IF_DEBUG_MC
+
+
+
+
 
 void DerStats::print(std::ostream &out) const {
   std::streamsize ss = out.precision();

@@ -37,19 +37,12 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   taskName = task.get_or_fail<std::string>(
       "name"); // 3; // minimal progrm stub len (excluding params and return)
 
-  numSamples = task.get_or_fail<int>("numSamples"); // 3; // minimal progrm stub
-                                                    // len (excluding params and
-                                                    // return
-  minStubLen = task.get_or_fail<int>("minStubLen"); // 3; // minimal progrm stub
-                                                    // len (excluding params and
-                                                    // return)
-  maxStubLen = task.get_or_fail<int>("maxStubLen"); // 4; // maximal program
-                                           // stub len (excluding params
-                                           // and return)
-  minMutations = task.get_or_fail<int>(
-      "minMutations"); // 1; // max number of program mutations
-  maxMutations = task.get_or_fail<int>(
-      "maxMutations"); // 1; // max number of program mutations
+  numSamples = task.get_or_fail<int>("numSamples"); // number of batch programs
+  assert(numSamples > 0);
+  minStubLen = task.get_or_fail<int>("minStubLen"); // minimal stub len
+  maxStubLen = task.get_or_fail<int>("maxStubLen"); // maximal stub len (exluding params and return)
+  minMutations = task.get_or_fail<int>( "minMutations"); // minimal number of mutations
+  maxMutations = task.get_or_fail<int>( "maxMutations"); // maximal number of mutations
 
   // mc search options
   extraExplorationDepth = task.get_or_fail<int>("extraExplorationDepth"); // additional derivation steps beyond known number of mutations
