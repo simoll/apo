@@ -15,13 +15,15 @@ INC=-Isrc/ \
     -I${TFLOW}/include/external/nsync/public \
     -I$(TFLOW)/tensorflow/contrib/makefile/downloads/protobuf/src
 
-LIBS=-ltensorflow_framework \
-    $(TFLOW)/python/_pywrap_tensorflow_internal.so \
-    $(TFLOW)/python/framework/fast_tensor_util.so \
-    $(TFLOW)/contrib/rnn/python/ops/_lstm_ops.so \
-    -lpython3 \
-    -lpthread
+LIBS=-ltensorflow \
+     -ltensorflow_framework \
+     $(TFLOW)/contrib/rnn/python/ops/_lstm_ops.so \
+     -lpthread
+
 LIBPATH=-L${TFLOW}
+
+
+
 
 # enable TensorFlow on the GPU
 # APO_ENABLE_CUDA:=1
