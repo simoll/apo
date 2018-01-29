@@ -1,6 +1,78 @@
 #include "apo/apo.h"
 
+#include <random>
+#include <limits>
+
 namespace apo {
+
+struct
+TrainingCache {
+  std::uniform_real_distribution<float> dropRand;
+  std::uniform_int_distribution<int> elemRand;
+
+  struct CachedSample {
+    int numDrawn;               // how often was this sample drawn
+    ProgramPtr P;
+    Derivation bestKnownDer;    // best known derivation
+
+    CachedSample(ProgramPtr  _P, Derivation _bestDer)
+    : numDrawn(0)
+    , P(_P)
+    , bestKnownDer(_bestDer)
+    {}
+  };
+
+  std::vector<CachedSample> samples;
+
+  TrainingCache()
+  : dropRand(0, 1)
+  , elemRand(0, std::numeric_limits<int>::max())
+  , samples()
+  {}
+
+  // drop old samples (dropBase ^ sample.numDrawn)
+  void
+  reviseSampleCache() {
+    const float dropBase = 0.5;
+
+    for (int i = 0; i < samples.size(); ) {
+      float pDrop = pow(dropBase, samples[i].numDrawn);
+      if (dropRand(randGen()) > pDrop) {
+        samples.erase(samples.begin() + i);
+      } else {
+        ++i;
+      }
+    }
+  }
+
+  void
+  drawSamples(ProgramVec & oProgs, DerivationVec & oDerVec, int startIdx, int endIdx) {
+    const float distBase = 0.5;
+    std::set<int> drawnIndices;
+
+    assert((endIdx - startIdx) <= samples.size());
+
+    for (int i = startIdx; i < endIdx; ++i) {
+      // draw fresh sample
+      int sampleIdx;
+      do {
+        sampleIdx = elemRand(randGen()) % samples.size();
+      } while (!drawnIndices.insert(sampleIdx).second);
+
+      oProgs[i] = samples[sampleIdx].P;
+      oDerVec[i] = samples[sampleIdx].bestKnownDer;
+      samples[sampleIdx].numDrawn++;
+    }
+  }
+
+  void push(ProgramPtr & P, Derivation & bestDer) {
+    samples.emplace_back(P, bestDer);
+  }
+};
+
+
+
+
 
 static DerivationVec FilterBest(DerivationVec A, DerivationVec B) {
   DerivationVec res;
@@ -27,8 +99,9 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
     , rewritePairs(BuildRewritePairs())
     , ruleBook(modelConfig, rewritePairs)
     , model("build/rdn", modelConfig, ruleBook.num_Rules())
-    , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params),
-      expMut(ruleBook)
+    , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params)
+    , expMut(ruleBook)
+    , numFinished(0)
 {
   std::cerr << "Loading task file " << taskFile << "\n";
 
@@ -37,6 +110,8 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   taskName = task.get_or_fail<std::string>(
       "name"); // 3; // minimal progrm stub len (excluding params and return)
 
+  cacheSize = task.get_or_fail<int>("cacheSize"); // number of samples in cache at any given time
+  cacheRatio = task.get_or_fail<float>("cacheRatio"); // number of re-used derivations from cache
   numSamples = task.get_or_fail<int>("numSamples"); // number of batch programs
   assert(numSamples > 0);
   minStubLen = task.get_or_fail<int>("minStubLen"); // minimal stub len
@@ -65,13 +140,12 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   InitRandom();
 }
 
-void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, size_t startIdx,
-                           size_t endIdx) {
+void APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handleFunc) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
-  for (int i = startIdx; i < endIdx; ++i) {
-    std::shared_ptr<Program> P = nullptr;
+  for (int i = 0; i < numSamples; ++i) {
+    ProgramPtr P = nullptr;
     int mutSteps = 0;
     do {
       int stubLen = stubRand(randGen());
@@ -82,10 +156,24 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, size_t start
       expMut.mutate(*P, mutSteps, pGenExpand); // mutate at least once
     } while (P->size() > modelConfig.prog_length);
 
-    maxDerVec[i] = std::min(mutSteps + extraExplorationDepth, maxExplorationDepth);
-    progVec[i] = std::shared_ptr<Program>(P);
+    handleFunc(P, mutSteps);
   }
 }
+
+void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int startIdx,
+                           int endIdx) {
+  std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
+  std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
+
+  int i = startIdx;
+  generatePrograms(endIdx - startIdx, [this, &progVec, &maxDerVec, &i](ProgramPtr P, int numMutations) {
+    maxDerVec[i] = std::min(numMutations + extraExplorationDepth, maxExplorationDepth);
+    progVec[i] = ProgramPtr(P);
+    ++i;
+  });
+}
+
+
 
 void APO::train() {
   const int numEvalSamples = std::min<int>(4096, modelConfig.train_batch_size * 32);
@@ -119,11 +207,15 @@ void APO::train() {
   // TESTING
   // model.setLearningRate(0.0001); // works well
 
+  // TrainingCache sampleCache(cacheSize);
+
   clock_t roundTotal = 0;
   clock_t derTotal = 0;
   size_t numTimedRounds = 0;
   std::cerr << "\n-- Training --\n";
   for (size_t g = 0; g < numRounds; ++g) {
+
+// evaluation round logic
     bool loggedRound = (g % logRate == 0);
     if (loggedRound) {
       auto stats = model.query_stats();
@@ -135,7 +227,7 @@ void APO::train() {
         // report round timing statistics
         double avgRoundTime = (roundTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
         double avgDerTime = (derTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
-        std::cerr << ", avgRoundTime=" << avgRoundTime << " s, avgDerTime=" << avgDerTime << " s ) -\n";
+        std::cerr << ", avgRoundTime=" << avgRoundTime << " s, avgDerTime=" << avgDerTime << " s, numFinished=" << numFinished << " ) -\n";
         roundTotal = 0;
         derTotal = 0;
         numTimedRounds = 0;
@@ -197,8 +289,8 @@ void APO::train() {
       }
     }
 
+// actual round logic
     clock_t startRound = clock();
-
     // compute all one-step derivations
     std::vector<std::pair<int, Action>> rewrites;
     ProgramVec nextProgs;
@@ -260,12 +352,14 @@ void APO::train() {
     // pick an action per program and drop STOP-ped programs
     int numNextProgs =
         montOpt.sampleActions(refResults, rewrites, nextProgs, nextMaxDistVec, progVec, maxDistVec);
-    double dropOutRate = 1.0 - numNextProgs / (double)numSamples;
+    double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
+
+    numFinished += (numSamples - numNextProgs);
 
     // fill up with new programs
     generatePrograms(progVec, maxDistVec, numNextProgs, numSamples);
-    auto endRound = clock();
 
+    auto endRound = clock();
     // statistics
     roundTotal += (endRound - startRound);
     numTimedRounds++;

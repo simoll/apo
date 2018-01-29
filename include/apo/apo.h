@@ -63,18 +63,24 @@ struct APO {
 // eval round interval
   int logRate;
   size_t numRounds; // total training rounds
+  size_t numFinished; // number of games stopped by MCTS
   size_t racketStartRound; // round when the racket should start (model based query)
 
   bool saveCheckpoints; // save model checkpoints at @logRate
 
 // training
-  int numSamples;//
+  int numSamples;     // number of training samples
+  float cacheRatio;   // fraction of training samples from cache
+  int cacheSize;      // number of completed programs to hold in cache
 
 // number of simulation batches
   APO(const std::string & taskFile, const std::string & _cpPrefix);
 
   void
-  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, size_t startIdx, size_t endIdx);
+  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, int startIdx, int endIdx);
+
+  void
+  generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handler);
 
   void train();
 };
