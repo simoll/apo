@@ -1,0 +1,12 @@
+name test
+minStubLen 2
+maxStubLen 2
+maxMutations 0
+pExpand 0.7
+mcDerivationSteps 1
+maxExplorationDepth 2
+extraExplorationDepth 4
+pRandom 1.0
+numOptRounds 10
+logRate 1
+numGames 1000
