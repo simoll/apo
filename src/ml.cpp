@@ -319,7 +319,7 @@ struct Batch {
   }
 };
 
-#define IF_DEBUG_TRAIN if (true)
+#define IF_DEBUG_TRAIN if (false)
 // train model on a batch of programs (returns loss)
 Task
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
