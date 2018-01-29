@@ -64,6 +64,9 @@ template size_t Parser::get_or_fail<size_t>(const std::string & key);
 template double Parser::get<double>(const std::string & key, const double defVal);
 template double Parser::get_or_fail<double>(const std::string & key);
 
+template float Parser::get<float>(const std::string & key, const float defVal);
+template float Parser::get_or_fail<float>(const std::string & key);
+
 template std::string Parser::get_or_fail<std::string>(const std::string & key);
 
 } // namespace apo
