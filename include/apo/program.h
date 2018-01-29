@@ -407,7 +407,8 @@ struct Program {
 
 };
 
-using ProgramVec = std::vector<std::shared_ptr<Program>>;
+using ProgramPtr = std::shared_ptr<Program>;
+using ProgramVec = std::vector<ProgramPtr>;
 
 static
 ProgramVec
