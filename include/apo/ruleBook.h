@@ -36,9 +36,9 @@ struct RuleBook {
   const RewritePairVec & rewritePairs;
   std::vector<RewriteRule> rewriteRuleVec;
 
-  ModelConfig config;
+  const ModelConfig & config;
 
-  RuleBook(ModelConfig modelConfig, const RewritePairVec & _rewritePairs)
+  RuleBook(const ModelConfig & modelConfig, const RewritePairVec & _rewritePairs)
   : rewritePairs(_rewritePairs)
   , rewriteRuleVec()
   , config(modelConfig)

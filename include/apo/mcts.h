@@ -50,7 +50,6 @@ using DerivationVec = std::vector<Derivation>;
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
 struct MonteCarloOptimizer {
-#define IF_DEBUG_MC if (false)
 
   // some statistics
   struct Stats {

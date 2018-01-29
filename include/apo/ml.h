@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "apo/program.h"
-#include "apo/mutator.h"
 #include "apo/extmath.h"
 #include "apo/modelConfig.h"
 
@@ -62,20 +61,11 @@ class Model {
 
 // graph definition
 
-  // TODO read from shared config file
 public:
-  // int infer_batch_size; // = 4;
-  // int train_batch_size; // = 4;
   int num_Rules; // number of active rules
-
-  // int prog_length; // maximal program length
-  // int num_Params; // = 5;
-  // int max_Rules; //  maximal number of rules supported by model
   const ModelConfig & config;
 
   const int max_Operands = 2;
-
-  int batch_train_steps; // number of updates per training
 
   int translateOperand(node_t idx) const;
   int encodeOperand(const Statement & stat, node_t opIdx) const;
@@ -101,9 +91,6 @@ public:
   void saveCheckpoint(const std::string & checkPointFile);
 
   // train model on a batch of programs (returns loss)
-  // double train(const ProgramVec& progs, const ResultVec& results, int num_steps);
-
-  // train model on a batch of programs (returns loss)
   struct Losses {
     double stopLoss;
     double targetLoss;
@@ -115,11 +102,6 @@ public:
   Task train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
 
   Statistics query_stats();
-
-  // most likely selection
-#if 0
-  ResultVec infer_likely(const ProgramVec& progs);
-#endif
 
   // distribution over selections
   Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx);
