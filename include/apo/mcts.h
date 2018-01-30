@@ -122,8 +122,19 @@ struct MonteCarloOptimizer {
   encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const;
   void
   populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, int numResults) const;
+
+  enum StopReason {
+    Choice = 0, // STOP-ped by model choice
+    InvalidDist = 1, // invalid action distribution
+    DerivationFailure = 2, // failed to deriva a valid action (eventhough the action distribution is legal)
+    NoPossibleAction = 3, // there is no applicable action
+  };
+
+  using ActionCallback = std::function<bool(int sampleIdx, int rewriteIdx)>;
+  using StopCallback = std::function<bool(int sampleIdx, StopReason reason)>;
+
   // sample a target based on the reference distributions (discards STOP programs)
-  int sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ProgramVec & oProgs, IntVec & oMaxDer);
+  void sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ActionCallback actionHandler, StopCallback stopHandler);
 
 #undef IF_DEBUG_MV
 };

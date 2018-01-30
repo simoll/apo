@@ -549,12 +549,13 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
 // sample a target based on the reference distributions (discards STOP programs)
 
 // int sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ProgramVec & oProgs, IntVec & oMaxDer);
-int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
+void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                        const CompactedRewrites &rewrites,
                                        const ProgramVec &nextProgs,
                                        const IntVec & nextMaxDerVec,
-                                       ProgramVec &oProgs,
-                                       IntVec & oMaxDer) {
+                                       ActionCallback actionHandler,
+                                       StopCallback stopHandler
+  ) {
 #define IF_DEBUG_SAMPLE if (false)
   std::uniform_real_distribution<float> pRand(0, 1.0);
 
@@ -566,6 +567,9 @@ int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
   for (int s = 0; s < refResults.size(); ++s) {
     IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << refResults.size() << "\n"; }
     if (s < nextSampleWithRewrite) {
+      bool keepGoing = stopHandler(s, StopReason::NoPossibleAction);
+      if (!keepGoing) return;
+
       // no rewrite available -> STOP
       // actionProgs.push_back(roundProgs[s]);
       continue;
@@ -582,12 +586,16 @@ int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
       bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
 
       if (shouldStop) {
+        bool keepGoing = stopHandler(s, StopReason::Choice); // stopped by choice
+        if (!keepGoing) return;
         hit = true;
         break;
       }
 
       // valid distributions?
       if (!checkedDist && !IsValidDistribution(refResults[s].actionDist)) {
+        bool keepGoing = stopHandler(s, StopReason::InvalidDist); // stopped by invalid action
+        if (!keepGoing) return;
         checkedDist = true;
         hit = false;
         break;
@@ -606,11 +614,10 @@ int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
       for (int i = rewriteIdx; i < rewrites.size() && rewrites[i].first == s;
            ++i) {
         if ((rewrites[i].second == randomRew)) {
+
           assert(i < nextProgs.size());
-          // actionProgs.push_back(nextProgs[i]);
-          int progIdx = numGenerated++;
-          oProgs[progIdx] = nextProgs[i];
-          oMaxDer[progIdx] = std::max(1, nextMaxDerVec[i] - 1); // carry on unless there is an explicit STOP
+          actionHandler(s, i);
+
           hit = true;
           break;
         }
@@ -619,6 +626,8 @@ int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
 
     // could not hit -> STOP
     if (!hit) {
+      bool keepGoing = stopHandler(s, StopReason::DerivationFailure);
+      if (!keepGoing) return;
       stats.sampleActionFailures++;
     }
 
@@ -641,7 +650,6 @@ int MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
     // assert(actionProgs.size() == roundProgs.size()); // no longer the case
     // since STOP programs get dropped
 #undef IF_DEBUG_SAMPLE
-  return numGenerated;
 }
 
 #undef IF_DEBUG_MC
