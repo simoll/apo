@@ -13,6 +13,8 @@ SampleServer {
   std::uniform_real_distribution<float> dropRand;
   std::uniform_int_distribution<int> elemRand;
 
+  int queueLimit; // maximal training elements to reside in queue
+
   struct CachedDerivation {
     int numDrawn;               // how often was this sample drawn
     Derivation bestKnownDer;    // best known derivation
@@ -39,10 +41,10 @@ SampleServer {
     {}
   };
 
-  // queue to draw training samples from
-  // TODO add synchronization primitives around the queue
+  // training sample queue
   std::queue<TrainingSample> trainingQueue;
-  std::condition_variable queueCV;
+  std::condition_variable consumerCV; // waiting
+  std::condition_variable producerCV;
   std::mutex queueMutex;
 
   SampleServer(const std::string & serverConfig)
@@ -50,21 +52,29 @@ SampleServer {
   , elemRand(0, std::numeric_limits<int>::max())
   , sampleMap()
   {
-    // TODO read server config
-    // cacheSize = task.get_or_fail<int>("cacheSize"); // number of samples in cache at any given time
-    // cacheRatio = task.get_or_fail<float>("cacheRatio"); // number of re-used derivations from cache
+    Parser cfg(serverConfig);
+
+    queueLimit = cfg.get_or_fail<int>("queueLimit"); // number of training samples in queue
   }
 
   // submit a complete action distribution
   void
   submitResults(ProgramVec & progVec, const ResultDistVec & resDistVec) {
-    std::lock_guard queueLock(queueMutex);
+    {
+      std::unique_lock queueLock(queueMutex);
 
-    for (int i = 0; i < progVec.size(); ++i) {
-      trainingQueue.emplace(progVec[i], resDistVec[i]);
+      // wait until slots in the training queue become available
+      if (trainingQueue.size() > queueLimit) {
+        producerCV.wait(queueLock, [this](){ return trainingQueue.size() < queueLimit; });
+      }
+
+      // fill slots
+      for (int i = 0; i < progVec.size(); ++i) {
+        trainingQueue.emplace(progVec[i], resDistVec[i]);
+      }
     }
 
-    queueCV.notify_one();
+    consumerCV.notify_all();
   }
 
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
@@ -93,10 +103,11 @@ SampleServer {
     {
       std::unique_lock queueLock(queueMutex);
 
+      assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
     // wait until samples become available
       const int numNeeded = endIdx - startIdx;
       if (trainingQueue.size() < numNeeded) {
-        queueCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
+        consumerCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
       }
 
     // fetch samples
@@ -106,6 +117,8 @@ SampleServer {
         oResultDist[i] = sample.resultDist;
       }
     }
+
+    producerCV.notify_all();
     // TODO draw samples from the training queue
 #if 0
     assert((endIdx - startIdx) <= sampleMap.size());
@@ -251,6 +264,10 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int startIdx
 
 
 void APO::train() {
+// set-up training server
+  SampleServer server("server.conf");
+
+// evaluation dataset
   const int numEvalSamples = std::max<int>(4096, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
@@ -269,11 +286,8 @@ void APO::train() {
 
   auto bestEvalDerVec = refEvalDerVec;
 
-  // training
+// training
   assert(minStubLen > 0 && "can not generate program within constraints");
-
-  // set-up training server
-  SampleServer server("server.conf");
 
   std::atomic<bool> keepRunning = true;
 
@@ -369,9 +383,16 @@ void APO::train() {
         Task trainTask = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
         if (loggedRound) {
+        // compute number of stops in reference result
+          int numStops = 0;
+          for (auto & resultDist : refResults) {
+            numStops += resultDist.stopDist == 1.0;
+          }
+          float dropOutRate = numStops / (double) refResults.size();
+
           trainTask.join();
           std::cerr << "\t";
-          L.print(std::cerr) << ".\n"; // " Stop drop out=" << dropOutRate << "\n";
+          L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
         } else {
           trainTask.detach();
         }
