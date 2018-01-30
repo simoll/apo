@@ -39,12 +39,6 @@ struct ResultDist {
   void dump() const;
 };
 
-struct Result {
-  int rule;   // rule index (0 == STOP)
-  int target; // target index (match root)
-};
-
-using ResultVec = std::vector<Result>;
 using ResultDistVec = std::vector<ResultDist>;
 
 class Model {
