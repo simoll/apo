@@ -139,7 +139,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
   }
 
   int frozen = 0; // amount of programs that have stopped derivation
-  std::vector<bool> alreadyStopped(origProgVec.size(), false);
+  std::vector<bool> alreadyStopped(progVec.size(), false);
 
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
   for (int derStep = 0; frozen < progVec.size(); ++derStep) {
@@ -150,7 +150,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 
 #pragma omp parallel for reduction(+ : frozen)
     for (int t = 0; t < progVec.size(); ++t) { // for all programs
-      if (alreadyStopped[t]) continue; // do nto proceed on STOP-ped programs
+      if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
 
     // act (transform or STOP)
       Action rew;
@@ -177,16 +177,16 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
            stopDerivation) // last round (excess of max supported program length or last derivation round)
       ) {
         stopStates[t] = currState;
-        alreadyStopped[t] = true;
-        stopDerivation = true;
       }
 
-      // stop derivating this program
-      if (stopDerivation) {
+    // stop derivating this program
+      if (stopDerivation || signalsStop) {
         alreadyStopped[t] = true;
         ++frozen; continue;
       }
     }
+
+    if (derStep > 100) abort(); // divergence check
   } // derivation loop
 
   // DEBUG CHECK
@@ -512,7 +512,7 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
                                              const CompactedRewrites &rewrites,
                                              const ProgramVec & progVec) const {
   int rewriteIdx = 0;
-  int nextSampleWithRewrite = rewrites[rewriteIdx].first;
+  int nextSampleWithRewrite = derivations.empty() ? std::numeric_limits<int>::max() : rewrites[rewriteIdx].first; // submit STOP everywhere if no derivations are available
   for (int s = 0; s < progVec.size(); ++s) {
     // program without applicable rewrites
     if (s < nextSampleWithRewrite) {
