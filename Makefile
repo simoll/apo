@@ -45,7 +45,7 @@ CFLAGS=${INC} ${FLAGS}
 
 PYTHON=python3
 
-CXX=clang++ -std=c++14 ${OPTFLAGS}
+CXX=clang++ -std=c++17 ${OPTFLAGS}
 
 METAGRAPH=build/rdn.meta
 
