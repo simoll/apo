@@ -270,7 +270,8 @@ struct Batch {
   }
 
   void encode_Result(int batch_id, const ResultDist & result) {
-    stop_feed.tensor<float, 1>()(batch_id) = result.stopDist;
+    // stop signal
+    stop_feed.tensor<float, 1>()(batch_id) = result.stopDist; // all good -> result.stopDist is broken!!
 
     // std::cerr << "S " << result.stopDist << "\n";
     auto target_Mapped = target_feed.tensor<float, 2>();
@@ -430,9 +431,10 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     batchVec->push_back(batch);
   }
 
-  auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx]{
+  auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx]{
     Mutex_guard guard(modelMutex);
 
+    int batchStartIdx = startIdx;
     for (auto & batch : *batchVec) {
 
       IF_DEBUG_INFER batch.print(std::cerr);
@@ -468,9 +470,13 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
         }
 
         res.normalize();
-        oResultDistVec[startIdx + i] = res;
+        oResultDistVec[batchStartIdx + i] = res;
       }
+      // advance to next batch offset
+      batchStartIdx += batch.size();
     }
+
+    assert(batchStartIdx == endIdx);
 
     delete batchVec;
   });
