@@ -46,6 +46,14 @@ struct Derivation {
 };
 using DerivationVec = std::vector<Derivation>;
 
+// reasons to sample STOP
+enum StopReason {
+  Choice = 0, // STOP-ped by model choice
+  InvalidDist = 1, // invalid action distribution
+  DerivationFailure = 2, // failed to deriva a valid action (eventhough the action distribution is legal)
+  NoPossibleAction = 3, // there is no applicable action
+};
+
 // optimize the given program @P using @model (or a uniform random rule application using @maxDist)
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
@@ -76,7 +84,7 @@ struct MonteCarloOptimizer {
   int maxGenLen;
   Mutator mut;
   const float pSearchExpand = 0.1; // expanding rule probability
-  const float stopThreshold = 0.8;
+  const float stopThreshold = 0.5; // FIXME this should be a parameter
 
   const int sampleAttempts = 2; // number of attemps until tryApplyModel fails
 
@@ -119,22 +127,15 @@ struct MonteCarloOptimizer {
 
   // convert detected derivations to refernce distributions
   void
-  encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, int startIdx, int progIdx) const;
+  encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, const Derivation stopDer, int startIdx, int progIdx) const;
   void
-  populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, int numResults) const;
-
-  enum StopReason {
-    Choice = 0, // STOP-ped by model choice
-    InvalidDist = 1, // invalid action distribution
-    DerivationFailure = 2, // failed to deriva a valid action (eventhough the action distribution is legal)
-    NoPossibleAction = 3, // there is no applicable action
-  };
+  populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & progVec) const;
 
   using ActionCallback = std::function<bool(int sampleIdx, int rewriteIdx)>;
   using StopCallback = std::function<bool(int sampleIdx, StopReason reason)>;
 
   // sample a target based on the reference distributions (discards STOP programs)
-  void sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ActionCallback actionHandler, StopCallback stopHandler);
+  void sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, ActionCallback actionHandler, StopCallback stopHandler);
 
 #undef IF_DEBUG_MV
 };

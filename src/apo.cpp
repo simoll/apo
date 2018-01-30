@@ -434,6 +434,7 @@ void APO::train() {
       // best-effort search for optimal program
       // nextProgs -> refDerVec
       auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+      // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
 
 #if 0
       // TODO enable model inference
@@ -449,7 +450,7 @@ void APO::train() {
       // (rewrites, refDerVec) --> refResults
       // decode reference ResultDistVec from detected derivations
       ResultDistVec refResults;
-      montOpt.populateRefResults(refResults, refDerVec, rewrites, numSamples);
+      montOpt.populateRefResults(refResults, refDerVec, rewrites, progVec);
 
       // submit results to server
       server.submitResults(progVec, refResults);

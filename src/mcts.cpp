@@ -389,14 +389,15 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
 // search for a best derivation (best-reachable program (1.) through rewrites
 // with minimal derivation sequence (2.))
-DerivationVec MonteCarloOptimizer::searchDerivations_Default(
-    const ProgramVec &progVec, const std::vector<int> & maxDistVec, const int numOptRounds) {
+DerivationVec MonteCarloOptimizer::searchDerivations_Default(const ProgramVec &progVec, const std::vector<int> & maxDistVec, const int numOptRounds) {
   const int numSamples = progVec.size();
   std::uniform_real_distribution<float> ruleRand(0, 1);
 
+  // std::cerr << "Initial programs\n";
   // start with STOP derivation
   std::vector<Derivation> states;
   for (int i = 0; i < progVec.size(); ++i) {
+    // progVec[i]->dump();
     states.emplace_back(*progVec[i]);
   }
 
@@ -407,6 +408,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
 
   // number of derivation walks
   for (int r = 0; r < numOptRounds; ++r) {
+    // std::cerr << "Derivation " << r << "\n";
 
     // re-start from initial program
     ProgramVec roundProgs = Clone(progVec);
@@ -430,7 +432,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
 
         // pick & apply a rewrite
         Action rewrite;
-        bool signalsStop = false;
 
         // loop until rewrite succeeds (or stop)
         // uniform random rewrite
@@ -438,13 +439,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
         IF_DEBUG_DER {
           std::cerr << "after random rewrite!\n";
           roundProgs[t]->dump();
-        }
-        signalsStop = false; // HACK to always keep going
-
-        // don't step over STOP
-        if (signalsStop) {
-          keepGoing = false;
-          break;
         }
 
         // derived program to large for model -> freeze
@@ -469,25 +463,29 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(
 }
 
 // convert detected derivations to refernce distributions
-void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const DerivationVec &derivations, const CompactedRewrites &rewrites, int startIdx, int progIdx) const {
+void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const DerivationVec &derivations, const CompactedRewrites &rewrites, const Derivation stopDer, int startIdx, int progIdx) const {
   // find best-possible rewrite
   assert(startIdx < derivations.size());
   bool noBetterDerivation = true;
   Derivation bestDer;
   for (int i = startIdx; i < rewrites.size() && (rewrites[i].first == progIdx);
        ++i) {
-    const auto &der = derivations[i];
+    const auto &  der = derivations[i];
     if (noBetterDerivation || der.betterThan(bestDer)) {
       noBetterDerivation = false;
       bestDer = der;
     }
   }
 
-  if (noBetterDerivation) {
+
+  if (noBetterDerivation || // no valid action available
+      stopDer.bestScore <= bestDer.bestScore // stil better to STOP than to transform..
+  ) {
     // no way to improve over STOP
     refResult = model.createStopResult();
     return;
   }
+  abort(); // DEBUG HACK - there is no better derivation
 
   IF_DEBUG_MC {
     std::cerr << progIdx << " -> best ";
@@ -516,10 +514,10 @@ void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const Deri
 void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
                                              const DerivationVec &derivations,
                                              const CompactedRewrites &rewrites,
-                                             int numResults) const {
+                                             const ProgramVec & progVec) const {
   int rewriteIdx = 0;
   int nextSampleWithRewrite = rewrites[rewriteIdx].first;
-  for (int s = 0; s < numResults; ++s) {
+  for (int s = 0; s < progVec.size(); ++s) {
     // program without applicable rewrites
     if (s < nextSampleWithRewrite) {
       refResults.push_back(model.createStopResult());
@@ -529,7 +527,8 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
     }
 
     // convert to a reference distribution
-    encodeBestDerivation(refResults[s], derivations, rewrites, rewriteIdx, s);
+    Derivation stopDer(*progVec[s]);
+    encodeBestDerivation(refResults[s], derivations, rewrites, stopDer, rewriteIdx, s);
 
     // skip to next progam with rewrites
     for (; rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s;
@@ -537,8 +536,7 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
     }
 
     if (rewriteIdx >= rewrites.size()) {
-      nextSampleWithRewrite =
-          std::numeric_limits<int>::max(); // no more rewrites -> mark all
+      nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all
                                            // remaining programs as STOP
     } else {
       nextSampleWithRewrite =
@@ -548,7 +546,7 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
   }
 
   // normalize distributions
-  for (int s = 0; s < numResults; ++s) {
+  for (int s = 0; s < progVec.size(); ++s) {
     auto &result = refResults[s];
     result.normalize();
 
