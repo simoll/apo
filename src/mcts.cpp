@@ -56,11 +56,8 @@ bool
 MonteCarloOptimizer::greedyApplyModel(Program &P, Action &rew, ResultDist &res, bool &signalsStop) {
   // should we stop?
   if (res.stopDist > stopThreshold) {
-    std::cerr << "STOP: " << res.stopDist << "\n";
     signalsStop = true;
     return true;
-  } else {
-    std::cerr << "don't STOP: " << res.stopDist << "\n";
   }
 
   // take random most-likely event
@@ -485,7 +482,6 @@ void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const Deri
     refResult = model.createStopResult();
     return;
   }
-  abort(); // DEBUG HACK - there is no better derivation
 
   IF_DEBUG_MC {
     std::cerr << progIdx << " -> best ";
