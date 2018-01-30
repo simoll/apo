@@ -462,7 +462,7 @@ void APO::train() {
       DerivationVec refDerVec;
       {
         std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
-        montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+        refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
       }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
 
