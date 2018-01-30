@@ -103,9 +103,10 @@ SampleServer {
     {
       std::unique_lock queueLock(queueMutex);
 
-      assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
     // wait until samples become available
       const int numNeeded = endIdx - startIdx;
+      assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
+
       if (trainingQueue.size() < numNeeded) {
         consumerCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
       }
@@ -291,15 +292,18 @@ void APO::train() {
 
   std::atomic<bool> keepRunning = true;
 
+  std::mutex cpuMutex; // to co-ordinate multi-threaded processing on the GPU (eg searchThread and evaluation rounds on the trainThread)
+
   // model training - repeatedly draw samples from SampleServer and submit to device for training
   std::thread
-  trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec] {
+  trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
     const int dotStep = logRate / 10;
 
     // Fetch initial programs
     ProgramVec progVec(numSamples, nullptr);
     ResultDistVec refResults(numSamples);
 
+    Task trainTask;
     while (keepRunning.load()) {
       clock_t roundTotal = 0;
       clock_t derTotal = 0;
@@ -311,6 +315,8 @@ void APO::train() {
     // evaluation round logic
         bool loggedRound = (g % logRate == 0);
         if (loggedRound) {
+          std::unique_lock lock(cpuMutex); // drop the lock every now and then..
+
           auto stats = model.query_stats();
           std::cerr << "\n- Round " << g << " (";
           stats.print(std::cerr);
@@ -380,7 +386,8 @@ void APO::train() {
 
         // train model (progVec, refResults)
         Model::Losses L;
-        Task trainTask = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
+        if (trainTask.joinable()) trainTask.join(); // TODO move this into the ml.cpp
+        trainTask = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
         if (loggedRound) {
         // compute number of stops in reference result
@@ -393,8 +400,6 @@ void APO::train() {
           trainTask.join();
           std::cerr << "\t";
           L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
-        } else {
-          trainTask.detach();
         }
 
       } // rounds
@@ -404,7 +409,7 @@ void APO::train() {
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::thread
-  searchThread([this, &keepRunning, &server]{
+  searchThread([this, &keepRunning, &server, &cpuMutex]{
 
     // compute all one-step derivations
     std::vector<std::pair<int, Action>> rewrites;
@@ -454,7 +459,11 @@ void APO::train() {
       clock_t startDer = clock();
       // best-effort search for optimal program
       // nextProgs -> refDerVec
-      auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+      DerivationVec refDerVec;
+      {
+        std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
+        montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+      }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
 
 #if 0
