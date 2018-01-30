@@ -113,9 +113,12 @@ SampleServer {
 
     // fetch samples
       for (int i = startIdx; i < endIdx; ++i) {
-        auto & sample = trainingQueue.front();
+        auto sample = trainingQueue.front();
+        trainingQueue.pop();
+
         oProgs[i] = sample.P;
         oResultDist[i] = sample.resultDist;
+
       }
     }
 
@@ -393,7 +396,7 @@ void APO::train() {
         // compute number of stops in reference result
           int numStops = 0;
           for (auto & resultDist : refResults) {
-            numStops += resultDist.stopDist == 1.0;
+            numStops += (resultDist.stopDist > 0.5f ? 1 : 0); // 0.0 or 1.0 in reference results
           }
           float dropOutRate = numStops / (double) refResults.size();
 
