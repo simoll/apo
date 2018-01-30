@@ -116,11 +116,12 @@ PrintIndex(node_t idx, std::ostream & out) {
 }
 
 
+const int operandLimit = 2;
 struct Statement {
   OpCode oc;
 
   union {
-    node_t indices[2];
+    node_t indices[operandLimit];
     data_t value;
   } elements;
 
@@ -189,6 +190,22 @@ struct Statement {
   : oc(OpCode::Constant)
   {
     elements.value = constVal;
+  }
+
+  bool operator==(const Statement & O) const { return !(*this < O) && !(O < *this); }
+  bool operator<(const Statement & O) const {
+    if (oc < O.oc) return true;
+    else if (O.oc < oc) return false;
+
+    // same opCode (compare oc parameters)
+    if (oc == OpCode::Constant) { return elements.value < O.elements.value; }
+
+    for (int i = 0; i < num_Operands(); ++i) {
+      if (getOperand(i) < O.getOperand(i)) return true;
+    }
+
+    // equal oc, equal parameters
+    return false;
   }
 };
 
@@ -405,6 +422,31 @@ struct Program {
 
   void dump() const { print(std::cerr); }
 
+  bool operator==(const Program & O) {
+    if (num_Params() != O.num_Params()) return false;
+    if (size() != O.size()) return false;
+    for (int pc = 0; pc < size(); ++pc) {
+      if (!(code[pc] == O.code[pc])) return false;
+    }
+    return true;
+  }
+
+  bool operator<(const Program & O) const {
+    if (num_Params() < O.num_Params()) return true;
+    if (size() < O.size()) return true;
+    for (int pc = 0; pc < size(); ++pc) {
+      if (code[pc] < O.code[pc]) return true;
+    }
+    return false;
+  }
+};
+
+// dereferencing less operator
+template <class T> struct deref_less {
+  bool operator() (const T& x, const T& y) const {return *x < *y;}
+  typedef T first_argument_type;
+  typedef T second_argument_type;
+  typedef bool result_type;
 };
 
 using ProgramPtr = std::shared_ptr<Program>;

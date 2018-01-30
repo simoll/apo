@@ -6,31 +6,33 @@
 namespace apo {
 
 struct
-TrainingCache {
+SampleCache {
   std::uniform_real_distribution<float> dropRand;
   std::uniform_int_distribution<int> elemRand;
 
   struct CachedSample {
     int numDrawn;               // how often was this sample drawn
-    ProgramPtr P;
     Derivation bestKnownDer;    // best known derivation
 
-    CachedSample(ProgramPtr  _P, Derivation _bestDer)
+    CachedSample()
+    {}
+
+    CachedSample(Derivation _bestDer)
     : numDrawn(0)
-    , P(_P)
     , bestKnownDer(_bestDer)
     {}
   };
 
-  std::vector<CachedSample> samples;
+  std::map<ProgramPtr, CachedSample, deref_less<ProgramPtr>> sampleMap;
 
-  TrainingCache()
+  SampleCache()
   : dropRand(0, 1)
   , elemRand(0, std::numeric_limits<int>::max())
-  , samples()
+  , sampleMap()
   {}
 
   // drop old samples (dropBase ^ sample.numDrawn)
+#if 0
   void
   reviseSampleCache() {
     const float dropBase = 0.5;
@@ -44,29 +46,61 @@ TrainingCache {
       }
     }
   }
+#endif
+
+  // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
+  bool addResult(ProgramPtr P, Derivation sampleDer) {
+    auto itSample = sampleMap.find(P);
+    if (itSample == sampleMap.end()) {
+      sampleMap[P] = CachedSample(sampleDer);
+      return true;
+    } else {
+      auto & cached = itSample->second;
+      if (sampleDer.betterThan(cached.bestKnownDer)) {
+        cached.bestKnownDer = sampleDer;
+        cached.numDrawn = 0;
+      }
+      return true;
+    }
+    return false;
+  }
 
   void
   drawSamples(ProgramVec & oProgs, DerivationVec & oDerVec, int startIdx, int endIdx) {
-    const float distBase = 0.5;
+    assert((endIdx - startIdx) <= sampleMap.size());
+
+  // ordered sample positions
+    // samples stored in a map with linear random access complexity (order sample indices -> scan once through map)
+    std::vector<int> indices;
     std::set<int> drawnIndices;
-
-    assert((endIdx - startIdx) <= samples.size());
-
     for (int i = startIdx; i < endIdx; ++i) {
       // draw fresh sample
       int sampleIdx;
       do {
-        sampleIdx = elemRand(randGen()) % samples.size();
+        sampleIdx = elemRand(randGen()) % sampleMap.size();
       } while (!drawnIndices.insert(sampleIdx).second);
-
-      oProgs[i] = samples[sampleIdx].P;
-      oDerVec[i] = samples[sampleIdx].bestKnownDer;
-      samples[sampleIdx].numDrawn++;
     }
-  }
+    std::sort(indices.begin(), indices.end());
 
-  void push(ProgramPtr & P, Derivation & bestDer) {
-    samples.emplace_back(P, bestDer);
+    // scan through sampleMap and drawn samples
+    auto it = sampleMap.begin();
+    int pos = 0; // iterator offset into map
+    int i = 0;
+    while (i + startIdx < endIdx) {
+      assert(indices[i] >= pos);
+      // advance to next sample position
+      if (indices[i] > pos) {
+        std::advance(it, indices[i] - pos);
+        pos = indices[i];
+      }
+
+      // take sample
+      auto & sample = it->second;
+      oProgs[startIdx + i] = it->first;
+      oDerVec[startIdx + i] = sample.bestKnownDer;
+      sample.numDrawn++;
+      ++i;
+    }
   }
 };
 
@@ -140,7 +174,8 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   InitRandom();
 }
 
-void APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handleFunc) {
+inline void
+APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handleFunc) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
