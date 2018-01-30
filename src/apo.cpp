@@ -335,6 +335,8 @@ void APO::train() {
     nextProgs.reserve(preAllocFactor * progVec.size());
     nextMaxDistVec.reserve(preAllocFactor * progVec.size());
 
+  // queue all programs that are reachable by a single move
+    // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
     // #pragma omp parallel for ordered
     for (int t = 0; t < progVec.size(); ++t) {
       for (int r = 0; r < ruleBook.num_Rules(); ++r) {
@@ -363,30 +365,29 @@ void APO::train() {
 
     clock_t startDer = clock();
     // best-effort search for optimal program
-    auto refDerVec = montOpt.searchDerivations(
-        nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+    // nextProgs -> refDerVec
+    auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
 
     if (g >= racketStartRound) {
       // model-driven search
-      auto guidedDerVec = montOpt.searchDerivations(
-          nextProgs, 0.1, nextMaxDistVec, 4, true);
+      auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 4, true);
       refDerVec = FilterBest(refDerVec, guidedDerVec);
     }
     clock_t endDer = clock();
     derTotal += (endDer - startDer);
 
+    // (rewrites, refDerVec) --> refResults
     // decode reference ResultDistVec from detected derivations
     ResultDistVec refResults;
-    montOpt.populateRefResults(refResults, refDerVec, rewrites, nextProgs, progVec);
+    montOpt.populateRefResults(refResults, refDerVec, rewrites, numSamples);
 
     // train model
     Model::Losses L;
-    Task trainThread =
-        model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
+    Task trainThread = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
 
     // pick an action per program and drop STOP-ped programs
-    int numNextProgs =
-        montOpt.sampleActions(refResults, rewrites, nextProgs, nextMaxDistVec, progVec, maxDistVec);
+    // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
+    int numNextProgs = montOpt.sampleActions(refResults, rewrites, nextProgs, nextMaxDistVec, progVec, maxDistVec);
     double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
 
     numFinished += (numSamples - numNextProgs);

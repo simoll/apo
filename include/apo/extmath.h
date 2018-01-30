@@ -102,7 +102,7 @@ SampleMostLikely(const CatDist & catDist, double p) {
 }
 
 static int
-SampleCategoryDistribution(CatDist & catDist, double p) {
+SampleCategoryDistribution(const CatDist & catDist, double p) {
   assert(((0.0 <= p) && (p <= 1.0)) && "not a valid sample value [0,1]");
 
   double catBase = 0.0;
