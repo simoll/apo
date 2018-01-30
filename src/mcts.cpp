@@ -53,14 +53,14 @@ MonteCarloOptimizer::Stats::print(std::ostream &out) const {
 
 
 bool
-MonteCarloOptimizer::greedyApplyModel(Program &P, Action &rew,
-                                           ResultDist &res, bool &signalsStop) {
-  std::uniform_real_distribution<float> pRand(0, 1.0);
-
+MonteCarloOptimizer::greedyApplyModel(Program &P, Action &rew, ResultDist &res, bool &signalsStop) {
   // should we stop?
   if (res.stopDist > stopThreshold) {
+    std::cerr << "STOP: " << res.stopDist << "\n";
     signalsStop = true;
     return true;
+  } else {
+    std::cerr << "don't STOP: " << res.stopDist << "\n";
   }
 
   // take random most-likely event
@@ -124,69 +124,86 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
   return mut.tryApply(P, rew);
 }
 
+// greedyDer - solution that respects STOP (stopDist > stopThreshold)
+// bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
                                       const IntVec & maxDistVec) {
   ProgramVec progVec = Clone(origProgVec);
 
-  DerivationVec states(progVec.size());
+  DerivationVec stopStates(progVec.size());
 
   DerivationVec bestStates;
   bestStates.reserve(progVec.size());
   for (int t = 0; t < progVec.size(); ++t) {
-    bestStates.push_back(Derivation(*progVec[t]));
+    auto startDer = Derivation(*progVec[t]);
+    bestStates.push_back(startDer); // do't-move-baseline (in case derivation are awful)
+    stopStates.push_back(startDer); // baseline (if maxDistVec[t] is zero, will be overritten once by first @signalsStop
   }
 
-  int frozen = 0;
+  int frozen = 0; // amount of programs that have stopped derivation
   std::vector<bool> alreadyStopped(origProgVec.size(), false);
+
+  // this loop keeps spinning until all threads have stopped the derivation (++frozen)
   for (int derStep = 0; frozen < progVec.size(); ++derStep) {
 
-    // compute distribution
+    // query action distribution
     ResultDistVec actionDistVec(progVec.size());
     model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
 
-// greedily sample most likely outcome
 #pragma omp parallel for reduction(+ : frozen)
-    for (int t = 0; t < progVec.size(); ++t) {
-      if (alreadyStopped[t])
-        continue;
+    for (int t = 0; t < progVec.size(); ++t) { // for all programs
+      if (alreadyStopped[t]) continue; // do nto proceed on STOP-ped programs
 
-      // exceed self inflicted derivation limit -> STOP here
-      if (derStep >= maxDistVec[t]) {
-        alreadyStopped[t] = true;
-        ++frozen;
-        continue;
-      }
-
-      // fetch action
+    // act (transform or STOP)
       Action rew;
       bool signalsStop = false;
       greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
-      if (progVec[t]->size() > model.config.prog_length) {
-        // STOP by exceeding model limits
-        signalsStop = true;
-      }
 
-      Derivation currState(GetProgramScore(*progVec[t]), derStep);
+      // shall we stop after this action?
+      bool stopDerivation = (derStep + 1) >= maxDistVec[t] || // last derivation round (time out)
+                            (progVec[t]->size() > model.config.prog_length); // in excess of maximal supported program length
 
-      // track best solution
+      Derivation currState(
+          GetProgramScore(*progVec[t]), // program after greedy action/STOP
+          derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
+      );
+
+    // update best seen solution
       if (currState.betterThan(bestStates[t])) {
         bestStates[t] = currState;
       }
 
-      // STOP when signalled (or in last iteration)
-      if (signalsStop) {
-        states[t] = currState;
+    // first STOP signal -> record greedyDer final state
+      if (!alreadyStopped[t] &&
+          (signalsStop ||  // proper STOP signal
+           stopDerivation) // last round (excess of max supported program length or last derivation round)
+      ) {
+        stopStates[t] = currState;
         alreadyStopped[t] = true;
-        ++frozen;
+        stopDerivation = true;
+      }
+
+      // stop derivating this program
+      if (stopDerivation) {
+        alreadyStopped[t] = true;
+        ++frozen; continue;
       }
     }
+  } // derivation loop
 
-    if (frozen == progVec.size())
-      break; // early exit
+  // DEBUG CHECK
+#if 0
+  for (int i = 0; i < origProgVec.size(); ++i) {
+    if (bestStates[i].betterThan(stopStates[i])) {
+      std::cerr << "bestState "; bestStates[i].print(std::cerr) << "\n";
+      std::cerr << "stopState "; stopStates[i].print(std::cerr) << "\n";
+      abort();
+    }
   }
+#endif
 
-  return GreedyResult{states, bestStates};
+  return GreedyResult{stopStates, bestStates};
 }
 
 // random trajectory based model (or uniform dist) sampling
@@ -552,7 +569,6 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
 void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                        const CompactedRewrites &rewrites,
                                        const ProgramVec &nextProgs,
-                                       const IntVec & nextMaxDerVec,
                                        ActionCallback actionHandler,
                                        StopCallback stopHandler
   ) {

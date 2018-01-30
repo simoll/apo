@@ -2,6 +2,9 @@
 
 #include <random>
 #include <limits>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
 
 namespace apo {
 
@@ -29,13 +32,17 @@ SampleServer {
   struct
   TrainingSample {
     ProgramPtr P;
-    ResultDist result;
+    ResultDist resultDist;
+
+    TrainingSample(ProgramPtr _P, ResultDist _resultDist)
+    : P(_P), resultDist(_resultDist)
+    {}
   };
 
   // queue to draw training samples from
   // TODO add synchronization primitives around the queue
-  std::queue<ProgramPtr> trainingQueue;
-  std::condition_variable queueVariable;
+  std::queue<TrainingSample> trainingQueue;
+  std::condition_variable queueCV;
   std::mutex queueMutex;
 
   SampleServer(const std::string & serverConfig)
@@ -49,14 +56,22 @@ SampleServer {
   }
 
   // submit a complete action distribution
-  bool
-  submitResult(ProgramPtr & P, const ResultDist & resDist) {
-    trainingQueue.emplace_back(P, resDist);
+  void
+  submitResults(ProgramVec & progVec, const ResultDistVec & resDistVec) {
+    std::lock_guard queueLock(queueMutex);
+
+    for (int i = 0; i < progVec.size(); ++i) {
+      trainingQueue.emplace(progVec[i], resDistVec[i]);
+    }
+
+    queueCV.notify_one();
   }
 
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
   bool
   submitDerivation(ProgramPtr P, Derivation sampleDer) {
+    return false; // FIXME use the sample cache
+
     auto itSample = sampleMap.find(P);
     if (itSample == sampleMap.end()) {
       sampleMap[P] = CachedDerivation(sampleDer);
@@ -74,7 +89,23 @@ SampleServer {
 
   // TODO this blocks until (endIdx - startIdx) many training samples have been made available by the searchThread
   void
-  drawSamples(ProgramVec & oProgs, DerivationVec & oDerVec, int startIdx, int endIdx) {
+  drawSamples(ProgramVec & oProgs, ResultDistVec & oResultDist, int startIdx, int endIdx) {
+    {
+      std::unique_lock queueLock(queueMutex);
+
+    // wait until samples become available
+      const int numNeeded = endIdx - startIdx;
+      if (trainingQueue.size() < numNeeded) {
+        queueCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
+      }
+
+    // fetch samples
+      for (int i = startIdx; i < endIdx; ++i) {
+        auto & sample = trainingQueue.front();
+        oProgs[i] = sample.P;
+        oResultDist[i] = sample.resultDist;
+      }
+    }
     // TODO draw samples from the training queue
 #if 0
     assert((endIdx - startIdx) <= sampleMap.size());
@@ -220,7 +251,7 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int startIdx
 
 
 void APO::train() {
-  const int numEvalSamples = std::min<int>(4096, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = std::max<int>(4096, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -229,8 +260,7 @@ void APO::train() {
   ProgramVec evalProgs(numEvalSamples, nullptr);
   IntVec evalDistVec(numEvalSamples, 0);
   generatePrograms(evalProgs, evalDistVec, 0, evalProgs.size());
-  auto refEvalDerVec = montOpt.searchDerivations(
-      evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
+  auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
 
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();
@@ -242,11 +272,6 @@ void APO::train() {
   // training
   assert(minStubLen > 0 && "can not generate program within constraints");
 
-  // Seed program generator
-  ProgramVec progVec(numSamples, nullptr);
-  IntVec maxDistVec(progVec.size(), 0);
-  generatePrograms(progVec, maxDistVec, 0, progVec.size());
-
   // set-up training server
   SampleServer server("server.conf");
 
@@ -254,15 +279,18 @@ void APO::train() {
 
   // model training - repeatedly draw samples from SampleServer and submit to device for training
   std::thread
-  trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, numSamples] {
+  trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec] {
     const int dotStep = logRate / 10;
 
-    ProgramVec progVec;
-    ResultDistVec refResults;
+    // Fetch initial programs
+    ProgramVec progVec(numSamples, nullptr);
+    ResultDistVec refResults(numSamples);
+
     while (keepRunning.load()) {
       clock_t roundTotal = 0;
       clock_t derTotal = 0;
       size_t numTimedRounds = 0;
+
       std::cerr << "\n-- Training --\n";
       for (size_t g = 0; g < numRounds; ++g) {
 
@@ -288,35 +316,20 @@ void APO::train() {
           montOpt.stats.print(std::cerr) << "\n";
           montOpt.stats = MonteCarloOptimizer::Stats();
 
-          // one shot (model based)
-          // auto oneShotEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0,
-          // maxExplorationDepth, 1, false);
+          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec);
 
-          // model-guided sampling
-          const int guidedSamples = 4;
-          auto guidedEvalDerVec = montOpt.searchDerivations(
-              evalProgs, 0.0, evalDistVec, guidedSamples, false);
+          DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
+          std::cerr << "\tGreedy (STOP) "; greedyStats.print(std::cerr); // apply most-likely action, respect STOP
 
-          // greedy (most likely action)
-          auto greedyDerVecs =
-              montOpt.greedyDerivation(evalProgs, evalDistVec);
+          DerStats bestGreedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
+          std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr); // same as greedy but report best program along trajectory to STOP
 
-          // DerStats oneShotStats = ScoreDerivations(refEvalDerVec,
-          // oneShotEvalDerVec);
-          DerStats greedyStats =
-              ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
-          std::cerr << "\tGreedy (STOP) ";
-          greedyStats.print(std::cerr); // apply most-likely action, respect STOP
-
-          DerStats bestGreedyStats =
-              ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
-          std::cerr << "\tGreedy (best) ";
-          bestGreedyStats.print(std::cerr); // one random trajectory, ignore S
+          // model-guided sampling (best of randomly sampled trajectory)
+          const int guidedSamples = 4; // number of random trajectories to sample
+          auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, evalDistVec, guidedSamples, false);
 
           DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
-          std::cerr << "\tSampled       ";
-          guidedStats.print(
-              std::cerr); // best of 4 random trajectories, ignore STOP
+          std::cerr << "\tSampled       "; guidedStats.print(std::cerr); // best of 4 random trajectories, ignore STOP
 
           // improve best-known solution on the go
           bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
@@ -358,9 +371,9 @@ void APO::train() {
         if (loggedRound) {
           trainTask.join();
           std::cerr << "\t";
-          L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
+          L.print(std::cerr) << ".\n"; // " Stop drop out=" << dropOutRate << "\n";
         } else {
-          trainThread.detach();
+          trainTask.detach();
         }
 
       } // rounds
@@ -371,19 +384,22 @@ void APO::train() {
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::thread
   searchThread([this, &keepRunning, &server]{
+
     // compute all one-step derivations
     std::vector<std::pair<int, Action>> rewrites;
     ProgramVec nextProgs;
     IntVec nextMaxDistVec;
     const int preAllocFactor = 16;
-    rewrites.reserve(preAllocFactor * progVec.size());
-    nextProgs.reserve(preAllocFactor * progVec.size());
-    nextMaxDistVec.reserve(preAllocFactor * progVec.size());
+    rewrites.reserve(preAllocFactor * numSamples);
+    nextProgs.reserve(preAllocFactor * numSamples);
+    nextMaxDistVec.reserve(preAllocFactor * numSamples);
     clock_t derTotal = 0;
     size_t numFinished = 0;
 
     // generate initial programs
-    generatePrograms(progVec, maxDistVec, numNextProgs, numSamples);
+    ProgramVec progVec(numSamples, nullptr);
+    IntVec maxDistVec(progVec.size(), 0);
+    generatePrograms(progVec, maxDistVec, 0, numSamples);
 
     while (keepRunning.load()) {
     // queue all programs that are reachable by a single move
@@ -419,11 +435,14 @@ void APO::train() {
       // nextProgs -> refDerVec
       auto refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
 
+#if 0
+      // TODO enable model inference
       if (g >= racketStartRound) {
         // model-driven search
         auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 4, true);
         refDerVec = FilterBest(refDerVec, guidedDerVec);
       }
+#endif
       clock_t endDer = clock();
       derTotal += (endDer - startDer);
 
@@ -432,27 +451,31 @@ void APO::train() {
       ResultDistVec refResults;
       montOpt.populateRefResults(refResults, refDerVec, rewrites, numSamples);
 
+      // submit results to server
+      server.submitResults(progVec, refResults);
+
     // sample moves from the reference distribution
       // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
       int numNextProgs = 0;
-      montOpt.sampleActions(
-          refResults, rewrites, nextProgs, nextMaxDistVec,
+      montOpt.sampleActions(refResults, rewrites, nextProgs,
 
       // actionHandler
         // 1. keep programs with applicable action in batch (progVec)
         // 2. tell the server about the detected derivations
-        [&numNextProgs, &nextProgs, &progVec, &maxDistVec, &nextMaxDer, &refDerVec, &server](int sampleIdx, int rewriteIdx) {
+        [&numNextProgs, &nextProgs, &progVec, &maxDistVec, &nextMaxDistVec, &refDerVec, &server](int sampleIdx, int rewriteIdx) {
             assert(sampleIdx >= numNextProgs);
 
             // register derivation info
             auto & startProg = progVec[sampleIdx];
             auto bestDer = refDerVec[rewriteIdx];
+
+            // submit detected derivation
             server.submitDerivation(progVec[sampleIdx], bestDer);
 
             // insert program after action into queue
             int progIdx = numNextProgs++;
             progVec[progIdx] = nextProgs[rewriteIdx];
-            maxDistVec[progIdx] = std::max(1, nextMaxDerVec[rewriteidx] - 1); // carry on unless there is an explicit STOP
+            maxDistVec[progIdx] = std::max(1, nextMaxDistVec[rewriteIdx] - 1); // carry on unless there is an explicit STOP
 
             return true;
         },
@@ -460,10 +483,10 @@ void APO::train() {
       // stopHandler
         // 1. tell the server about the detected stop derivation
         // 2. stop STOP-ped program from batch in any way (implicit)
-        [](int sampleIdx, StopReason reason) {
+        [&server, &progVec](int sampleIdx, StopReason reason) {
           if (reason == StopReason::Choice) {
             auto & stopProg = progVec[sampleIdx];
-            server.submitDerivation(stopProg, Derivation(stopProg));
+            server.submitDerivation(stopProg, Derivation(*stopProg));
           }
 
           return true;
@@ -477,8 +500,12 @@ void APO::train() {
       // fill up dropped slots with new programs
       generatePrograms(progVec, maxDistVec, numNextProgs, numSamples);
     }
-  );
+  });
 
+  searchThread.detach();
+  trainThread.join();
+
+  keepRunning.store(false); // shutdown all workers
 }
 
 
