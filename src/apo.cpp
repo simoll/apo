@@ -47,10 +47,66 @@ SampleServer {
   std::condition_variable producerCV;
   std::mutex queueMutex;
 
+  // statistics
+  struct QueueStats {
+    int numQueuePush; // number of ::submitResults to queue
+    size_t numWaitlessPush; // total time spent waiting (::submtResults)
+    size_t totalStallPush; // total time spent waiting (::submtResults)
+    int numQueuePull; // number of ::drawSamples from queue
+    int numWaitlessPull;
+    size_t totalStallPull; // total time spent waiting for data (::drawSamples)
+
+    void addPull(clock_t stallTime) {
+      ++numQueuePull;
+      numWaitlessPull += (stallTime == 0);
+      totalStallPull += stallTime;
+    }
+
+    void addPush(clock_t stallTime) {
+      ++numQueuePush;
+      numWaitlessPush += (stallTime == 0);
+      totalStallPush += stallTime;
+    }
+
+    double getPushStall() const { return numQueuePush > 0 ? ((totalStallPush / (double) numQueuePush) / CLOCKS_PER_SEC) : 0; }
+    double getPullStall() const { return numQueuePull> 0 ? ((totalStallPull / (double) numQueuePull) / CLOCKS_PER_SEC) : 0; }
+
+    double getWaitlessPullRatio() const { return numQueuePull > 0 ? (numWaitlessPull / (double) numQueuePull) : 1.0; }
+    double getWaitlessPushRatio() const { return numQueuePush > 0 ? (numWaitlessPush / (double) numQueuePush) : 1.0; }
+
+    std::ostream&
+    print(std::ostream & out) const {
+      out << "Queue (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio()
+          << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")";
+      return out;
+    }
+    QueueStats()
+    : numQueuePush(0)
+    , numWaitlessPush(0)
+    , totalStallPush(0)
+    , numQueuePull(0)
+    , numWaitlessPull(0)
+    , totalStallPull(0)
+    {}
+  };
+
+  QueueStats queueStats;
+
+  // read out current stats and reset
+  QueueStats
+  resetQueueStats() {
+    std::unique_lock lock(queueMutex);
+    auto currStats = queueStats;
+    queueStats = QueueStats();
+    return currStats;
+  }
+
+
   SampleServer(const std::string & serverConfig)
   : dropRand(0, 1)
   , elemRand(0, std::numeric_limits<int>::max())
   , sampleMap()
+  , queueStats()
   {
     Parser cfg(serverConfig);
 
@@ -64,9 +120,14 @@ SampleServer {
       std::unique_lock queueLock(queueMutex);
 
       // wait until slots in the training queue become available
+      clock_t stallTime = 0;
       if (trainingQueue.size() > queueLimit) {
+        clock_t startStallPush = clock();
         producerCV.wait(queueLock, [this](){ return trainingQueue.size() < queueLimit; });
+        clock_t endStallPush = clock();
+        stallTime = (endStallPush - startStallPush);
       }
+      queueStats.addPush(stallTime);
 
       // fill slots
       for (int i = 0; i < progVec.size(); ++i) {
@@ -107,9 +168,14 @@ SampleServer {
       const int numNeeded = endIdx - startIdx;
       assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
 
+      clock_t stallTime = 0;
       if (trainingQueue.size() < numNeeded) {
+        clock_t startStallPull = clock();
         consumerCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
+        clock_t endStallPull = clock();
+        stallTime = (endStallPull - startStallPull);
       }
+      queueStats.addPull(stallTime);
 
     // fetch samples
       for (int i = startIdx; i < endIdx; ++i) {
@@ -320,20 +386,14 @@ void APO::train() {
         if (loggedRound) {
           std::unique_lock lock(cpuMutex); // drop the lock every now and then..
 
-          auto stats = model.query_stats();
+        // dump some statistics
+          auto mlStats = model.query_stats();
           std::cerr << "\n- Round " << g << " (";
-          stats.print(std::cerr);
-          if (g == 0) {
-            std::cerr << ") -\n";
-          } else {
-            // report round timing statistics
-            double avgRoundTime = (roundTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
-            double avgDerTime = (derTotal / (double)numTimedRounds) / CLOCKS_PER_SEC;
-            std::cerr << ", avgRoundTime=" << avgRoundTime << " s, avgDerTime=" << avgDerTime << " s, numFinished=" << numFinished << " ) -\n";
-            roundTotal = 0;
-            derTotal = 0;
-            numTimedRounds = 0;
-          }
+          mlStats.print(std::cerr);
+
+          std::cerr << ") ";
+          auto queueStats = server.resetQueueStats();
+          queueStats.print(std::cerr) << " -\n";
 
           // print MCTS statistics
           montOpt.stats.print(std::cerr) << "\n";
