@@ -347,15 +347,18 @@ void APO::train() {
           DerStats bestGreedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
           std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr); // same as greedy but report best program along trajectory to STOP
 
+#if 0
+          // TODO too expensive
           // model-guided sampling (best of randomly sampled trajectory)
           const int guidedSamples = 4; // number of random trajectories to sample
           auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, evalDistVec, guidedSamples, false);
 
           DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
           std::cerr << "\tSampled       "; guidedStats.print(std::cerr); // best of 4 random trajectories, ignore STOP
+          bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
+#endif
 
           // improve best-known solution on the go
-          bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
           bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.greedyVec);
           bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.bestVec);
           DerStats bestStats = ScoreDerivations(refEvalDerVec, bestEvalDerVec);
