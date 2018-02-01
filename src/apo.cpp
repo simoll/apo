@@ -197,6 +197,7 @@ SampleServer {
   // derivation cache query
   bool
   getDerivation(ProgramPtr P, Derivation & oDer) const {
+#ifdef APO_ENABLE_DER_CACHE
     serverStats.numCacheQueries++;
 
     auto itDer = sampleMap.find(P);
@@ -204,13 +205,15 @@ SampleServer {
     serverStats.numCacheHits++;
     oDer = itDer->second.bestKnownDer;
     return true;
+#else
+    return false;
+#endif
   }
 
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
   bool
   submitDerivation(ProgramPtr P, Derivation sampleDer) {
-    // TODO enfore cache size limit
-
+#ifdef APO_ENABLE_DER_CACHE
     auto itSample = sampleMap.find(P);
     if (itSample == sampleMap.end()) {
       // std::cerr << "NEW!!!\n";
@@ -230,10 +233,14 @@ SampleServer {
       return true;
     }
     return false;
+#endif
+
+    return false;
   }
 
   int
   drawReplays(ProgramVec & oProgs, IntVec & maxDerVec, int startIdx, int endIdx, int extraDerSteps, int maxDerSteps) {
+#ifdef APO_ENABLE_DER_CACHE
     assert((endIdx - startIdx) <= sampleMap.size());
 
     int actualEndIdx = std::min<int>(startIdx + sampleMap.size(), endIdx);
@@ -271,6 +278,9 @@ SampleServer {
     }
 
     return actualEndIdx;
+#else
+    return startIdx; // disabled
+#endif
   }
 
   // TODO this blocks until (endIdx - startIdx) many training samples have been made available by the searchThread
@@ -723,6 +733,8 @@ void APO::train() {
         // 1. tell the server about the detected stop derivation
         // 2. drop STOP-ped program from batch in any way (implicit)
         [&server, &progVec](int sampleIdx, StopReason reason) {
+          assert((reason != StopReason::DerivationFailure) && "sampling can not fail on reference distribution!");
+          assert((reason != StopReason::InvalidDist) && "sampling can not fail on reference distribution!");
           if (reason == StopReason::Choice) {
             auto & stopProg = progVec[sampleIdx];
             server.submitDerivation(stopProg, Derivation(*stopProg));

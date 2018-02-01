@@ -578,7 +578,7 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
     IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << refResults.size() << "\n"; }
 
     // model picks stop?
-    bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
+    bool shouldStop = pRand(randGen()) <= refResults[s].stopDist;
 
     if (shouldStop) {
       bool keepGoing = stopHandler(s, StopReason::Choice); // stopped by choice
