@@ -585,6 +585,7 @@ void APO::train() {
       // #pragma omp parallel for ordered
 
       DerivationVec cachedDerVec;
+      cachedDerVec.reserve(preAllocSize);
 
     // queue all programs that are reachable by a single move
       for (int t = 0; t < progVec.size(); ++t) {
@@ -637,25 +638,24 @@ void APO::train() {
       assert(mctsNextProgs.size() == mctsRewrites.size());
 
       // concat mcts-derived results to solution vectors
-      // FIXME this is broken, we need to re-interleave the samples by their rewrite id
       const int totalNumNextProgs = mctsNextMaxDistVec.size() + cachedNextMaxDistVec.size();
       IntVec nextMaxDistVec; nextMaxDistVec.reserve(totalNumNextProgs);
       ProgramVec nextProgs; nextProgs.reserve(totalNumNextProgs);
       RewriteVec rewrites; rewrites.reserve(totalNumNextProgs);
       DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
 
-      // re-interleave the results (by their program index)
+      // re-interleave the results (by their program index) (or sampleAction will fail)
       int mctsIdx = 0;
       int cachedIdx = 0;
       for (int t = 0; t < progVec.size(); ) {
-        if (cachedRewrites[cachedIdx].first == t) {
+        if (cachedIdx < cachedRewrites.size() && cachedRewrites[cachedIdx].first == t) {
           refDerVec.push_back(cachedDerVec[cachedIdx]);
           nextMaxDistVec.push_back(cachedNextMaxDistVec[cachedIdx]);
           nextProgs.push_back(cachedNextProgs[cachedIdx]);
           rewrites.push_back(cachedRewrites[cachedIdx]);
 
           cachedIdx++;
-        } else if (mctsRewrites[mctsIdx].first == t) {
+        } else if (mctsIdx < mctsRewrites.size() && mctsRewrites[mctsIdx].first == t) {
           refDerVec.push_back(mctsDerVec[mctsIdx]);
           nextMaxDistVec.push_back(mctsNextMaxDistVec[mctsIdx]);
           nextProgs.push_back(mctsNextProgs[mctsIdx]);
