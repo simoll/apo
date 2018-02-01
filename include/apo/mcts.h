@@ -128,8 +128,8 @@ struct MonteCarloOptimizer {
   // convert detected derivations to refernce distributions
   void
   encodeBestDerivation(ResultDist & refResult, const DerivationVec & derivations, const CompactedRewrites & rewrites, const Derivation stopDer, int startIdx, int progIdx) const;
-  void
-  populateRefResults(ResultDistVec & refResults, const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & progVec) const;
+  ResultDistVec
+  populateRefResults(const DerivationVec & derivations, const CompactedRewrites & rewrites, const ProgramVec & progVec) const;
 
   using ActionCallback = std::function<bool(int sampleIdx, int rewriteIdx)>;
   using StopCallback = std::function<bool(int sampleIdx, StopReason reason)>;
