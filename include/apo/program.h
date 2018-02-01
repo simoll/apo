@@ -192,7 +192,22 @@ struct Statement {
     elements.value = constVal;
   }
 
-  bool operator==(const Statement & O) const { return !(*this < O) && !(O < *this); }
+  inline uint64_t hash() const {
+    return ((uint64_t) oc * 17) ^ (uint64_t) elements.value;
+  }
+
+  bool operator==(const Statement & O) const {
+    if (O.oc != oc) return false;
+    if (oc == OpCode::Constant) { return elements.value == O.elements.value; }
+
+    for (int i = 0; i < num_Operands(); ++i) {
+      if (getOperand(i) != O.getOperand(i)) return false;
+    }
+
+    // equal oc, equal parameters
+    return true;
+  }
+
   bool operator<(const Statement & O) const {
     if (oc < O.oc) return true;
     else if (O.oc < oc) return false;
@@ -422,7 +437,7 @@ struct Program {
 
   void dump() const { print(std::cerr); }
 
-  bool operator==(const Program & O) {
+  bool operator==(const Program & O) const {
     if (num_Params() != O.num_Params()) return false;
     if (size() != O.size()) return false;
     for (int pc = 0; pc < size(); ++pc) {
@@ -434,6 +449,8 @@ struct Program {
   bool operator<(const Program & O) const {
     if (num_Params() < O.num_Params()) return true;
     if (size() < O.size()) return true;
+    if (size() > O.size()) return false;
+    // equally sized
     for (int pc = 0; pc < size(); ++pc) {
       if (code[pc] < O.code[pc]) return true;
     }
@@ -451,6 +468,26 @@ template <class T> struct deref_less {
 
 using ProgramPtr = std::shared_ptr<Program>;
 using ProgramVec = std::vector<ProgramPtr>;
+
+struct ProgramPtrHasher {
+  std::size_t operator()(const ProgramPtr & Pptr) const
+  {
+    const Program & P = *Pptr;
+    uint64_t hash = 0;
+
+    #pragma omp simd reduction(^ : hash)
+    for (int i = 0; i < P.size(); ++i) {
+      hash ^= hash * 97 + P.code[i].hash();
+    }
+    return reinterpret_cast<std::size_t>(hash);
+  }
+};
+
+struct ProgramPtrEqual {
+  bool operator()( const ProgramPtr & A, const ProgramPtr & B) const { return *A == *B; }
+};
+
+
 
 static
 ProgramVec

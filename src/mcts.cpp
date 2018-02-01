@@ -576,7 +576,18 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                                : rewrites[rewriteIdx].first;
   for (int s = 0; s < refResults.size(); ++s) {
     IF_DEBUG_SAMPLE { std::cerr << "ACTION: " << refResults.size() << "\n"; }
-    if (s < nextSampleWithRewrite) {
+
+    // model picks stop?
+    bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
+
+    if (shouldStop) {
+      bool keepGoing = stopHandler(s, StopReason::Choice); // stopped by choice
+      if (!keepGoing) return;
+      continue;
+    }
+
+    if (s < nextSampleWithRewrite) { // assert(!shouldStop)
+      // no applicable action (but did not choose to STOP)
       bool keepGoing = stopHandler(s, StopReason::NoPossibleAction);
       if (!keepGoing) return;
 
@@ -591,16 +602,6 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
     bool checkedDist = false;
     for (int t = 0; !hit && (t < numRetries);
          ++t) { // FIXME consider a greedy strategy
-
-      // model picks stop?
-      bool shouldStop = pRand(randGen()) < refResults[s].stopDist;
-
-      if (shouldStop) {
-        bool keepGoing = stopHandler(s, StopReason::Choice); // stopped by choice
-        if (!keepGoing) return;
-        hit = true;
-        break;
-      }
 
       // valid distributions?
       if (!checkedDist && !IsValidDistribution(refResults[s].actionDist)) {

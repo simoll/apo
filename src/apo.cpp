@@ -13,7 +13,8 @@ SampleServer {
   std::uniform_real_distribution<float> dropRand;
   std::uniform_int_distribution<int> elemRand;
 
-  int queueLimit; // maximal training elements to reside in queue
+  int queueLimit; // maximal # training samples in queue
+  int derCacheLimit; // maximal # derivations in cache
 
   struct CachedDerivation {
     int numDrawn;               // how often was this sample drawn
@@ -29,7 +30,7 @@ SampleServer {
   };
 
   // internal sample map
-  std::map<ProgramPtr, CachedDerivation, deref_less<ProgramPtr>> sampleMap;
+  std::unordered_map<ProgramPtr, CachedDerivation, ProgramPtrHasher, ProgramPtrEqual> sampleMap;
 
   struct
   TrainingSample {
@@ -48,13 +49,22 @@ SampleServer {
   std::mutex queueMutex;
 
   // statistics
-  struct QueueStats {
+  struct ServerStats {
+  // queue stats
     int numQueuePush; // number of ::submitResults to queue
     size_t numWaitlessPush; // total time spent waiting (::submtResults)
     size_t totalStallPush; // total time spent waiting (::submtResults)
     int numQueuePull; // number of ::drawSamples from queue
     int numWaitlessPull;
     size_t totalStallPull; // total time spent waiting for data (::drawSamples)
+
+  // derivation & cache statistics
+    int derCacheSize; // size of derivation cache (at ::resetServerStats)
+    int numCacheQueries; // ::getDerivation queries
+    int numCacheHits; // cache hits in ::getDerivation
+    int numImprovedDer; // amount of improved results in ::submitDerivation
+    int numAddedDer; // number of derivation added in this round
+    int numSeenBeforeDer; // amount of improved results in ::submitDerivation
 
     void addPull(clock_t stallTime) {
       ++numQueuePull;
@@ -74,48 +84,63 @@ SampleServer {
     double getWaitlessPullRatio() const { return numQueuePull > 0 ? (numWaitlessPull / (double) numQueuePull) : 1.0; }
     double getWaitlessPushRatio() const { return numQueuePush > 0 ? (numWaitlessPush / (double) numQueuePush) : 1.0; }
 
+    double getCacheHitRate() const { return numCacheQueries > 0 ?  (numCacheHits / (double) numCacheQueries) : 1; }
+
     std::ostream&
     print(std::ostream & out) const {
-      out << "Queue (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio()
-          << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")";
+      out << "Server stats:\n"
+          << "\tQueue (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
+          << "\tCache (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n";
       return out;
     }
-    QueueStats()
+
+    ServerStats()
+    // queue stats
     : numQueuePush(0)
     , numWaitlessPush(0)
     , totalStallPush(0)
     , numQueuePull(0)
     , numWaitlessPull(0)
     , totalStallPull(0)
+
+    // der cache
+    , numCacheQueries(0)
+    , numCacheHits(0)
+    , numImprovedDer(0)
+    , numAddedDer(0)
+    , numSeenBeforeDer(0)
     {}
   };
 
-  QueueStats queueStats;
+  mutable ServerStats serverStats;
 
   // read out current stats and reset
-  QueueStats
-  resetQueueStats() {
+  ServerStats
+  resetServerStats() {
     std::unique_lock lock(queueMutex);
-    auto currStats = queueStats;
-    queueStats = QueueStats();
+    auto currStats = serverStats;
+    serverStats = ServerStats();
+
+    currStats.derCacheSize = sampleMap.size();
     return currStats;
   }
-
 
   SampleServer(const std::string & serverConfig)
   : dropRand(0, 1)
   , elemRand(0, std::numeric_limits<int>::max())
   , sampleMap()
-  , queueStats()
+  , serverStats()
   {
     Parser cfg(serverConfig);
 
     queueLimit = cfg.get_or_fail<int>("queueLimit"); // number of training samples in queue
+    derCacheLimit = cfg.get_or_fail<int>("derivationCacheLimit"); // number of program derivations to store in the derivation cache
   }
 
   // submit a complete action distribution
   void
   submitResults(ProgramVec & progVec, const ResultDistVec & resDistVec) {
+    // TODO append a random fraction to the replay queue
     {
       std::unique_lock queueLock(queueMutex);
 
@@ -127,7 +152,7 @@ SampleServer {
         clock_t endStallPush = clock();
         stallTime = (endStallPush - startStallPush);
       }
-      queueStats.addPush(stallTime);
+      serverStats.addPush(stallTime);
 
       // fill slots
       for (int i = 0; i < progVec.size(); ++i) {
@@ -138,20 +163,38 @@ SampleServer {
     consumerCV.notify_all();
   }
 
+  // derivation cache query
+  bool
+  getDerivation(ProgramPtr P, Derivation & oDer) const {
+    serverStats.numCacheQueries++;
+
+    auto itDer = sampleMap.find(P);
+    if (itDer == sampleMap.end()) return false;
+    serverStats.numCacheHits++;
+    oDer = itDer->second.bestKnownDer;
+    return true;
+  }
+
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
   bool
   submitDerivation(ProgramPtr P, Derivation sampleDer) {
-    return false; // FIXME use the sample cache
+    // TODO enfore cache size limit
 
     auto itSample = sampleMap.find(P);
     if (itSample == sampleMap.end()) {
+      // std::cerr << "NEW!!!\n";
+      serverStats.numAddedDer++;
       sampleMap[P] = CachedDerivation(sampleDer);
       return true;
     } else {
+      // std::cerr << "HIT!!!\n";
       auto & cached = itSample->second;
       if (sampleDer.betterThan(cached.bestKnownDer)) {
+        serverStats.numImprovedDer++;
         cached.bestKnownDer = sampleDer;
         cached.numDrawn = 0;
+      } else {
+        serverStats.numSeenBeforeDer++;
       }
       return true;
     }
@@ -175,7 +218,7 @@ SampleServer {
         clock_t endStallPull = clock();
         stallTime = (endStallPull - startStallPull);
       }
-      queueStats.addPull(stallTime);
+      serverStats.addPull(stallTime);
 
     // fetch samples
       for (int i = startIdx; i < endIdx; ++i) {
@@ -391,9 +434,9 @@ void APO::train() {
           std::cerr << "\n- Round " << g << " (";
           mlStats.print(std::cerr);
 
-          std::cerr << ") ";
-          auto queueStats = server.resetQueueStats();
-          queueStats.print(std::cerr) << " -\n";
+          std::cerr << ") -\n";
+          auto serverStats = server.resetServerStats();
+          serverStats.print(std::cerr);
 
           // print MCTS statistics
           montOpt.stats.print(std::cerr) << "\n";
@@ -478,13 +521,7 @@ void APO::train() {
   searchThread([this, &keepRunning, &server, &cpuMutex]{
 
     // compute all one-step derivations
-    std::vector<std::pair<int, Action>> rewrites;
-    ProgramVec nextProgs;
-    IntVec nextMaxDistVec;
-    const int preAllocFactor = 16;
-    rewrites.reserve(preAllocFactor * numSamples);
-    nextProgs.reserve(preAllocFactor * numSamples);
-    nextMaxDistVec.reserve(preAllocFactor * numSamples);
+    using RewriteVec = std::vector<std::pair<int, Action>>;
     clock_t derTotal = 0;
     size_t numFinished = 0;
 
@@ -493,11 +530,31 @@ void APO::train() {
     IntVec maxDistVec(progVec.size(), 0);
     generatePrograms(progVec, maxDistVec, 0, numSamples);
 
+    // results to find by mcts search
+    RewriteVec mctsRewrites;
+    ProgramVec mctsNextProgs;
+    IntVec mctsNextMaxDistVec;
+    const int preAllocSize = numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
+    mctsRewrites.reserve(preAllocSize);
+    mctsNextProgs.reserve(preAllocSize);
+    mctsNextMaxDistVec.reserve(preAllocSize);
+
+    // cached results (known)
+    IntVec nextMaxDistVec;
+    ProgramVec nextProgs;
+    RewriteVec rewrites;
+    nextProgs.reserve(preAllocSize);
+    rewrites.reserve(preAllocSize);
+
     while (keepRunning.load()) {
-    // queue all programs that are reachable by a single move
       // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
       // #pragma omp parallel for ordered
+
+      DerivationVec refDerVec; // shortest derivations to best scoring programs
+
+    // queue all programs that are reachable by a single move
       for (int t = 0; t < progVec.size(); ++t) {
+        // TODO prog itself could be a STOP candidate..
         for (int r = 0; r < ruleBook.num_Rules(); ++r) {
           const int progSize= progVec[t]->size();
           for (int pc = 0; pc + 1 < progSize ; ++pc) {
@@ -510,13 +567,24 @@ void APO::train() {
               continue;
             }
 
-            // compact list of programs resulting from a single action
-            // #pragma omp ordered
-            {
-              int remainingSteps = std::max(1, maxDistVec[t] - 1);
+            int remainingSteps = std::max(1, maxDistVec[t] - 1);
+
+            ProgramPtr actionProg(std::move(clonedProg)); // must not use @clonedProg after this point
+            Derivation cachedDer;
+            if (server.getDerivation(actionProg, cachedDer)) {
+              // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
+              refDerVec.push_back(cachedDer);
+
               nextMaxDistVec.push_back(remainingSteps);
-              nextProgs.emplace_back(clonedProg);
+              nextProgs.push_back(actionProg);
               rewrites.emplace_back(t, act);
+
+            } else {
+              // full MCTS derivation path for unseen programs
+              // montOpt.searchDerivations will fill in derivations for us
+              mctsNextMaxDistVec.push_back(remainingSteps);
+              mctsNextProgs.emplace_back(actionProg);
+              mctsRewrites.emplace_back(t, act);
             }
           }
         }
@@ -524,11 +592,19 @@ void APO::train() {
 
       clock_t startDer = clock();
       // best-effort search for optimal program
-      // nextProgs -> refDerVec
-      DerivationVec refDerVec;
+      // mctsNextProgs -> mctsDerVec
+      DerivationVec mctsDerVec;
       {
         std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
-        refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+        mctsDerVec = montOpt.searchDerivations(mctsNextProgs, pRandom, mctsNextMaxDistVec, numOptRounds, false);
+      }
+
+      // concat mcts-derived results to solution vectors
+      for (int i = 0; i < mctsDerVec.size(); ++i) {
+        refDerVec.push_back(mctsDerVec[i]);
+        nextMaxDistVec.push_back(mctsNextMaxDistVec[i]);
+        nextProgs.push_back(mctsNextProgs[i]);
+        rewrites.push_back(mctsRewrites[i]);
       }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
 
@@ -589,7 +665,6 @@ void APO::train() {
           return true;
         }
       );
-
 
       double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
       numFinished += (numSamples - numNextProgs);

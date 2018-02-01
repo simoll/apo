@@ -401,31 +401,21 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
 
   auto batchVec = new std::vector<Batch>();
   for (int s = startIdx; s < endIdx; s += config.infer_batch_size) {
-    bool allEmpty = true;
 
     // detect remainder batch
     int batch_size = std::min<int>(config.infer_batch_size, endIdx - s);
     Batch batch(*this, batch_size);
 
-    std::vector<bool> skippedProgVec(progs.size(), false);
-    // #pragma omp parallel for shared(batch, skippedProgVec, allEmpty)
+    int emptyBatchElements = 0;
+
+    // #pragma omp parallel for shared(batch)
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > config.prog_length) {
         batch.encode_Program(i, emptyP);
-        skippedProgVec[i] = true;
       } else {
-        allEmpty = false;
         batch.encode_Program(i, P);
       }
-    }
-
-    if (allEmpty) {
-      // early continue
-      for (int i = startIdx; i < endIdx; ++i) {
-        oResultDistVec[i] = createResultDist();
-      }
-      continue;
     }
 
     batchVec->push_back(batch);
