@@ -3,7 +3,7 @@
 #include <set>
 
 void
-DumpDist(const CatDist & dist) { PrintDist(std::cerr); }
+DumpDist(const CatDist & dist) { PrintDist(dist, std::cerr); }
 
 void
 PrintDist(const CatDist & dist, std::ostream & out) {
