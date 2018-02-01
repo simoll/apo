@@ -247,7 +247,7 @@ SampleServer {
 
   // ordered sample positions
     // samples stored in a map with linear random access complexity (order sample indices -> scan once through map)
-    std::vector<int> indices;
+    std::vector<int> indices(actualEndIdx - startIdx, 0);
     std::set<int> drawnIndices;
     for (int i = startIdx; i < actualEndIdx; ++i) {
       // draw fresh sample
@@ -255,7 +255,7 @@ SampleServer {
       do {
         sampleIdx = elemRand(randGen()) % sampleMap.size();
       } while (!drawnIndices.insert(sampleIdx).second);
-      indices.push_back(sampleIdx);
+      indices[i - startIdx] = sampleIdx;
     }
     std::sort(indices.begin(), indices.end());
 
@@ -429,7 +429,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = std::max<int>(4096, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 1000; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -620,7 +620,7 @@ void APO::train() {
 
             ProgramPtr actionProg(std::move(clonedProg)); // must not use @clonedProg after this point
             Derivation cachedDer;
-            if (server.getDerivation(actionProg, cachedDer)) {
+            if (false /* server.getDerivation(actionProg, cachedDer) */) {
               // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
               cachedDerVec.push_back(cachedDer);
               cachedNextMaxDistVec.push_back(remainingSteps);
@@ -750,17 +750,18 @@ void APO::train() {
 
       // fill up dropped slots with new programs
       int numRefill = numSamples - numNextProgs;
-      int numFreshSamples = (int) floor(numRefill * replayRate);
+      int numReplayedSamples = (int) floor(numRefill * replayRate);
 
       // replay samples
       clock_t startReplay = clock();
-      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numFreshSamples, extraExplorationDepth, maxExplorationDepth);
+      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, extraExplorationDepth, maxExplorationDepth);
       clock_t endReplay = clock();
 
-      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);
-
-      // generate new samples for the remainder
+      // fill up with completely new progs
       generatePrograms(progVec, maxDistVec, actualEndIdx, numSamples);
+
+      // report timing stats
+      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);
     }
   });
 

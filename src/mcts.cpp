@@ -559,7 +559,10 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
 
 // sample a target based on the reference distributions (discards STOP programs)
 
-// int sampleActions(ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, const IntVec & nextMaxDerVec, ProgramVec & oProgs, IntVec & oMaxDer);
+// rewrites are aligned with nextProgs and need to be in ascending order
+// refResults[t] is the reference distribution for progVec[t]
+// rewrites and nextProgs are compact lists of re-written programs in ascending order (with regards to progVec[t])
+// that means the resulting programs from progVec[t] fall compactly in a range [start_t,.. ,end_t] in the rewrites and nextProgs arrays
 void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                        const CompactedRewrites &rewrites,
                                        const ProgramVec &nextProgs,
@@ -568,8 +571,6 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
   ) {
 #define IF_DEBUG_SAMPLE if (false)
   std::uniform_real_distribution<float> pRand(0, 1.0);
-
-  int numGenerated = 0;
 
   int rewriteIdx = 0;
   int nextSampleWithRewrite = rewrites.empty() ? std::numeric_limits<int>::max()
@@ -630,6 +631,7 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
           actionHandler(s, i);
 
           hit = true;
+          rewriteIdx = i; // optimization
           break;
         }
       }

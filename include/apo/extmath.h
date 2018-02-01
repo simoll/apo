@@ -14,6 +14,7 @@
 
 using CatDist = std::vector<float>;
 
+void DumpDist(const CatDist & dist);
 void PrintDist(const CatDist & dist, std::ostream &);
 
 static void

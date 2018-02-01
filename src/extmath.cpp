@@ -3,6 +3,9 @@
 #include <set>
 
 void
+DumpDist(const CatDist & dist) { PrintDist(std::cerr); }
+
+void
 PrintDist(const CatDist & dist, std::ostream & out) {
 #if 0
   for (int i = 0; i < dist.size(); ++i) {
