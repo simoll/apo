@@ -428,7 +428,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 10; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 1000; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
