@@ -100,8 +100,8 @@ SampleServer {
 
     std::ostream&
     print(std::ostream & out) const {
-      out << "Server stats:\n"
-          << "\tQueue  (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
+      out << "Server: "
+          << "Queue  (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
           << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n"
           << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
       return out;
@@ -212,7 +212,7 @@ SampleServer {
 
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
   bool
-  submitDerivation(ProgramPtr P, Derivation sampleDer) {
+  submitDerivation(const ProgramPtr & P, const Derivation & sampleDer) {
 #ifdef APO_ENABLE_DER_CACHE
     auto itSample = sampleMap.find(P);
     if (itSample == sampleMap.end()) {
@@ -226,7 +226,6 @@ SampleServer {
       if (sampleDer.betterThan(cached.bestKnownDer)) {
         serverStats.numImprovedDer++;
         cached.bestKnownDer = sampleDer;
-        cached.numDrawn = 0;
       } else {
         serverStats.numSeenBeforeDer++;
       }
@@ -485,13 +484,17 @@ void APO::train() {
           serverStats.print(std::cerr);
 
           // print MCTS statistics
+#if 0
+          // there must be no derivation failures (also these belong to the searchThread -> need to synchronize to fetch them)
           montOpt.stats.print(std::cerr) << "\n";
           montOpt.stats = MonteCarloOptimizer::Stats();
+#endif
 
           auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec);
 
+          std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
-          std::cerr << "\tGreedy (STOP) "; greedyStats.print(std::cerr); // apply most-likely action, respect STOP
+          std::cerr << "Greedy (STOP) "; greedyStats.print(std::cerr); // apply most-likely action, respect STOP
 
           DerStats bestGreedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
           std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr); // same as greedy but report best program along trajectory to STOP
@@ -553,7 +556,7 @@ void APO::train() {
           float dropOutRate = numStops / (double) refResults.size();
 
           trainTask.join();
-          std::cerr << "\t";
+          std::cerr << "Loss:   ";
           L.print(std::cerr) << ". Stop drop out=" << dropOutRate << "\n";
         }
 
@@ -621,7 +624,7 @@ void APO::train() {
 
             ProgramPtr actionProg(std::move(clonedProg)); // must not use @clonedProg after this point
             Derivation cachedDer;
-            if (false /* server.getDerivation(actionProg, cachedDer) */) {
+            if (server.getDerivation(actionProg, cachedDer)) {
               // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
               cachedDerVec.push_back(cachedDer);
               cachedNextMaxDistVec.push_back(remainingSteps);
@@ -647,6 +650,9 @@ void APO::train() {
       {
         std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
         mctsDerVec = montOpt.searchDerivations(mctsNextProgs, pRandom, mctsNextMaxDistVec, numOptRounds, false);
+        for (int i = 0; i < mctsNextProgs.size(); ++i) {
+          server.submitDerivation(mctsNextProgs[i], mctsDerVec[i]);
+        }
       }
 
       assert(mctsDerVec.size() == mctsNextMaxDistVec.size());
@@ -717,6 +723,7 @@ void APO::train() {
             // register derivation info
             auto & startProg = progVec[sampleIdx];
             auto bestDer = refDerVec[rewriteIdx];
+            bestDer.shortestDerivation++; // refDerVec is referring to @nextProgs, which are one step away from their predecessors in @progVec
 
             // submit detected derivation
             server.submitDerivation(progVec[sampleIdx], bestDer);
