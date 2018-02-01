@@ -14,9 +14,10 @@ struct Action {
   int pc;
   int ruleId;
 
-  std::ostream & print(std::ostream& out) {
+  std::ostream & print(std::ostream& out) const {
     out << "Action (pc=" << pc << ", ruleId=" << ruleId << ")"; return out;
   }
+  void dump() const { print(std::cerr); } // TODO move to object file
 
   bool operator==(const Action & O) const {
     return O.pc == pc && O.ruleId == ruleId;
@@ -51,6 +52,8 @@ struct RuleBook {
         rewriteRuleVec.emplace_back(i, leftToRight);
       }
     }
+
+    std::cerr << "RuleBook::num_Rules = " << num_Rules() << "\n";
   }
 
   inline const RewriteRule & getRewriteRule(int ruleId) const { return rewriteRuleVec[ruleId]; }

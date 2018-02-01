@@ -459,8 +459,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(const ProgramVec &p
   return states;
 }
 
-#define IF_DEBUG_MC if (true)
-
 // convert detected derivations to refernce distributions
 void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const DerivationVec &derivations, const CompactedRewrites &rewrites, const Derivation stopDer, int startIdx, int progIdx) const {
   // find best-possible rewrite
@@ -643,16 +641,14 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
         randomRew.print(std::cerr) << "\n";
       }
 
-      // scan through legal actions until hit
-      for (int i = rewriteIdx; i < rewrites.size() && rewrites[i].first == s;
-           ++i) {
-        if ((rewrites[i].second == randomRew)) {
+      // scan through rewrite block until hit
+      for (; rewriteIdx < rewrites.size() && rewrites[rewriteIdx].first == s; ++rewriteIdx) {
+        if ((rewrites[rewriteIdx].second == randomRew)) {
 
-          assert(i < nextProgs.size());
-          actionHandler(s, i);
-
+          assert(rewriteIdx < nextProgs.size());
+          // apply action
+          actionHandler(s, rewriteIdx);
           hit = true;
-          rewriteIdx = i; // optimization
           break;
         }
       }
@@ -663,13 +659,6 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
       bool keepGoing = stopHandler(s, StopReason::DerivationFailure);
       if (!keepGoing) return;
       stats.sampleActionFailures++;
-    }
-
-    if (rewriteIdx >= rewrites.size()) {
-      nextSampleWithRewrite = std::numeric_limits<int>::max(); // no more rewrites -> mark all
-                                           // remaining programs as STOP
-    } else {
-      nextSampleWithRewrite = rewrites[rewriteIdx].first;
     }
   }
 

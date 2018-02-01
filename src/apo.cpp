@@ -349,7 +349,6 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
     , model("build/rdn", modelConfig, ruleBook.num_Rules())
     , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params)
     , expMut(ruleBook)
-    , numFinished(0)
 {
   std::cerr << "Loading task file " << taskFile << "\n";
 
@@ -429,7 +428,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 1000; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 10; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -569,33 +568,36 @@ void APO::train() {
 
     // compute all one-step derivations
     using RewriteVec = std::vector<std::pair<int, Action>>;
-    clock_t derTotal = 0;
-    size_t numFinished = 0;
 
     // generate initial programs
     ProgramVec progVec(numSamples, nullptr);
     IntVec maxDistVec(progVec.size(), 0);
     generatePrograms(progVec, maxDistVec, 0, numSamples);
 
-    // results to find by mcts search
-    RewriteVec mctsRewrites;
-    ProgramVec mctsNextProgs;
-    IntVec mctsNextMaxDistVec;
-    const int preAllocSize = numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
-    mctsRewrites.reserve(preAllocSize);
-    mctsNextProgs.reserve(preAllocSize);
-    mctsNextMaxDistVec.reserve(preAllocSize);
-
-    // cached results (known)
-    IntVec cachedNextMaxDistVec;
-    ProgramVec cachedNextProgs;
-    RewriteVec cachedRewrites;
-    cachedNextProgs.reserve(preAllocSize);
-    cachedRewrites.reserve(preAllocSize);
-
     while (keepRunning.load()) {
       // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
       // #pragma omp parallel for ordered
+
+      assert(progVec.size() == numSamples);
+      assert(maxDistVec.size() == numSamples);
+
+      const int preAllocSize = numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
+
+      // results to find by mcts search
+      RewriteVec mctsRewrites;
+      ProgramVec mctsNextProgs;
+      IntVec mctsNextMaxDistVec;
+      mctsRewrites.reserve(preAllocSize);
+      mctsNextProgs.reserve(preAllocSize);
+      mctsNextMaxDistVec.reserve(preAllocSize);
+
+      // cached results (known)
+      IntVec cachedNextMaxDistVec;
+      ProgramVec cachedNextProgs;
+      RewriteVec cachedRewrites;
+      cachedNextMaxDistVec.reserve(preAllocSize);
+      cachedNextProgs.reserve(preAllocSize);
+      cachedRewrites.reserve(preAllocSize);
 
       DerivationVec cachedDerVec;
       cachedDerVec.reserve(preAllocSize);
@@ -603,7 +605,6 @@ void APO::train() {
     // queue all programs that are reachable by a single move
       clock_t startGenerateMove = clock();
       for (int t = 0; t < progVec.size(); ++t) {
-        // TODO prog itself could be a STOP candidate..
         for (int r = 0; r < ruleBook.num_Rules(); ++r) {
           const int progSize = progVec[t]->size();
           for (int pc = 0; pc + 1 < progSize ; ++pc) {
@@ -696,8 +697,7 @@ void APO::train() {
 
       // (rewrites, refDerVec) --> refResults
       // decode reference ResultDistVec from detected derivations
-      ResultDistVec refResults;
-      montOpt.populateRefResults(refResults, refDerVec, rewrites, progVec);
+      ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
 
       // submit results to server
       server.submitResults(progVec, refResults);
@@ -746,7 +746,6 @@ void APO::train() {
       clock_t endSample = clock();
 
       double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
-      numFinished += (numSamples - numNextProgs);
 
       // fill up dropped slots with new programs
       int numRefill = numSamples - numNextProgs;

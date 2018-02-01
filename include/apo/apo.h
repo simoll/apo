@@ -64,7 +64,6 @@ struct APO {
 // eval round interval
   int logRate;
   size_t numRounds; // total training rounds
-  size_t numFinished; // number of games stopped by MCTS
   size_t racketStartRound; // round when the racket should start (model based query)
 
   bool saveCheckpoints; // save model checkpoints at @logRate
