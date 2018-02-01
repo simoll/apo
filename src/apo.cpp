@@ -70,6 +70,7 @@ SampleServer {
     clock_t derTotalTime;
     clock_t sampleTotalTime;
     clock_t replayTotalTime;
+    clock_t generateMoveTotalTime;
     int numSearchRounds;
 
     void addPull(clock_t stallTime) {
@@ -101,7 +102,7 @@ SampleServer {
       out << "Server stats:\n"
           << "\tQueue  (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
           << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n"
-          << "\tSearch (avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
+          << "\tSearch (avgGenerateMoveTime=" << generateMoveTotalTime << "s ,< avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
       return out;
     }
 
@@ -122,6 +123,7 @@ SampleServer {
     , numSeenBeforeDer(0)
 
     // search statistics
+    , generateMoveTotalTime(0)
     , derTotalTime(0)
     , sampleTotalTime(0)
     , replayTotalTime(0)
@@ -131,11 +133,11 @@ SampleServer {
 
   mutable ServerStats serverStats;
 
-  // server.addSearchRoundStats(endDer - startDer, endSample - startSample, endReplay - startReplay)
   void
-  addSearchRoundStats(clock_t deltaDer, clock_t deltaSampleActions, clock_t deltaReplay) {
+  addSearchRoundStats(clock_t deltaGenerateMove, clock_t deltaDer, clock_t deltaSampleActions, clock_t deltaReplay) {
     std::unique_lock lock(queueMutex);
     serverStats.numSearchRounds++;
+    serverStats.generateMoveTotalTime += deltaGenerateMove;
     serverStats.derTotalTime += deltaDer;
     serverStats.sampleTotalTime += deltaSampleActions;
     serverStats.replayTotalTime += deltaReplay;
@@ -588,6 +590,7 @@ void APO::train() {
       cachedDerVec.reserve(preAllocSize);
 
     // queue all programs that are reachable by a single move
+      clock_t startGenerateMove = clock();
       for (int t = 0; t < progVec.size(); ++t) {
         // TODO prog itself could be a STOP candidate..
         for (int r = 0; r < ruleBook.num_Rules(); ++r) {
@@ -623,6 +626,7 @@ void APO::train() {
           }
         }
       }
+      clock_t endGenerateMove = clock();
 
       clock_t startDer = clock();
       // best-effort search for optimal program
@@ -740,7 +744,7 @@ void APO::train() {
       int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numFreshSamples, extraExplorationDepth, maxExplorationDepth);
       clock_t endReplay = clock();
 
-      server.addSearchRoundStats(endDer - startDer, endSample - startSample, endReplay - startReplay);
+      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);
 
       // generate new samples for the remainder
       generatePrograms(progVec, maxDistVec, actualEndIdx, numSamples);
