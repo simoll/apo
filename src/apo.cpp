@@ -250,10 +250,9 @@ SampleServer {
     std::sort(indices.begin(), indices.end());
 
     // scan through sampleMap and drawn samples
-    auto it = sampleMap.begin();
     int pos = 0; // iterator offset into map
-    int i = 0;
-    while (i + startIdx < actualEndIdx) {
+    auto it = sampleMap.begin();
+    for(int i = 0; i + startIdx < actualEndIdx; ++i) {
       assert(indices[i] >= pos);
       // advance to next sample position
       if (indices[i] > pos) {
@@ -266,7 +265,6 @@ SampleServer {
       oProgs[startIdx + i] = it->first;
       maxDerVec[startIdx + i] = std::min(sample.bestKnownDer.shortestDerivation + extraDerSteps, maxDerSteps);
       sample.numDrawn++;
-      ++i;
     }
 
     return actualEndIdx;
@@ -576,17 +574,17 @@ void APO::train() {
     mctsNextMaxDistVec.reserve(preAllocSize);
 
     // cached results (known)
-    IntVec nextMaxDistVec;
-    ProgramVec nextProgs;
-    RewriteVec rewrites;
-    nextProgs.reserve(preAllocSize);
-    rewrites.reserve(preAllocSize);
+    IntVec cachedNextMaxDistVec;
+    ProgramVec cachedNextProgs;
+    RewriteVec cachedRewrites;
+    cachedNextProgs.reserve(preAllocSize);
+    cachedRewrites.reserve(preAllocSize);
 
     while (keepRunning.load()) {
       // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
       // #pragma omp parallel for ordered
 
-      DerivationVec refDerVec; // shortest derivations to best scoring programs
+      DerivationVec cachedDerVec;
 
     // queue all programs that are reachable by a single move
       for (int t = 0; t < progVec.size(); ++t) {
@@ -609,11 +607,10 @@ void APO::train() {
             Derivation cachedDer;
             if (server.getDerivation(actionProg, cachedDer)) {
               // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
-              refDerVec.push_back(cachedDer);
-
-              nextMaxDistVec.push_back(remainingSteps);
-              nextProgs.push_back(actionProg);
-              rewrites.emplace_back(t, act);
+              cachedDerVec.push_back(cachedDer);
+              cachedNextMaxDistVec.push_back(remainingSteps);
+              cachedNextProgs.push_back(actionProg);
+              cachedRewrites.emplace_back(t, act);
 
             } else {
               // full MCTS derivation path for unseen programs
@@ -635,12 +632,40 @@ void APO::train() {
         mctsDerVec = montOpt.searchDerivations(mctsNextProgs, pRandom, mctsNextMaxDistVec, numOptRounds, false);
       }
 
+      assert(mctsDerVec.size() == mctsNextMaxDistVec.size());
+      assert(mctsNextMaxDistVec.size() == mctsNextProgs.size());
+      assert(mctsNextProgs.size() == mctsRewrites.size());
+
       // concat mcts-derived results to solution vectors
-      for (int i = 0; i < mctsDerVec.size(); ++i) {
-        refDerVec.push_back(mctsDerVec[i]);
-        nextMaxDistVec.push_back(mctsNextMaxDistVec[i]);
-        nextProgs.push_back(mctsNextProgs[i]);
-        rewrites.push_back(mctsRewrites[i]);
+      // FIXME this is broken, we need to re-interleave the samples by their rewrite id
+      const int totalNumNextProgs = mctsNextMaxDistVec.size() + cachedNextMaxDistVec.size();
+      IntVec nextMaxDistVec; nextMaxDistVec.reserve(totalNumNextProgs);
+      ProgramVec nextProgs; nextProgs.reserve(totalNumNextProgs);
+      RewriteVec rewrites; rewrites.reserve(totalNumNextProgs);
+      DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
+
+      // re-interleave the results (by their program index)
+      int mctsIdx = 0;
+      int cachedIdx = 0;
+      for (int t = 0; t < progVec.size(); ) {
+        if (cachedRewrites[cachedIdx].first == t) {
+          refDerVec.push_back(cachedDerVec[cachedIdx]);
+          nextMaxDistVec.push_back(cachedNextMaxDistVec[cachedIdx]);
+          nextProgs.push_back(cachedNextProgs[cachedIdx]);
+          rewrites.push_back(cachedRewrites[cachedIdx]);
+
+          cachedIdx++;
+        } else if (mctsRewrites[mctsIdx].first == t) {
+          refDerVec.push_back(mctsDerVec[mctsIdx]);
+          nextMaxDistVec.push_back(mctsNextMaxDistVec[mctsIdx]);
+          nextProgs.push_back(mctsNextProgs[mctsIdx]);
+          rewrites.push_back(mctsRewrites[mctsIdx]);
+
+          mctsIdx++;
+        } else {
+          // all results for progVec[t] have been merged, continue
+          ++t;
+        }
       }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
       clock_t endDer = clock();
