@@ -93,6 +93,7 @@ SampleServer {
 
     double getCacheHitRate() const { return numCacheQueries > 0 ?  (numCacheHits / (double) numCacheQueries) : 1; }
 
+    double getAvgGenerateMoveTime() const { return numSearchRounds > 0 ? ((generateMoveTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
     double getAvgDerTime() const { return numSearchRounds > 0 ? ((derTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
     double getAvgSampleTime() const { return numSearchRounds > 0 ? ((sampleTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
     double getAvgReplaySampleTime() const { return numSearchRounds > 0 ? ((replayTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
@@ -102,7 +103,7 @@ SampleServer {
       out << "Server stats:\n"
           << "\tQueue  (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
           << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n"
-          << "\tSearch (avgGenerateMoveTime=" << generateMoveTotalTime << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
+          << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
       return out;
     }
 
@@ -643,10 +644,10 @@ void APO::train() {
 
       // concat mcts-derived results to solution vectors
       const int totalNumNextProgs = mctsNextMaxDistVec.size() + cachedNextMaxDistVec.size();
+      DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
       IntVec nextMaxDistVec; nextMaxDistVec.reserve(totalNumNextProgs);
       ProgramVec nextProgs; nextProgs.reserve(totalNumNextProgs);
       RewriteVec rewrites; rewrites.reserve(totalNumNextProgs);
-      DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
 
       // re-interleave the results (by their program index) (or sampleAction will fail)
       int mctsIdx = 0;
@@ -720,7 +721,7 @@ void APO::train() {
 
       // stopHandler
         // 1. tell the server about the detected stop derivation
-        // 2. stop STOP-ped program from batch in any way (implicit)
+        // 2. drop STOP-ped program from batch in any way (implicit)
         [&server, &progVec](int sampleIdx, StopReason reason) {
           if (reason == StopReason::Choice) {
             auto & stopProg = progVec[sampleIdx];
