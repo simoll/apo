@@ -66,6 +66,12 @@ SampleServer {
     int numAddedDer; // number of derivation added in this round
     int numSeenBeforeDer; // amount of improved results in ::submitDerivation
 
+  // search thread statistics
+    clock_t derTotalTime;
+    clock_t sampleTotalTime;
+    clock_t replayTotalTime;
+    int numSearchRounds;
+
     void addPull(clock_t stallTime) {
       ++numQueuePull;
       numWaitlessPull += (stallTime == 0);
@@ -86,11 +92,16 @@ SampleServer {
 
     double getCacheHitRate() const { return numCacheQueries > 0 ?  (numCacheHits / (double) numCacheQueries) : 1; }
 
+    double getAvgDerTime() const { return numSearchRounds > 0 ? ((derTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
+    double getAvgSampleTime() const { return numSearchRounds > 0 ? ((sampleTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
+    double getAvgReplaySampleTime() const { return numSearchRounds > 0 ? ((replayTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
+
     std::ostream&
     print(std::ostream & out) const {
       out << "Server stats:\n"
-          << "\tQueue (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
-          << "\tCache (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n";
+          << "\tQueue  (avgPushStall=" << getPushStall() << " s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
+          << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n"
+          << "\tSearch (avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ")\n";
       return out;
     }
 
@@ -109,10 +120,27 @@ SampleServer {
     , numImprovedDer(0)
     , numAddedDer(0)
     , numSeenBeforeDer(0)
+
+    // search statistics
+    , derTotalTime(0)
+    , sampleTotalTime(0)
+    , replayTotalTime(0)
+    , numSearchRounds(0)
     {}
   };
 
   mutable ServerStats serverStats;
+
+  // server.addSearchRoundStats(endDer - startDer, endSample - startSample, endReplay - startReplay)
+  void
+  addSearchRoundStats(clock_t deltaDer, clock_t deltaSampleActions, clock_t deltaReplay) {
+    std::unique_lock lock(queueMutex);
+    serverStats.numSearchRounds++;
+    serverStats.derTotalTime += deltaDer;
+    serverStats.sampleTotalTime += deltaSampleActions;
+    serverStats.replayTotalTime += deltaReplay;
+  }
+
 
   // read out current stats and reset
   ServerStats
@@ -201,6 +229,49 @@ SampleServer {
     return false;
   }
 
+  int
+  drawReplays(ProgramVec & oProgs, IntVec & maxDerVec, int startIdx, int endIdx, int extraDerSteps, int maxDerSteps) {
+    assert((endIdx - startIdx) <= sampleMap.size());
+
+    int actualEndIdx = std::min<int>(startIdx + sampleMap.size(), endIdx);
+
+  // ordered sample positions
+    // samples stored in a map with linear random access complexity (order sample indices -> scan once through map)
+    std::vector<int> indices;
+    std::set<int> drawnIndices;
+    for (int i = startIdx; i < actualEndIdx; ++i) {
+      // draw fresh sample
+      int sampleIdx;
+      do {
+        sampleIdx = elemRand(randGen()) % sampleMap.size();
+      } while (!drawnIndices.insert(sampleIdx).second);
+      indices.push_back(sampleIdx);
+    }
+    std::sort(indices.begin(), indices.end());
+
+    // scan through sampleMap and drawn samples
+    auto it = sampleMap.begin();
+    int pos = 0; // iterator offset into map
+    int i = 0;
+    while (i + startIdx < actualEndIdx) {
+      assert(indices[i] >= pos);
+      // advance to next sample position
+      if (indices[i] > pos) {
+        std::advance(it, indices[i] - pos);
+        pos = indices[i];
+      }
+
+      // take sample
+      auto & sample = it->second;
+      oProgs[startIdx + i] = it->first;
+      maxDerVec[startIdx + i] = std::min(sample.bestKnownDer.shortestDerivation + extraDerSteps, maxDerSteps);
+      sample.numDrawn++;
+      ++i;
+    }
+
+    return actualEndIdx;
+  }
+
   // TODO this blocks until (endIdx - startIdx) many training samples have been made available by the searchThread
   void
   drawSamples(ProgramVec & oProgs, ResultDistVec & oResultDist, int startIdx, int endIdx) {
@@ -233,42 +304,6 @@ SampleServer {
 
     producerCV.notify_all();
     // TODO draw samples from the training queue
-#if 0
-    assert((endIdx - startIdx) <= sampleMap.size());
-
-  // ordered sample positions
-    // samples stored in a map with linear random access complexity (order sample indices -> scan once through map)
-    std::vector<int> indices;
-    std::set<int> drawnIndices;
-    for (int i = startIdx; i < endIdx; ++i) {
-      // draw fresh sample
-      int sampleIdx;
-      do {
-        sampleIdx = elemRand(randGen()) % sampleMap.size();
-      } while (!drawnIndices.insert(sampleIdx).second);
-    }
-    std::sort(indices.begin(), indices.end());
-
-    // scan through sampleMap and drawn samples
-    auto it = sampleMap.begin();
-    int pos = 0; // iterator offset into map
-    int i = 0;
-    while (i + startIdx < endIdx) {
-      assert(indices[i] >= pos);
-      // advance to next sample position
-      if (indices[i] > pos) {
-        std::advance(it, indices[i] - pos);
-        pos = indices[i];
-      }
-
-      // take sample
-      auto & sample = it->second;
-      oProgs[startIdx + i] = it->first;
-      oDerVec[startIdx + i] = sample.bestKnownDer;
-      sample.numDrawn++;
-      ++i;
-    }
-#endif
   }
 };
 
@@ -330,6 +365,8 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   numRounds = task.get_or_fail<size_t>( "numRounds"); // 10; // number of round followed by an evaluation
   racketStartRound = task.get_or_fail<size_t>( "racketStartRound"); // 10; // number of round followed by an evaluation
 
+  replayRate = task.get_or_fail<double>("replayRate"); // 10; // number of round followed by an evaluation
+
   saveCheckpoints = task.get_or_fail<int>("saveModel") != 0; // save model checkpoints at @logRate
 
   if (saveCheckpoints) {
@@ -341,7 +378,7 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
 }
 
 inline void
-APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handleFunc) {
+APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> &&handleFunc) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
@@ -418,7 +455,6 @@ void APO::train() {
     Task trainTask;
     while (keepRunning.load()) {
       clock_t roundTotal = 0;
-      clock_t derTotal = 0;
       size_t numTimedRounds = 0;
 
       std::cerr << "\n-- Training --\n";
@@ -556,7 +592,7 @@ void APO::train() {
       for (int t = 0; t < progVec.size(); ++t) {
         // TODO prog itself could be a STOP candidate..
         for (int r = 0; r < ruleBook.num_Rules(); ++r) {
-          const int progSize= progVec[t]->size();
+          const int progSize = progVec[t]->size();
           for (int pc = 0; pc + 1 < progSize ; ++pc) {
             Action act{pc, r};
 
@@ -607,6 +643,7 @@ void APO::train() {
         rewrites.push_back(mctsRewrites[i]);
       }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
+      clock_t endDer = clock();
 
 #if 0
       // TODO enable model inference
@@ -616,8 +653,6 @@ void APO::train() {
         refDerVec = FilterBest(refDerVec, guidedDerVec);
       }
 #endif
-      clock_t endDer = clock();
-      derTotal += (endDer - startDer);
 
       // (rewrites, refDerVec) --> refResults
       // decode reference ResultDistVec from detected derivations
@@ -627,6 +662,7 @@ void APO::train() {
       // submit results to server
       server.submitResults(progVec, refResults);
 
+      clock_t startSample = clock();
     // sample moves from the reference distribution
       // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
       int numNextProgs = 0;
@@ -665,12 +701,24 @@ void APO::train() {
           return true;
         }
       );
+      clock_t endSample = clock();
 
       double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
       numFinished += (numSamples - numNextProgs);
 
       // fill up dropped slots with new programs
-      generatePrograms(progVec, maxDistVec, numNextProgs, numSamples);
+      int numRefill = numSamples - numNextProgs;
+      int numFreshSamples = (int) floor(numRefill * replayRate);
+
+      // replay samples
+      clock_t startReplay = clock();
+      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numFreshSamples, extraExplorationDepth, maxExplorationDepth);
+      clock_t endReplay = clock();
+
+      server.addSearchRoundStats(endDer - startDer, endSample - startSample, endReplay - startReplay);
+
+      // generate new samples for the remainder
+      generatePrograms(progVec, maxDistVec, actualEndIdx, numSamples);
     }
   });
 

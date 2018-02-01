@@ -59,6 +59,7 @@ struct APO {
   double pRandom; //1.0; // probability of ignoring the model for inference
   int numOptRounds; //50; // number of optimization retries
   int numEvalOptRounds; //50; // number of optimization retries
+  double replayRate; // number of replayed instances (from derivation cache)
 
 // eval round interval
   int logRate;
@@ -80,7 +81,7 @@ struct APO {
   generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, int startIdx, int endIdx);
 
   void
-  generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> handler);
+  generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> &&handler);
 
   void train();
 };

@@ -475,9 +475,8 @@ struct ProgramPtrHasher {
     const Program & P = *Pptr;
     uint64_t hash = 0;
 
-    #pragma omp simd reduction(^ : hash)
     for (int i = 0; i < P.size(); ++i) {
-      hash ^= hash * 97 + P.code[i].hash();
+      hash ^= (P.code[i].hash() << i);
     }
     return reinterpret_cast<std::size_t>(hash);
   }

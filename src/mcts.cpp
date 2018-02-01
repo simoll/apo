@@ -563,8 +563,8 @@ void MonteCarloOptimizer::populateRefResults(ResultDistVec &refResults,
 void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                        const CompactedRewrites &rewrites,
                                        const ProgramVec &nextProgs,
-                                       ActionCallback actionHandler,
-                                       StopCallback stopHandler
+                                       ActionCallback &&actionHandler,
+                                       StopCallback &&stopHandler
   ) {
 #define IF_DEBUG_SAMPLE if (false)
   std::uniform_real_distribution<float> pRand(0, 1.0);

@@ -135,7 +135,7 @@ struct MonteCarloOptimizer {
   using StopCallback = std::function<bool(int sampleIdx, StopReason reason)>;
 
   // sample a target based on the reference distributions (discards STOP programs)
-  void sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, ActionCallback actionHandler, StopCallback stopHandler);
+  void sampleActions(const ResultDistVec & refResults, const CompactedRewrites & rewrites, const ProgramVec & nextProgs, ActionCallback &&actionHandler, StopCallback &&stopHandler);
 
 #undef IF_DEBUG_MV
 };
