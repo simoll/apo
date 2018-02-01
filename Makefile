@@ -5,9 +5,9 @@ SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o, ${SOURCES})
 HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
-FLAGS=
-
 include make.conf
+
+FLAGS=-DAPO_ENABLE_DER_CACHE
 
 INC=-Isrc/ \
     -Iinclude \
@@ -45,7 +45,7 @@ CFLAGS=${INC} ${FLAGS}
 
 PYTHON=python3
 
-CXX=clang++ -std=c++17 ${OPTFLAGS}
+CXX=clang++ -std=c++17 $(FLAGS) ${OPTFLAGS}
 
 METAGRAPH=build/rdn.meta
 
