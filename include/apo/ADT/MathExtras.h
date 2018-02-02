@@ -25,11 +25,11 @@
 #include <cmath>
 
 #ifndef __has_builtin
-#ifdef __INTEL_COMPILER
+// #ifdef __INTEL_COMPILER
 #define __has_builtin(X) 1
-#else
-#error "Compiler does not support __has_builtin"
-#endif
+// #else
+// #error "Compiler does not support __has_builtin"
+// #endif
 #endif
 /// \macro LLVM_GNUC_PREREQ
 /// \brief Extend the default __GNUC_PREREQ even if glibc's features.h isn't
