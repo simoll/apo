@@ -151,7 +151,9 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
     ResultDistVec actionDistVec(progVec.size());
     model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
 
-#pragma omp parallel for reduction(+ : frozen) shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
+#pragma omp parallel for \
+        reduction(+ : frozen) \
+        shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
     for (int t = 0; t < progVec.size(); ++t) { // for all programs
       if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
 
@@ -188,8 +190,6 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
         ++frozen; continue;
       }
     }
-
-    if (derStep > 100) abort(); // divergence check
   } // derivation loop
 
   // DEBUG CHECK
@@ -286,7 +286,9 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
         int frozen = 0;
 
-#pragma omp parallel for reduction(+ : frozen) shared(maxDistVec, roundProgs, modelRewriteDist,states)
+#pragma omp parallel for \
+            reduction(+ : frozen) \
+            shared(maxDistVec, roundProgs, modelRewriteDist,states)
         for (int t = startIdx; t < endIdx; ++t) {
           // self inflicted timeout
           if (derStep >= maxDistVec[t]) {
@@ -420,7 +422,8 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(const ProgramVec &p
     ProgramVec roundProgs = Clone(progVec);
 
     // use cached probabilities if possible
-#pragma omp parallel for
+#pragma omp parallel for \
+        shared(maxDistVec, roundProgs, mut, model, states)
     for (int t = 0; t < numSamples; ++t) {
       bool keepGoing = true;
       const int maxDist = maxDistVec[t];
