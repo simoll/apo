@@ -192,7 +192,7 @@ struct Statement {
     elements.value = constVal;
   }
 
-  inline uint64_t hash() const {
+  inline uint64_t hash() const noexcept {
     if (isConstant()) return (uint64_t) elements.value;
     else {
       uint64_t accu = (uint64_t) oc;
@@ -204,7 +204,7 @@ struct Statement {
     }
   }
 
-  bool operator==(const Statement & O) const {
+  bool operator==(const Statement & O) const noexcept {
     if (O.oc != oc) return false;
     if (oc == OpCode::Constant) { return elements.value == O.elements.value; }
 
@@ -216,7 +216,7 @@ struct Statement {
     return true;
   }
 
-  bool operator<(const Statement & O) const {
+  bool operator<(const Statement & O) const noexcept {
     if (oc < O.oc) return true;
     else if (O.oc < oc) return false;
 
@@ -478,7 +478,7 @@ using ProgramPtr = std::shared_ptr<Program>;
 using ProgramVec = std::vector<ProgramPtr>;
 
 struct ProgramPtrHasher {
-  size_t operator()(const ProgramPtr & Pptr) const
+  size_t operator()(const ProgramPtr & Pptr) const noexcept
   {
     if (Pptr == nullptr) return 0;
     const Program & P = *Pptr;
@@ -492,7 +492,7 @@ struct ProgramPtrHasher {
 };
 
 struct ProgramPtrEqual {
-  bool operator()( const ProgramPtr & A, const ProgramPtr & B) const {
+  bool operator()( const ProgramPtr & A, const ProgramPtr & B) const noexcept {
     if (A.get() == B.get()) return true;
     if ((A == nullptr) || (B == nullptr)) return false;
     return *A == *B;
