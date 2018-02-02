@@ -125,21 +125,24 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 // bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const IntVec & maxDistVec) {
+                                      const IntVec & maxStepsVec) {
   ProgramVec progVec = Clone(origProgVec);
 
-  DerivationVec stopStates(progVec.size());
+  DerivationVec stopStates;
+  stopStates.reserve(progVec.size());
 
   DerivationVec bestStates;
   bestStates.reserve(progVec.size());
   for (int t = 0; t < progVec.size(); ++t) {
     auto startDer = Derivation(*progVec[t]);
     bestStates.push_back(startDer); // do't-move-baseline (in case derivation are awful)
-    stopStates.push_back(startDer); // baseline (if maxDistVec[t] is zero, will be overritten once by first @signalsStop
+    stopStates.push_back(startDer); // baseline (if maxStepsVec[t] is zero, will be overritten once by first @signalsStop
   }
 
   int frozen = 0; // amount of programs that have stopped derivation
-  std::vector<bool> alreadyStopped(progVec.size(), false);
+  std::vector<char> alreadyStopped(progVec.size(), false);
+  assert(bestStates.size() == stopStates.size());
+  assert(bestStates.size() == alreadyStopped.size());
 
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
   for (int derStep = 0; frozen < progVec.size(); ++derStep) {
@@ -148,7 +151,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
     ResultDistVec actionDistVec(progVec.size());
     model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
 
-#pragma omp parallel for reduction(+ : frozen)
+#pragma omp parallel for reduction(+ : frozen) shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
     for (int t = 0; t < progVec.size(); ++t) { // for all programs
       if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
 
@@ -158,7 +161,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
       greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
 
       // shall we stop after this action?
-      bool stopDerivation = (derStep + 1) >= maxDistVec[t] || // last derivation round (time out)
+      bool stopDerivation = (derStep + 1) >= maxStepsVec[t] || // last derivation round (time out)
                             (progVec[t]->size() > model.config.prog_length); // in excess of maximal supported program length
 
       Derivation currState(
@@ -206,14 +209,13 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 // random trajectory based model (or uniform dist) sampling
 DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
                                                      const double pRandom,
-                                                     const IntVec & maxDistVec,
+                                                     const IntVec & maxStepsVec,
                                                      const int numOptRounds,
                                                      bool allowFallback) {
   if (pRandom < 1.0)
-    return searchDerivations_ModelDriven(progVec, pRandom, maxDistVec,
-                                         numOptRounds, allowFallback);
+    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback);
   else
-    return searchDerivations_Default(progVec, maxDistVec, numOptRounds);
+    return searchDerivations_Default(progVec, maxStepsVec, numOptRounds);
 }
 
 // optimized version for model-based seaerch
@@ -284,7 +286,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
         int frozen = 0;
 
-#pragma omp parallel for reduction(+ : frozen)
+#pragma omp parallel for reduction(+ : frozen) shared(maxDistVec, roundProgs, modelRewriteDist,states)
         for (int t = startIdx; t < endIdx; ++t) {
           // self inflicted timeout
           if (derStep >= maxDistVec[t]) {
@@ -328,14 +330,21 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
               }
 
               // stats
+#if 0
+              // FIXME racy
               if (!validDist) {
                 stats.invalidModelDists++;
               } else {
                 stats.derivationFailures++;
               }
-            } else {
+#endif
+            }
+#if 0
+            // FIXME racy
+            else {
               stats.validModelDerivations++;
             }
+#endif
           }
 
           // uniform random mutation
