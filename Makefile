@@ -41,7 +41,7 @@ endif
 
 LDFLAGS=-Wl,--allow-multiple-definition -Wl,--whole-archive ${LIBPATH} ${LIBS}
 
-CFLAGS=${INC} ${FLAGS}
+CFLAGS=${INC} 
 
 PYTHON=python3
 
