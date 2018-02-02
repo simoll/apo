@@ -193,7 +193,15 @@ struct Statement {
   }
 
   inline uint64_t hash() const {
-    return ((uint64_t) oc * 17) ^ (uint64_t) elements.value;
+    if (isConstant()) return (uint64_t) elements.value;
+    else {
+      uint64_t accu = (uint64_t) oc;
+
+      for (int i = 0; i < num_Operands(); ++i) {
+        accu = (accu * 97) ^ (uint64_t) getOperand(i);
+      }
+      return accu;
+    }
   }
 
   bool operator==(const Statement & O) const {
@@ -460,30 +468,35 @@ struct Program {
 
 // dereferencing less operator
 template <class T> struct deref_less {
-  bool operator() (const T& x, const T& y) const {return *x < *y;}
-  typedef T first_argument_type;
-  typedef T second_argument_type;
-  typedef bool result_type;
+  bool operator() (const T& x, const T& y) const {
+    if (x.get() == nullptr) return y.get() != nullptr;
+    else return *x < *y;
+  }
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
 using ProgramVec = std::vector<ProgramPtr>;
 
 struct ProgramPtrHasher {
-  std::size_t operator()(const ProgramPtr & Pptr) const
+  size_t operator()(const ProgramPtr & Pptr) const
   {
+    if (Pptr == nullptr) return 0;
     const Program & P = *Pptr;
-    uint64_t hash = 0;
+    uint64_t hash = P.num_Params();
 
-    for (int i = 0; i < P.size(); ++i) {
-      hash ^= (P.code[i].hash() << i);
+    for (uint64_t i = 0; i < P.size(); ++i) {
+      hash = 0x8001 * hash + (P.code[i].hash() ^ i);
     }
-    return reinterpret_cast<std::size_t>(hash);
+    return reinterpret_cast<size_t>(hash);
   }
 };
 
 struct ProgramPtrEqual {
-  bool operator()( const ProgramPtr & A, const ProgramPtr & B) const { return *A == *B; }
+  bool operator()( const ProgramPtr & A, const ProgramPtr & B) const {
+    if (A.get() == B.get()) return true;
+    if ((A == nullptr) || (B == nullptr)) return false;
+    return *A == *B;
+  }
 };
 
 
