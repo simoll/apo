@@ -4,6 +4,7 @@
 #endif
 
 std::vector<std::mt19937> threadGens;
+std::vector<std::uniform_real_distribution<float>> unitDists;
 
 static bool initialized = false;
 
@@ -19,7 +20,8 @@ InitRandom() {
   std::uniform_int_distribution<size_t> seeder;
 
   for (size_t i = 0; i < maxThreads; ++i) {
-    threadGens.push_back(std::mt19937(seeder(randGen)));
+    threadGens.emplace_back(seeder(randGen));
+    unitDists.emplace_back(0, 1);
   }
 #else
   size_t seed = 42;
@@ -27,10 +29,13 @@ InitRandom() {
 #endif
 }
 
-std::mt19937 & randGen()  {
+inline int getThreadId() {
 #ifdef _OPENMP
-  return threadGens[omp_get_thread_num()];
+  return omp_get_thread_num();
 #else
-  return threadGens[0];
+  return 0
 #endif
 }
+
+std::mt19937 & randGen()  { return threadGens[getThreadId()]; }
+float drawUnitRand() { return unitDists[getThreadId()](randGen()); }

@@ -91,10 +91,9 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
                                         ResultDist &res, bool &signalsStop) {
   // sample a random rewrite at a random location (product of rule and target
   // distributions)
-  std::uniform_real_distribution<float> pRand(0, 1.0);
 
   // should we stop?
-  if (pRand(randGen()) <= res.stopDist) {
+  if (drawUnitRand() <= res.stopDist) {
     signalsStop = true;
     return true;
   }
@@ -105,7 +104,7 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
   Action rew;
   do {
     // which rule to apply?
-    int actionId = SampleCategoryDistribution(res.actionDist, pRand(randGen()));
+    int actionId = SampleCategoryDistribution(res.actionDist, drawUnitRand());
     rew = ruleBook.toRewriteAction(actionId);
 
     // translate to internal rule representation
@@ -225,7 +224,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
   assert(pRandom < 1.0 && "use _Debug implementation instead");
 
   const int numSamples = progVec.size();
-  std::uniform_real_distribution<float> ruleRand(0, 1);
 
   // start with STOP derivation
   std::vector<Derivation> states;
@@ -313,7 +311,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
           // loop until rewrite succeeds (or stop)
           bool uniRule;
-          uniRule = (ruleRand(randGen()) <= pRandom);
+          uniRule = (drawUnitRand() <= pRandom);
 
           // try to apply the model first
           if (!uniRule) {
@@ -399,7 +397,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 // with minimal derivation sequence (2.))
 DerivationVec MonteCarloOptimizer::searchDerivations_Default(const ProgramVec &progVec, const std::vector<int> & maxDistVec, const int numOptRounds) {
   const int numSamples = progVec.size();
-  std::uniform_real_distribution<float> ruleRand(0, 1);
 
   // std::cerr << "Initial programs\n";
   // start with STOP derivation
@@ -410,9 +407,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_Default(const ProgramVec &p
   }
 
 #define IF_DEBUG_DER if (false)
-
-  // pre-compute initial program distribution
-  ResultDistVec initialProgDist(progVec.size());
 
   // number of derivation walks
   for (int r = 0; r < numOptRounds; ++r) {
@@ -593,8 +587,6 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
                                        StopCallback &&stopHandler
   ) {
 #define IF_DEBUG_SAMPLE if (false)
-  std::uniform_real_distribution<float> pRand(0, 1.0);
-
   int rewriteIdx = 0;
   int nextSampleWithRewrite = 0;
 
@@ -611,7 +603,7 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
     }
 
     // model picks stop?
-    bool stopByChoice = pRand(randGen()) <= refResults[s].stopDist;
+    bool stopByChoice = drawUnitRand() <= refResults[s].stopDist;
 
     if (stopByChoice) {
       bool keepGoing = stopHandler(s, StopReason::Choice); // stopped by choice
@@ -646,7 +638,7 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
       }
 
       // try to apply the action
-      int actionId = SampleCategoryDistribution(refResults[s].actionDist, pRand(randGen()));
+      int actionId = SampleCategoryDistribution(refResults[s].actionDist, drawUnitRand());
       Action randomRew = ruleBook.toRewriteAction(actionId);
       IF_DEBUG_SAMPLE {
         std::cerr << "PICK: ";

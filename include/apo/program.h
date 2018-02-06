@@ -477,6 +477,19 @@ template <class T> struct deref_less {
 using ProgramPtr = std::shared_ptr<Program>;
 using ProgramVec = std::vector<ProgramPtr>;
 
+struct ProgramHasher {
+  size_t operator()(const Program & P) const noexcept
+  {
+    uint64_t hash = P.num_Params();
+
+    for (uint64_t i = 0; i < P.size(); ++i) {
+      hash = 0x8001 * hash + (P.code[i].hash() ^ i);
+    }
+    return reinterpret_cast<size_t>(hash);
+  }
+};
+
+
 struct ProgramPtrHasher {
   size_t operator()(const ProgramPtr & Pptr) const noexcept
   {

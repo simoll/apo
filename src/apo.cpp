@@ -31,6 +31,7 @@ SampleServer {
 
   // internal sample map
   std::unordered_map<ProgramPtr, CachedDerivation, ProgramPtrHasher, ProgramPtrEqual> sampleMap;
+  // std::map<ProgramPtr, CachedDerivation, deref_less<ProgramPtr>> backupMap;
 
   struct
   TrainingSample {
@@ -210,22 +211,24 @@ SampleServer {
 #endif
   }
 
+  bool acceptsDerivations() const { return sampleMap.size() < derCacheLimit; }
   // store a new program result in the cache (return true if the cache was improved by the operation (new program or better derivation))
   bool
   submitDerivation(const ProgramPtr & P, const Derivation & sampleDer) {
+    if (sampleMap.size() > derCacheLimit) {
+      return false;
+    }
 #ifdef APO_ENABLE_DER_CACHE
     auto itSample = sampleMap.find(P);
     if (itSample == sampleMap.end()) {
-      // std::cerr << "NEW!!!\n";
       serverStats.numAddedDer++;
       sampleMap[P] = CachedDerivation(sampleDer);
       return true;
     } else {
-      // std::cerr << "HIT!!!\n";
-      auto & cached = itSample->second;
-      if (sampleDer.betterThan(cached.bestKnownDer)) {
+      Derivation & cachedDer = itSample->second.bestKnownDer;
+      if (sampleDer.betterThan(cachedDer)) {
         serverStats.numImprovedDer++;
-        cached.bestKnownDer = sampleDer;
+        cachedDer = sampleDer;
       } else {
         serverStats.numSeenBeforeDer++;
       }
@@ -240,8 +243,6 @@ SampleServer {
   int
   drawReplays(ProgramVec & oProgs, IntVec & maxDerVec, int startIdx, int endIdx, int extraDerSteps, int maxDerSteps) {
 #ifdef APO_ENABLE_DER_CACHE
-    assert((endIdx - startIdx) <= sampleMap.size());
-
     int actualEndIdx = std::min<int>(startIdx + sampleMap.size(), endIdx);
 
   // ordered sample positions
@@ -427,7 +428,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 1000; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 1000; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -483,13 +484,7 @@ void APO::train() {
           auto serverStats = server.resetServerStats();
           serverStats.print(std::cerr);
 
-          // print MCTS statistics
-#if 0
-          // there must be no derivation failures (also these belong to the searchThread -> need to synchronize to fetch them)
-          montOpt.stats.print(std::cerr) << "\n";
-          montOpt.stats = MonteCarloOptimizer::Stats();
-#endif
-
+          // evaluation statistics
           auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec);
 
           std::cerr << "Eval:   ";
@@ -569,15 +564,21 @@ void APO::train() {
   std::thread
   searchThread([this, &keepRunning, &server, &cpuMutex]{
 
+
     // compute all one-step derivations
-    using RewriteVec = std::vector<std::pair<int, Action>>;
+    using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
 
     // generate initial programs
     ProgramVec progVec(numSamples, nullptr);
     IntVec maxDistVec(progVec.size(), 0);
     generatePrograms(progVec, maxDistVec, 0, numSamples);
 
+    const int warmUpRounds = 100;
+    int totalSearchRounds = 0;
+
     while (keepRunning.load()) {
+      totalSearchRounds++; // stats
+
       // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
       // #pragma omp parallel for ordered
 
@@ -598,9 +599,9 @@ void APO::train() {
       IntVec cachedNextMaxDistVec;
       ProgramVec cachedNextProgs;
       RewriteVec cachedRewrites;
-      cachedNextMaxDistVec.reserve(preAllocSize);
-      cachedNextProgs.reserve(preAllocSize);
       cachedRewrites.reserve(preAllocSize);
+      cachedNextProgs.reserve(preAllocSize);
+      cachedNextMaxDistVec.reserve(preAllocSize);
 
       DerivationVec cachedDerVec;
       cachedDerVec.reserve(preAllocSize);
@@ -622,12 +623,28 @@ void APO::train() {
 
             int remainingSteps = std::max(1, maxDistVec[t] - 1);
 
-            ProgramPtr actionProg(std::move(clonedProg)); // must not use @clonedProg after this point
+            ProgramPtr actionProg(clonedProg); // must not use @clonedProg after this point
             Derivation cachedDer;
             if (server.getDerivation(actionProg, cachedDer)) {
+#if 0
+              if (false /* totalSearchRounds > 1000 */) {
+              // dump it
+              std::cerr << t << " :\n";
+              actionProg->dump();
+              std::cerr << "CACHE: "; cachedDer.print(std::cerr) << "\n";
+
+              ProgramVec testVec(1, actionProg);
+              IntVec testDistVec(1, remainingSteps);
+              DerivationVec testDerVec = montOpt.searchDerivations(testVec, pRandom, testDistVec, numOptRounds, false);
+              auto queryDer = testDerVec[0];
+              std::cerr << "MCTS: "; queryDer.print(std::cerr) << "\n";
+              }
+#endif
+
               // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
               cachedDerVec.push_back(cachedDer);
               cachedNextMaxDistVec.push_back(remainingSteps);
+              assert(actionProg);
               cachedNextProgs.push_back(actionProg);
               cachedRewrites.emplace_back(t, act);
 
@@ -635,7 +652,8 @@ void APO::train() {
               // full MCTS derivation path for unseen programs
               // montOpt.searchDerivations will fill in derivations for us
               mctsNextMaxDistVec.push_back(remainingSteps);
-              mctsNextProgs.emplace_back(actionProg);
+              assert(actionProg);
+              mctsNextProgs.push_back(actionProg);
               mctsRewrites.emplace_back(t, act);
             }
           }
@@ -648,25 +666,39 @@ void APO::train() {
       // mctsNextProgs -> mctsDerVec
       DerivationVec mctsDerVec;
       {
+        // unseen samples
         std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
         mctsDerVec = montOpt.searchDerivations(mctsNextProgs, pRandom, mctsNextMaxDistVec, numOptRounds, false);
-        for (int i = 0; i < mctsNextProgs.size(); ++i) {
-          server.submitDerivation(mctsNextProgs[i], mctsDerVec[i]);
-        }
+
+        // cache improvement
+        const int numCacheOptRounds = 2;
+        DerivationVec improvedDer = montOpt.searchDerivations(cachedNextProgs, pRandom, cachedNextMaxDistVec, numCacheOptRounds, false);
+        cachedDerVec = FilterBest(improvedDer, cachedDerVec);
       }
+
+#if 0
+      // FIXME DEBUG testing cached+mcts mserging
+      assert(cachedDerVec.size() == cachedNextProgs.size());
+      cachedDerVec.clear();
+      {
+        std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
+        cachedDerVec = montOpt.searchDerivations(cachedNextProgs, pRandom, cachedNextMaxDistVec, numOptRounds, false);
+      }
+#endif
+
+      //if (totalSearchRounds >= 500) server.sampleMap.clear();
 
       assert(mctsDerVec.size() == mctsNextMaxDistVec.size());
       assert(mctsNextMaxDistVec.size() == mctsNextProgs.size());
       assert(mctsNextProgs.size() == mctsRewrites.size());
 
-      // concat mcts-derived results to solution vectors
+      // re-interleave the results (by their program index) (or sampleAction will fail)
       const int totalNumNextProgs = mctsNextMaxDistVec.size() + cachedNextMaxDistVec.size();
       DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
       IntVec nextMaxDistVec; nextMaxDistVec.reserve(totalNumNextProgs);
       ProgramVec nextProgs; nextProgs.reserve(totalNumNextProgs);
       RewriteVec rewrites; rewrites.reserve(totalNumNextProgs);
 
-      // re-interleave the results (by their program index) (or sampleAction will fail)
       int mctsIdx = 0;
       int cachedIdx = 0;
       for (int t = 0; t < progVec.size(); ) {
@@ -677,6 +709,7 @@ void APO::train() {
           rewrites.push_back(cachedRewrites[cachedIdx]);
 
           cachedIdx++;
+          continue; // redundant
         } else if (mctsIdx < mctsRewrites.size() && mctsRewrites[mctsIdx].first == t) {
           refDerVec.push_back(mctsDerVec[mctsIdx]);
           nextMaxDistVec.push_back(mctsNextMaxDistVec[mctsIdx]);
@@ -684,6 +717,7 @@ void APO::train() {
           rewrites.push_back(mctsRewrites[mctsIdx]);
 
           mctsIdx++;
+          continue; // redundant
         } else {
           // all results for progVec[t] have been merged, continue
           ++t;
@@ -691,6 +725,18 @@ void APO::train() {
       }
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
       clock_t endDer = clock();
+
+      // submit improved results
+      if (server.acceptsDerivations()) {
+        for (int i = 0; i < nextProgs.size(); ++i) {
+          server.submitDerivation(nextProgs[i], refDerVec[i]);
+        }
+      }
+
+      assert(refDerVec.size() == totalNumNextProgs);
+      assert(nextMaxDistVec.size() == totalNumNextProgs);
+      assert(nextProgs.size() == totalNumNextProgs);
+      assert(rewrites.size() == totalNumNextProgs);
 
 #if 0
       // TODO enable model inference
@@ -705,8 +751,23 @@ void APO::train() {
       // decode reference ResultDistVec from detected derivations
       ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
 
-      // submit results to server
-      server.submitResults(progVec, refResults);
+#if 0
+      // DEBUG
+      if (totalSearchRounds > 1000) {
+        for (int t = 0; t < progVec.size(); ++t) {
+          std::cerr << "sample " << t << ":\n";
+          progVec[t]->dump();
+          refResults[t].dump();
+        }
+      }
+#endif
+
+      // submit results to server (after warmup)
+      if (totalSearchRounds > warmUpRounds) {
+        server.submitResults(progVec, refResults);
+      } else {
+        if (totalSearchRounds % 10 == 0) { std::cerr << "w"; }
+      }
 
       clock_t startSample = clock();
     // sample moves from the reference distribution
@@ -721,12 +782,13 @@ void APO::train() {
             assert(sampleIdx >= numNextProgs);
 
             // register derivation info
-            auto & startProg = progVec[sampleIdx];
-            auto bestDer = refDerVec[rewriteIdx];
-            bestDer.shortestDerivation++; // refDerVec is referring to @nextProgs, which are one step away from their predecessors in @progVec
+            Derivation bestDer = refDerVec[rewriteIdx];
 
             // submit detected derivation
-            server.submitDerivation(progVec[sampleIdx], bestDer);
+            // server.submitDerivation(nextProgs[rewriteIdx], bestDer); // broken?
+
+            bestDer.shortestDerivation++; // refDerVec refers to @nextProgs, which are one step away from their predecessors in @progVec
+            // server.submitDerivation(progVec[sampleIdx], bestDer); // broken??
 
             // insert program after action into queue
             int progIdx = numNextProgs++;
@@ -742,10 +804,10 @@ void APO::train() {
         [&server, &progVec](int sampleIdx, StopReason reason) {
           assert((reason != StopReason::DerivationFailure) && "sampling can not fail on reference distribution!");
           assert((reason != StopReason::InvalidDist) && "sampling can not fail on reference distribution!");
-          if (reason == StopReason::Choice) {
-            auto & stopProg = progVec[sampleIdx];
-            server.submitDerivation(stopProg, Derivation(*stopProg));
-          }
+          // if (reason == StopReason::Choice) {
+          //   auto & stopProg = progVec[sampleIdx];
+          //   server.submitDerivation(stopProg, Derivation(*stopProg)); // broken?
+          // }
 
           return true;
         }
