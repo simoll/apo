@@ -80,6 +80,46 @@ struct Mutator {
     }
   }
 
+  // shuffle up the instructions in the program
+  void shuffle(Program & P, int numShuffles) const {
+    std::uniform_int_distribution<int> pcRand(1, P.size() - 2); // don't allow return rewrites
+    // std::cerr << "SHUFFLE!!\n";
+    // P.dump();
+    for (int i = 0; i < numShuffles; ++i) {
+      int pc = pcRand(randGen());
+      auto & stat = P.code[pc];
+
+      // check independence of pc and (pc-1)
+      bool legalSwap = true;
+      if (stat.isOperator()) {
+        for (int o = 0; o < stat.num_Operands(); ++o) {
+          if (stat.getOperand(o) == pc - 1) {
+            legalSwap = false; break;
+          }
+        }
+      }
+
+      if (!legalSwap) continue;
+
+      // swap operands of down stream instructions (pc <-> pc - 1)
+      for (int j = pc + 1; j < P.size(); ++j) {
+        if (!P.code[j].isOperator()) continue;
+        for (int o = 0; o < P.code[j].num_Operands(); ++o) {
+          if (P.code[j].getOperand(o) == pc) {
+            P.code[j].setOperand(o, pc - 1);
+          } else if (P.code[j].getOperand(o) == pc - 1) {
+            P.code[j].setOperand(o, pc);
+          }
+        }
+      }
+
+      // perform the swap
+      std::swap(P.code[pc], P.code[pc - 1]);
+
+      // std::cerr << "after " << i << " : "; P.dump();
+    }
+  }
+
   // apply a random mutating rewrite
   void mutate(Program & P, int steps, float pExpand, std::function<void(int pc, int ruleId, const Program & P)> handler) const {
     if (steps <= 0) return;
