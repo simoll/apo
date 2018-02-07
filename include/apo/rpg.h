@@ -23,7 +23,9 @@ struct RPG {
 
     Elem(int _numUses, int _valIdx) : numUses(_numUses), valIdx(_valIdx) {}
     bool operator< (const Elem & right) const {
-      return numUses > right.numUses; // prioritize unused elements
+      // tuple order
+      return (numUses < right.numUses) ||
+             (numUses == right.numUses && (valIdx < right.valIdx)); // prioritize unused elements
     }
   };
 
@@ -31,7 +33,9 @@ struct RPG {
 
   struct Sampler {
     std::vector<int> unused;
-    std::priority_queue<Elem, std::vector<Elem>> opQueue;
+    std::set<Elem> opQueue;
+
+    const int peekBias = 1;
 
     int num_Unused() const { return unused.size(); }
 
@@ -51,15 +55,19 @@ struct RPG {
     int acquireOperand(int distToLimit) {
 
       // check whether its safe to peek to already used operands at this point
+      int peekDepth = opQueue.size() - 1;
       if (num_Unused() > 0) {
         bool allowPeek = !opQueue.empty() && (distToLimit > unused.size());
-        std::uniform_int_distribution<int> opRand(0, unused.size() - 1 + allowPeek);
 
-        // pick element from unused vector
-        int idx = opRand(randGen());
-        // std::cerr << "UNUED ID " << idx << "\n";
-        assert(idx >= 0);
-        if (idx < unused.size()) {
+        const float pPeek = 0.8;
+        if (!allowPeek || (drawUnitRand() > pPeek) ) {
+          // pick a random unused element
+          std::uniform_int_distribution<int> opRand(0, unused.size() - 1);
+
+          // index into unused vector
+          int idx = opRand(randGen());
+
+          // std::cerr << "UNUED ID " << idx << "\n";
           int valIdx = unused[idx];
           unused.erase(unused.begin() + idx);
           opQueue.emplace(1, valIdx); // add to used-tracked queue for potential re-use
@@ -67,12 +75,33 @@ struct RPG {
         }
       }
 
+      assert(!opQueue.empty());
+
+    // skip some queue elements (controlled by peekDepth)
+#if 1
+      const float pSkip = 0.5;
+      auto itElem = opQueue.begin();
+      peekDepth = std::min<int>(peekDepth, opQueue.size() - 1);
+      int j = 0;
+      for (j = 0; j < peekDepth ; ++itElem, ++j) {
+        if (drawUnitRand() > pSkip) {
+          break;
+        }
+      }
+
+      // std::cerr << "PICK " << j << " of " << opQueue.size() << "\n";
+
+#endif
+
       // Otw, take element from queue
-      Elem elem = opQueue.top();
-      opQueue.pop(); // TODO add randomness
+      Elem elem = *itElem;
+      opQueue.erase(itElem);
+
       int valIdx = elem.valIdx;
+
+      // re-insert used element
       elem.numUses++;
-      opQueue.push(elem); // re-insert element
+      opQueue.insert(elem);
 
       return valIdx;
     }
@@ -105,6 +134,19 @@ struct RPG {
     std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
   }
 
+  data_t
+  drawRandomConstant() const {
+    // random constant
+    std::uniform_int_distribution<int> constIdxRand(0, constVec.size() * 2 - 1);
+    int idx = constIdxRand(randGen());
+    if (idx< constVec.size()) {
+      return constVec[idx]; // known random constant from pool
+    } else {
+      std::uniform_int_distribution<data_t> constValRand(std::numeric_limits<data_t>::min(), std::numeric_limits<data_t>::max());
+      return constValRand(randGen()); // proper random constant
+    }
+  }
+
   Program*
   generate(int length) {
     Program & P = *(new Program(numParams, {}));
@@ -119,14 +161,12 @@ struct RPG {
 
     int s = numParams;
     for (int i = 0; i < length - 1; ++i, ++s) {
-      bool forceOperand = length - i < S.num_Unused();
+      bool forceOperand = length - i < S.num_Unused() + 1;
 
       if (!forceOperand && // hard criterion to avoid dead code
           (S.empty() || (constantRand(randGen()) <= pConstant))) { // soft preference criterion
-        // random constant
-        std::uniform_int_distribution<int> constIdxRand(0, constVec.size() - 1);
-        int idx = constIdxRand(randGen());
-        P.push(build_const(constVec[idx]));
+        data_t constVal = drawRandomConstant();
+        P.push(build_const(constVal));
 
       } else {
         // pick random opCode and operands
@@ -148,6 +188,9 @@ struct RPG {
     P.push(build_ret(P.size() - 1));
 
     assert(P.verify());
+
+    // DEBUG
+    if (getenv("DUMP_PROGS")) P.dump();
 
     return &P;
   }
