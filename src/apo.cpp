@@ -388,12 +388,13 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
 }
 
 inline void
-APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> &&handleFunc) {
+APO::generatePrograms(int numSamples, int numShuffle, std::function<void(ProgramPtr P, int numMutations)> &&handleFunc) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
   for (int i = 0; i < numSamples; ++i) {
     ProgramPtr P = nullptr;
+  // apply random rules
     int mutSteps = 0;
     do {
       int stubLen = stubRand(randGen());
@@ -401,20 +402,25 @@ APO::generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMu
       P.reset(rpg.generate(stubLen));
 
       assert(P->size() <= modelConfig.prog_length);
-      expMut.mutate(*P, mutSteps, pGenExpand); // mutate at least once
+      for (int j = 0; j < mutSteps; ++j) {
+        expMut.mutate(*P, 1, pGenExpand); // mutate at least once
+        expMut.shuffle(*P, numShuffle);
+      }
     } while (P->size() > modelConfig.prog_length);
+
+  // shuffle the instructions a little
 
     handleFunc(P, mutSteps);
   }
 }
 
-void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int startIdx,
+void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int numShuffle, int startIdx,
                            int endIdx) {
   std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
   std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
 
   int i = startIdx;
-  generatePrograms(endIdx - startIdx, [this, &progVec, &maxDerVec, &i](ProgramPtr P, int numMutations) {
+  generatePrograms(endIdx - startIdx, numShuffle, [this, &progVec, &maxDerVec, &i](ProgramPtr P, int numMutations) {
     maxDerVec[i] = std::min(numMutations + extraExplorationDepth, maxExplorationDepth);
     progVec[i] = ProgramPtr(P);
     ++i;
@@ -428,7 +434,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 1000; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 9; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -436,8 +442,21 @@ void APO::train() {
             << numEvalOptRounds << " optRounds) --\n";
   ProgramVec evalProgs(numEvalSamples, nullptr);
   IntVec evalDistVec(numEvalSamples, 0);
-  generatePrograms(evalProgs, evalDistVec, 0, evalProgs.size());
+  const int numShuffle = 5;
+  generatePrograms(evalProgs, evalDistVec, numShuffle, 0, evalProgs.size());
+
+#if 1
+  evalProgs.emplace_back(new Program(2, {
+             build_pipe(-1),
+             build_pipe(-1),
+             Statement(OpCode::Sub, 0, 1),
+             build_ret(1)
+           }));
+  evalDistVec.push_back(3);
+#endif
+
   auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
+  std::cerr << "RefDer for a-a : "; refEvalDerVec[refEvalDerVec.size() - 1].dump();
 
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();
@@ -562,7 +581,7 @@ void APO::train() {
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::thread
-  searchThread([this, &keepRunning, &server, &cpuMutex]{
+  searchThread([this, &keepRunning, &server, &cpuMutex, numShuffle]{
 
 
     // compute all one-step derivations
@@ -571,9 +590,14 @@ void APO::train() {
     // generate initial programs
     ProgramVec progVec(numSamples, nullptr);
     IntVec maxDistVec(progVec.size(), 0);
-    generatePrograms(progVec, maxDistVec, 0, numSamples);
+    generatePrograms(progVec, maxDistVec, numShuffle, 0, numSamples);
 
+#ifdef APO_ENABLE_DER_CACHE
+    // warm up the cache
     const int warmUpRounds = 100;
+#else
+    const int warmUpRounds = 0;
+#endif
     int totalSearchRounds = 0;
 
     while (keepRunning.load()) {
@@ -826,7 +850,7 @@ void APO::train() {
       clock_t endReplay = clock();
 
       // fill up with completely new progs
-      generatePrograms(progVec, maxDistVec, actualEndIdx, numSamples);
+      generatePrograms(progVec, maxDistVec, numShuffle, actualEndIdx, numSamples);
 
       // report timing stats
       server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);

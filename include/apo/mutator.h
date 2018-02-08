@@ -36,48 +36,9 @@ struct Mutator {
   tryApply(Program & P, int pc, int ruleId) const {
     NodeVec holes;
     NodeSet matchedNodes;
-    const auto & rewRule = ruleBook.getRewriteRule(ruleId);
-    if (!ruleBook.matchRule_ext(rewRule, P, pc, holes, matchedNodes)) { return false; }
-    applyRule(P, pc, rewRule, holes, matchedNodes);
+    if (!ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) { return false; }
+    applyRule(P, pc, ruleId, holes, matchedNodes);
     return true;
-  }
-
-  // single shot rule application by index (with random fillers for pattern holes)_
-  void applyRule(Program & P, int pc, const RewriteRule & rewRule, NodeVec & holes, NodeSet & matchedNodes) const {
-    // IF_VERBOSE { std::cerr << "Rewrite at " << pc << " with rule: "; rewritePairs[pairIdx].dump(leftMatch); }
-
-    // supplement holes
-    int numLeftHoles = ruleBook.getLeftHandHoles(rewRule);
-    int numRightHoles = ruleBook.getRightHandHoles(rewRule);
-
-    if (numRightHoles > numLeftHoles) {
-      // const auto & lhs = rewritePairs[pairIdx].getMatchProg(leftMatch);
-      // const auto & rhs = rewritePairs[pairIdx].getRewriteProg(leftMatch);
-
-      int lowestVal = -(P.num_Params());
-      int highestVal = std::max(pc - numRightHoles, 0) - 1;
-      assert(lowestVal <= highestVal);
-      std::uniform_int_distribution<int> opRand(lowestVal, highestVal);
-
-      holes.resize(numRightHoles, 0);
-      for (int h = numLeftHoles;  h < numRightHoles; ++h) {
-        int opIdx;
-        // draw operands that do not occur in the pattern
-        do {
-          opIdx = opRand(randGen());
-        } while (matchedNodes.count(opIdx));
-
-        holes[h] = opIdx;
-      }
-    }
-
-    // apply rewrite
-    ruleBook.transform(rewRule, P, pc, holes);//rewritePairs[pairIdx].rewrite(leftMatch, P, pc, holes);
-
-    IF_DEBUG if (!P.verify()) {
-      P.dump();
-      abort();
-    }
   }
 
   // shuffle up the instructions in the program
@@ -142,12 +103,10 @@ struct Mutator {
       bool hasMatch = false;
       int ruleId = 0;
 
-      const RewriteRule * rewRule = nullptr;
       for (int t = 0; t < ruleBook.num_Rules(); ++t) {
-        rewRule = &ruleBook.getRewriteRule(t);
-        if (ruleBook.isExpanding(*rewRule) != expandingMatch) continue;
+        if (ruleBook.isExpanding(t) != expandingMatch) continue;
 
-        if (ruleBook.matchRule(*rewRule, P, pc, holes)) {
+        if (ruleBook.matchRule(t, P, pc, holes)) {
           hasMatch = true;
           ruleId = t;
           break;
@@ -163,11 +122,10 @@ struct Mutator {
       NodeSet matchedNodes;
       for (int skip = 1; skip < numSkips; ) {
         ruleId = (ruleId + 1) % ruleBook.num_Rules();
-        rewRule = &ruleBook.getRewriteRule(ruleId);
-        if (ruleBook.isExpanding(*rewRule) != expandingMatch) continue;
+        if (ruleBook.isExpanding(ruleId) != expandingMatch) continue;
 
         matchedNodes.clear();
-        if (ruleBook.matchRule_ext(*rewRule, P, pc, holes, matchedNodes)) {
+        if (ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
           ++skip;
         }
       }
@@ -176,11 +134,51 @@ struct Mutator {
       handler(pc, ruleId, P);
 
       // apply this rule
-      applyRule(P, pc, *rewRule, holes, matchedNodes);
+      applyRule(P, pc, ruleId, holes, matchedNodes);
 
       ++i;
     }
   }
+
+private:
+  // single shot rule application by index (with random fillers for pattern holes)_
+  void applyRule(Program & P, int pc, int ruleId, NodeVec & holes, NodeSet & matchedNodes) const {
+    // IF_VERBOSE { std::cerr << "Rewrite at " << pc << " with rule: "; rewritePairs[pairIdx].dump(leftMatch); }
+
+    // supplement holes
+    int numLeftHoles = ruleBook.getLeftHandHoles(ruleId);
+    int numRightHoles = ruleBook.getRightHandHoles(ruleId);
+
+    if (numRightHoles > numLeftHoles) {
+      // const auto & lhs = rewritePairs[pairIdx].getMatchProg(leftMatch);
+      // const auto & rhs = rewritePairs[pairIdx].getRewriteProg(leftMatch);
+
+      int lowestVal = -(P.num_Params());
+      int highestVal = std::max(pc - numRightHoles, 0) - 1;
+      assert(lowestVal <= highestVal);
+      std::uniform_int_distribution<int> opRand(lowestVal, highestVal);
+
+      holes.resize(numRightHoles, 0);
+      for (int h = numLeftHoles;  h < numRightHoles; ++h) {
+        int opIdx;
+        // draw operands that do not occur in the pattern
+        do {
+          opIdx = opRand(randGen());
+        } while (matchedNodes.count(opIdx));
+
+        holes[h] = opIdx;
+      }
+    }
+
+    // apply rewrite
+    ruleBook.transform(ruleId, P, pc, holes);//rewritePairs[pairIdx].rewrite(leftMatch, P, pc, holes);
+
+    IF_DEBUG if (!P.verify()) {
+      P.dump();
+      abort();
+    }
+  }
+
 };
 
 

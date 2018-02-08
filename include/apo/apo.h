@@ -77,10 +77,10 @@ struct APO {
   APO(const std::string & taskFile, const std::string & _cpPrefix);
 
   void
-  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, int startIdx, int endIdx);
+  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, int numShuffle, int startIdx, int endIdx);
 
   void
-  generatePrograms(int numSamples, std::function<void(ProgramPtr P, int numMutations)> &&handler);
+  generatePrograms(int numSamples, int numShuffle, std::function<void(ProgramPtr P, int numMutations)> &&handler);
 
   void train();
 };
