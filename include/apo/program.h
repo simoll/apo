@@ -435,6 +435,9 @@ struct Program {
     }
   }
 
+  Statement & operator()(int pc) { return code[pc]; }
+  const Statement & operator()(int pc) const { return code[pc]; }
+
   void print(std::ostream & out) const {
     out << "Program (" << num_Params() << ") {\n";
     for (int i = 0; i < size(); ++i) {

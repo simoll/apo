@@ -434,7 +434,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 9; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 10; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -445,18 +445,35 @@ void APO::train() {
   const int numShuffle = 5;
   generatePrograms(evalProgs, evalDistVec, numShuffle, 0, evalProgs.size());
 
+#if 0
 #if 1
-  evalProgs.emplace_back(new Program(2, {
-             build_pipe(-1),
-             build_pipe(-1),
-             Statement(OpCode::Sub, 0, 1),
-             build_ret(1)
-           }));
-  evalDistVec.push_back(3);
+  // score 1, der 6
+  auto * P = new Program(1, {
+     build_pipe(-1),
+     Statement(OpCode::Sub, 0, 0),
+     build_ret(1)
+  });
+#endif
+
+#if 0
+  // found
+  auto * P = new Program(1, {
+     build_pipe(-1),
+     build_pipe(-1),
+     build_const(0),
+     Statement(OpCode::Add, 0, 2),
+     Statement(OpCode::Sub, 3, 1),
+     build_ret(4)
+  });
+#endif
+
+  P->dump();
+
+  evalProgs.emplace_back(P);
+  evalDistVec.push_back(7);
 #endif
 
   auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
-  std::cerr << "RefDer for a-a : "; refEvalDerVec[refEvalDerVec.size() - 1].dump();
 
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();
@@ -473,6 +490,7 @@ void APO::train() {
   std::mutex cpuMutex; // to co-ordinate multi-threaded processing on the GPU (eg searchThread and evaluation rounds on the trainThread)
 
   // model training - repeatedly draw samples from SampleServer and submit to device for training
+#if 0
   std::thread
   trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
     const int dotStep = logRate / 10;
@@ -577,6 +595,7 @@ void APO::train() {
       } // rounds
     } // while keepGoing
   });
+#endif
 
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
@@ -857,8 +876,8 @@ void APO::train() {
     }
   });
 
-  searchThread.detach();
-  trainThread.join();
+  searchThread.join();
+  // trainThread.join();
 
   keepRunning.store(false); // shutdown all workers
 }

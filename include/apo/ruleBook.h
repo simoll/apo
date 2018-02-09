@@ -43,9 +43,12 @@ struct RuleBook {
   int getBuiltinStart() const { return rewriteRuleVec.size(); }
 
   enum class BuiltinRules : int {
-    PipeWrapOps = 0, // wrap all operand positions in pipes
+    PipeWrapOps = 0, // wrap all operands in pipes
     DropPipe = 1, // drop a pipe
-    Num = 2, // number of extra rules
+    Clone = 2, // TODO clone operation for all pipe-users
+    Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
+    // Evaluate = 4, // TODO evaluate instruction and replace with constant
+    Num = 4, // number of extra rules
     Invalid = -1, // TODO maybe use as token
   };
 
@@ -115,6 +118,8 @@ struct RuleBook {
       switch (fetchBuiltinRule(ruleId)) {
         case BuiltinRules::PipeWrapOps: return true;
         case BuiltinRules::DropPipe: return false;
+        case BuiltinRules::Clone: return true;
+        case BuiltinRules::Fuse: return false;
         default:
           abort(); // TODO implement
       }
@@ -138,6 +143,34 @@ struct RuleBook {
           return P.code[pc].oc != OpCode::Pipe; // double piping not allowed
         case BuiltinRules::DropPipe:
           return P.code[pc].oc == OpCode::Pipe; // can only drop pipes
+        case BuiltinRules::Clone: {
+          bool foundFirst = false; // we can safely ignore the first user
+          holes.clear();
+          // use holes to keep track of pipe users
+          for (int i = pc + 1; i < P.size(); ++i) {
+            if ((P.code[i].oc == OpCode::Pipe) &&
+               (P.code[i].getOperand(0) == pc))
+            {
+              if (foundFirst) {
+                holes.push_back(i);
+              }
+              foundFirst = true;
+            }
+          }
+          return !holes.empty();
+        }
+
+        case BuiltinRules::Fuse: {
+          holes.clear();
+          // look for identical operations (to the one @pc) that are #-tagged
+          for (int i = 0; i + 1 < pc; ++i) {
+            if (P(i).oc != OpCode::Pipe) continue;
+            int otherPc = P(i).getOperand(0);
+            if (!IsStatement(otherPc)) continue; // arg match
+            if (P(otherPc) == P(pc)) holes.push_back(otherPc);
+          }
+        } return !holes.empty();
+
         default:
           abort(); // TODO implement
       }
@@ -155,8 +188,8 @@ struct RuleBook {
 #if 0
           std::cerr << "PIPE WRAP!\n";
           P.dump();
-#endif
           std::cerr << pc << "\n";
+#endif
           int numOps = P.code[pc].num_Operands();
 
           ReMap reMap;
@@ -199,6 +232,42 @@ struct RuleBook {
           P.code[pc].oc = OpCode::Nop;
           P.compact();
         } return;
+
+        // clone the operation for all pipe users
+        case BuiltinRules::Clone: {
+          ReMap reMap;
+          for (int i = 0; i < holes.size(); ++i) {
+            int pipePc = holes[i];
+            P.code[pipePc] = P.code[pc]; // clone operation for user
+          }
+        } return;
+
+        // remove redundant operations
+        case BuiltinRules::Fuse: {
+          std::cerr << "FUSE!\n";
+          P.dump();
+          int firstPc = holes[0]; // the one we keep
+          NodeSet killSet;
+          for (int i = 1; i < holes.size(); ++i) {
+            killSet.insert(holes[i]);
+            P(holes[i]).oc = OpCode::Nop;
+          }
+          killSet.insert(pc);
+
+          // replace all uses with the remaining instance @firstPc
+          for (int j = firstPc + 1; j <= pc; ++j) {
+            for (int o = 0; o < P(j).num_Operands(); ++o) {
+              if (killSet.count(P(j).getOperand(o))) {
+                P(j).setOperand(o, firstPc);
+              }
+            }
+          }
+
+          P.dump();
+
+          // erase nops
+          P.compact();
+        }
 
         default:
           abort(); // TODO implement

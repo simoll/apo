@@ -263,6 +263,15 @@ RewritePairVec
 BuildRewritePairs() {
   RewritePairVec rules;
 
+#if 0
+  // (%a + %b) - %c --> (%a - %c) + %b
+  {
+    Program lhs (3, {Statement(OpCode::Add, -1, -2), Statement(OpCode::Sub, 1, -3), build_ret(1) });
+    Program rhs (3, {Statement(OpCode::Sub, -1, -3), Statement(OpCode::Add, 1, -2), build_ret(1) });
+    rules.emplace_back(lhs, rhs);
+  }
+#else
+  // old rule
   // (%b + %a) - %b --> %a
   {
     // try some matching
@@ -270,6 +279,7 @@ BuildRewritePairs() {
     Program rhs (1, {build_ret(-1)});
     rules.emplace_back(lhs, rhs);
   }
+#endif
 
   // commutative rules (oc %a %b --> oc %b %a)
   for_such(IsCommutative, [&](OpCode oc){
