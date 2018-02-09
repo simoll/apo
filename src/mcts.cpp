@@ -10,7 +10,17 @@
 
 namespace apo {
 
-int GetProgramScore(const Program &P) { return P.size(); }
+int GetProgramScore(const Program &P) {
+  int score = 0;
+  for (auto & stat : P.code) {
+    if ((stat.oc == OpCode::Constant) ||
+        (stat.oc == OpCode::Nop)) {
+      continue;
+    }
+    score++;
+  }
+  return score;
+}
 
 std::ostream &Derivation::print(std::ostream &out) const {
   out << "Derivation (bestScore=" << bestScore
