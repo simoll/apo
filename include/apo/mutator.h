@@ -90,7 +90,7 @@ struct Mutator {
 
     for (int i = 0; i < steps; ) {
       // pick a random pc
-      std::uniform_int_distribution<int> pcRand(0, P.size() - 2); // don't allow return rewrites
+      std::uniform_int_distribution<int> pcRand(0, std::max(0, P.size() - 2)); // don't allow return rewrites
       int pc = pcRand(randGen());
 
       // pick a random rule
