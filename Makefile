@@ -7,7 +7,8 @@ HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
 include make.conf
 
-FLAGS=-DAPO_ENABLE_DER_CACHE
+FLAGS=
+# -DAPO_ENABLE_DER_CACHE # problematic .. disengaged
 
 INC=-Isrc/ \
     -Iinclude \
@@ -62,8 +63,7 @@ ${METAGRAPH}: src/model.py model.conf
 
 .PHONY: clean
 clean:
-	rm -rf apo build/*
-
+	rm -rf apo build/**/*.o build/*.o
 
 purge: clean
-	rm -rf models
+	rm -rf apo build/
