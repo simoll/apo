@@ -536,7 +536,7 @@ void APO::train() {
   std::mutex cpuMutex; // to co-ordinate multi-threaded processing on the GPU (eg searchThread and evaluation rounds on the trainThread)
 
   // model training - repeatedly draw samples from SampleServer and submit to device for training
-#if 0
+#if 1
   std::thread
   trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
     const int dotStep = logRate / 10;
@@ -922,8 +922,8 @@ void APO::train() {
     }
   });
 
-  searchThread.join();
-  // trainThread.join();
+  searchThread.detach();
+  trainThread.join();
 
   keepRunning.store(false); // shutdown all workers
 }
