@@ -677,23 +677,12 @@ void APO::train() {
       const int preAllocSize = numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
 
       // results to find by mcts search
-      RewriteVec mctsRewrites;
-      ProgramVec mctsNextProgs;
-      IntVec mctsNextMaxDistVec;
-      mctsRewrites.reserve(preAllocSize);
-      mctsNextProgs.reserve(preAllocSize);
-      mctsNextMaxDistVec.reserve(preAllocSize);
-
-      // cached results (known)
-      IntVec cachedNextMaxDistVec;
-      ProgramVec cachedNextProgs;
-      RewriteVec cachedRewrites;
-      cachedRewrites.reserve(preAllocSize);
-      cachedNextProgs.reserve(preAllocSize);
-      cachedNextMaxDistVec.reserve(preAllocSize);
-
-      DerivationVec cachedDerVec;
-      cachedDerVec.reserve(preAllocSize);
+      RewriteVec rewrites;
+      ProgramVec nextProgs;
+      IntVec nextMaxDistVec;
+      rewrites.reserve(preAllocSize);
+      nextProgs.reserve(preAllocSize);
+      nextMaxDistVec.reserve(preAllocSize);
 
     // queue all programs that are reachable by a single move
       clock_t startGenerateMove = clock();
@@ -713,38 +702,13 @@ void APO::train() {
             int remainingSteps = std::max(1, maxDistVec[t] - 1);
 
             ProgramPtr actionProg(clonedProg); // must not use @clonedProg after this point
-            Derivation cachedDer;
-            if (server.getDerivation(actionProg, cachedDer)) {
-#if 0
-              if (false /* totalSearchRounds > 1000 */) {
-              // dump it
-              std::cerr << t << " :\n";
-              actionProg->dump();
-              std::cerr << "CACHE: "; cachedDer.print(std::cerr) << "\n";
 
-              ProgramVec testVec(1, actionProg);
-              IntVec testDistVec(1, remainingSteps);
-              DerivationVec testDerVec = montOpt.searchDerivations(testVec, pRandom, testDistVec, numOptRounds, false);
-              auto queryDer = testDerVec[0];
-              std::cerr << "MCTS: "; queryDer.print(std::cerr) << "\n";
-              }
-#endif
-
-              // use cached result (TODO run ::searchDer with low sample rate instead to keep improving)
-              cachedDerVec.push_back(cachedDer);
-              cachedNextMaxDistVec.push_back(remainingSteps);
-              assert(actionProg);
-              cachedNextProgs.push_back(actionProg);
-              cachedRewrites.emplace_back(t, act);
-
-            } else {
-              // full MCTS derivation path for unseen programs
-              // montOpt.searchDerivations will fill in derivations for us
-              mctsNextMaxDistVec.push_back(remainingSteps);
-              assert(actionProg);
-              mctsNextProgs.push_back(actionProg);
-              mctsRewrites.emplace_back(t, act);
-            }
+            // full MCTS derivation path for unseen programs
+            // montOpt.searchDerivations will fill in derivations for us
+            nextMaxDistVec.push_back(remainingSteps);
+            assert(actionProg);
+            nextProgs.push_back(actionProg);
+            rewrites.emplace_back(t, act);
           }
         }
       }
@@ -752,111 +716,32 @@ void APO::train() {
 
       clock_t startDer = clock();
       // best-effort search for optimal program
-      // mctsNextProgs -> mctsDerVec
-      DerivationVec mctsDerVec;
+      // nextProgs -> refDerVec
+      DerivationVec refDerVec;
       {
-        // unseen samples
-        std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
-        mctsDerVec = montOpt.searchDerivations(mctsNextProgs, pRandom, mctsNextMaxDistVec, numOptRounds, false);
+      // use model to improve results
+        if (totalSearchRounds >= racketStartRound) {
+          // model-driven search
+          const int modelRounds = 4;
+          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 4, true);
 
-        // cache improvement
-        const int numCacheOptRounds = 2;
-        DerivationVec improvedDer = montOpt.searchDerivations(cachedNextProgs, pRandom, cachedNextMaxDistVec, numCacheOptRounds, false);
-        cachedDerVec = FilterBest(improvedDer, cachedDerVec);
-      }
-
-#if 0
-      // FIXME DEBUG testing cached+mcts mserging
-      assert(cachedDerVec.size() == cachedNextProgs.size());
-      cachedDerVec.clear();
-      {
-        std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
-        cachedDerVec = montOpt.searchDerivations(cachedNextProgs, pRandom, cachedNextMaxDistVec, numOptRounds, false);
-      }
-#endif
-
-      //if (totalSearchRounds >= 500) server.sampleMap.clear();
-
-      assert(mctsDerVec.size() == mctsNextMaxDistVec.size());
-      assert(mctsNextMaxDistVec.size() == mctsNextProgs.size());
-      assert(mctsNextProgs.size() == mctsRewrites.size());
-
-      // re-interleave the results (by their program index) (or sampleAction will fail)
-      const int totalNumNextProgs = mctsNextMaxDistVec.size() + cachedNextMaxDistVec.size();
-      DerivationVec refDerVec; refDerVec.reserve(totalNumNextProgs);
-      IntVec nextMaxDistVec; nextMaxDistVec.reserve(totalNumNextProgs);
-      ProgramVec nextProgs; nextProgs.reserve(totalNumNextProgs);
-      RewriteVec rewrites; rewrites.reserve(totalNumNextProgs);
-
-      int mctsIdx = 0;
-      int cachedIdx = 0;
-      for (int t = 0; t < progVec.size(); ) {
-        if (cachedIdx < cachedRewrites.size() && cachedRewrites[cachedIdx].first == t) {
-          refDerVec.push_back(cachedDerVec[cachedIdx]);
-          nextMaxDistVec.push_back(cachedNextMaxDistVec[cachedIdx]);
-          nextProgs.push_back(cachedNextProgs[cachedIdx]);
-          rewrites.push_back(cachedRewrites[cachedIdx]);
-
-          cachedIdx++;
-          continue; // redundant
-        } else if (mctsIdx < mctsRewrites.size() && mctsRewrites[mctsIdx].first == t) {
-          refDerVec.push_back(mctsDerVec[mctsIdx]);
-          nextMaxDistVec.push_back(mctsNextMaxDistVec[mctsIdx]);
-          nextProgs.push_back(mctsNextProgs[mctsIdx]);
-          rewrites.push_back(mctsRewrites[mctsIdx]);
-
-          mctsIdx++;
-          continue; // redundant
         } else {
-          // all results for progVec[t] have been merged, continue
-          ++t;
+          // random search
+          std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
+          refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
         }
       }
+
+
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
       clock_t endDer = clock();
-
-      // submit improved results
-      if (server.acceptsDerivations()) {
-        for (int i = 0; i < nextProgs.size(); ++i) {
-          server.submitDerivation(nextProgs[i], refDerVec[i]);
-        }
-      }
-
-      assert(refDerVec.size() == totalNumNextProgs);
-      assert(nextMaxDistVec.size() == totalNumNextProgs);
-      assert(nextProgs.size() == totalNumNextProgs);
-      assert(rewrites.size() == totalNumNextProgs);
-
-#if 0
-      // TODO enable model inference
-      if (g >= racketStartRound) {
-        // model-driven search
-        auto guidedDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 4, true);
-        refDerVec = FilterBest(refDerVec, guidedDerVec);
-      }
-#endif
 
       // (rewrites, refDerVec) --> refResults
       // decode reference ResultDistVec from detected derivations
       ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
 
-#if 0
-      // DEBUG
-      if (totalSearchRounds > 1000) {
-        for (int t = 0; t < progVec.size(); ++t) {
-          std::cerr << "sample " << t << ":\n";
-          progVec[t]->dump();
-          refResults[t].dump();
-        }
-      }
-#endif
-
-      // submit results to server (after warmup)
-      if (totalSearchRounds > warmUpRounds) {
-        server.submitResults(progVec, refResults);
-      } else {
-        if (totalSearchRounds % 10 == 0) { std::cerr << "w"; }
-      }
+      // submit results for training (-> trainThread)
+      server.submitResults(progVec, refResults);
 
       clock_t startSample = clock();
     // sample moves from the reference distribution
@@ -869,15 +754,6 @@ void APO::train() {
         // 2. tell the server about the detected derivations
         [&numNextProgs, &nextProgs, &progVec, &maxDistVec, &nextMaxDistVec, &refDerVec, &server](int sampleIdx, int rewriteIdx) {
             assert(sampleIdx >= numNextProgs);
-
-            // register derivation info
-            Derivation bestDer = refDerVec[rewriteIdx];
-
-            // submit detected derivation
-            // server.submitDerivation(nextProgs[rewriteIdx], bestDer); // broken?
-
-            bestDer.shortestDerivation++; // refDerVec refers to @nextProgs, which are one step away from their predecessors in @progVec
-            // server.submitDerivation(progVec[sampleIdx], bestDer); // broken??
 
             // insert program after action into queue
             int progIdx = numNextProgs++;
@@ -893,11 +769,6 @@ void APO::train() {
         [&server, &progVec](int sampleIdx, StopReason reason) {
           assert((reason != StopReason::DerivationFailure) && "sampling can not fail on reference distribution!");
           assert((reason != StopReason::InvalidDist) && "sampling can not fail on reference distribution!");
-          // if (reason == StopReason::Choice) {
-          //   auto & stopProg = progVec[sampleIdx];
-          //   server.submitDerivation(stopProg, Derivation(*stopProg)); // broken?
-          // }
-
           return true;
         }
       );
