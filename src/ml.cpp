@@ -408,7 +408,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
 
     int emptyBatchElements = 0;
 
-    // #pragma omp parallel for shared(batch)
+    #pragma omp parallel for shared(batch)
     for (int i = 0; i < batch_size; ++i) {
       const Program & P = *progs[s + i];
       if (P.size() > config.prog_length) {
