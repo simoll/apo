@@ -43,6 +43,7 @@ struct Mutator {
 
   // shuffle up the instructions in the program
   void shuffle(Program & P, int numShuffles) const {
+    if (P.size() <= 2) return; // dont' shuffle ret+inst programs
     std::uniform_int_distribution<int> pcRand(1, P.size() - 2); // don't allow return rewrites
     // std::cerr << "SHUFFLE!!\n";
     // P.dump();
