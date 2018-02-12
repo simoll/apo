@@ -39,7 +39,7 @@ enum class BuiltinRules : int {
   Clone = 2, // TODO clone operation for all pipe-users
   Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
   // Evaluate = 4, // TODO evaluate instruction and replace with constant
-  Num = 4, // number of extra rules
+  Num = 2, // number of extra rules
   Invalid = -1, // error token
 };
 
@@ -141,9 +141,9 @@ struct RuleBook {
     } else {
       switch (fetchBuiltinRule(ruleId)) {
         case BuiltinRules::PipeWrapOps:
-          return P.code[pc].oc != OpCode::Pipe; // double piping not allowed
+          return P(pc).oc != OpCode::Pipe; // double piping not allowed
         case BuiltinRules::DropPipe:
-          return P.code[pc].oc == OpCode::Pipe; // can only drop pipes
+          return P(pc).oc == OpCode::Pipe; // can only drop pipes
         case BuiltinRules::Clone: {
           bool foundFirst = false; // we can safely ignore the first user
           holes.clear();
@@ -198,9 +198,9 @@ struct RuleBook {
           int matchPc = pc; // subject to movement
           for (int o = 0; o < numOps; ++o) {
             int origOpPc = P(matchPc).getOperand(o);
-            ReMap reMap;
-
             int pipePc = std::max<>(0, origOpPc + 1); // insert below operand position (or at beginning for args)
+
+            ReMap reMap;
             int newPc = P.make_space(pipePc, 2, reMap);
             // std::cerr << "after move at " << newPc << ":\n";
             matchPc++; // match root shifted
@@ -223,17 +223,17 @@ struct RuleBook {
 
         case BuiltinRules::DropPipe:
         {
-          assert(P.code[pc].oc == OpCode::Pipe);
+          assert(P(pc).oc == OpCode::Pipe);
           // replace all uses of pipe with pc
-          int pipedVal = P.code[pc].getOperand(0);
+          int pipedVal = P(pc).getOperand(0);
           for (int i = pc + 1; i < P.size(); ++i) {
-            for (int o = 0; o < P.code[i].num_Operands(); ++o) {
-              if (P.code[i].getOperand(o) == pc) {
-                P.code[i].setOperand(o, pipedVal);
+            for (int o = 0; o < P(i).num_Operands(); ++o) {
+              if (P(i).getOperand(o) == pc) {
+                P(i).setOperand(o, pipedVal);
               }
             }
           }
-          P.code[pc].oc = OpCode::Nop;
+          P(pc).oc = OpCode::Nop;
           P.compact();
         } return;
 
