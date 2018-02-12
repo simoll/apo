@@ -434,7 +434,7 @@ void APO::train() {
   SampleServer server("server.conf");
 
 // evaluation dataset
-  const int numEvalSamples = 10; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
+  const int numEvalSamples = 1000; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
   std::cerr << "numEvalSamples = " << numEvalSamples << "\n";
 
   // hold-out evaluation set
@@ -446,7 +446,20 @@ void APO::train() {
   generatePrograms(evalProgs, evalDistVec, numShuffle, 0, evalProgs.size());
 
 #if 0
+  // Fuse example
 #if 1
+  // nope
+  // score 4, der 0
+  auto * P = new Program(2, {
+     Statement(OpCode::Add, -1, -2),
+     Statement(OpCode::Add, -1, -2),
+     Statement(OpCode::Mul, 0, 1),
+     build_ret(2)
+  });
+#endif
+
+
+#if 0
   // score 1, der 6
   auto * P = new Program(1, {
      build_pipe(-1),
@@ -467,13 +480,46 @@ void APO::train() {
   });
 #endif
 
+  const int PipeOpRule = ruleBook.getBuiltinID(BuiltinRules::PipeWrapOps);
+  const int FuseRule = ruleBook.getBuiltinID(BuiltinRules::Fuse);
+
+#if 0
+
+  NodeVec holes;
+
   P->dump();
 
+// 1. STEP (pipe operands)
+  bool pipeOk = ruleBook.matchRule(PipeOpRule, *P, 2, holes);
+  assert(pipeOk);
+  ruleBook.transform(PipeOpRule, *P, 2, holes);
+  P->dump();
+
+// 2. STEP (fuse)
+  #if 0
+    // ???
+    auto * P = new Program(2, {
+       Statement(OpCode::Add, -1, -2),
+       Statement(OpCode::Pipe, 0),
+       Statement(OpCode::Add, -1, -2),
+       Statement(OpCode::Pipe, 2),
+       Statement(OpCode::Mul, 1, 3),
+       build_ret(3)
+    });
+  #endif
+
+  holes.clear();
+  bool ok = ruleBook.matchRule(FuseRule, *P, 2, holes);
+  assert(ok);
+#endif
+
   evalProgs.emplace_back(P);
-  evalDistVec.push_back(7);
+  evalDistVec.push_back(4);
 #endif
 
   auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
+
+  // std::cerr << "Ref "; refEvalDerVec[refEvalDerVec.size() - 1].dump();
 
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();

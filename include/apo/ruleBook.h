@@ -33,6 +33,16 @@ struct RewriteRule {
   {}
 };
 
+enum class BuiltinRules : int {
+  PipeWrapOps = 0, // wrap all operands in pipes
+  DropPipe = 1, // drop a pipe
+  Clone = 2, // TODO clone operation for all pipe-users
+  Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
+  // Evaluate = 4, // TODO evaluate instruction and replace with constant
+  Num = 4, // number of extra rules
+  Invalid = -1, // error token
+};
+
 struct RuleBook {
   const RewritePairVec & rewritePairs;
   // [0, .. , rewriteRuleVec.size() - 1]  - rewrite rule range
@@ -41,16 +51,7 @@ struct RuleBook {
 
   // start offset of builtin rules
   int getBuiltinStart() const { return rewriteRuleVec.size(); }
-
-  enum class BuiltinRules : int {
-    PipeWrapOps = 0, // wrap all operands in pipes
-    DropPipe = 1, // drop a pipe
-    Clone = 2, // TODO clone operation for all pipe-users
-    Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
-    // Evaluate = 4, // TODO evaluate instruction and replace with constant
-    Num = 4, // number of extra rules
-    Invalid = -1, // TODO maybe use as token
-  };
+  int getBuiltinID(BuiltinRules rule) const { return getBuiltinStart() + (int) rule; }
 
   const ModelConfig & config;
 
@@ -163,7 +164,7 @@ struct RuleBook {
         case BuiltinRules::Fuse: {
           holes.clear();
           // look for identical operations (to the one @pc) that are #-tagged
-          for (int i = 0; i + 1 < pc; ++i) {
+          for (int i = 0; i < pc; ++i) {
             if (P(i).oc != OpCode::Pipe) continue;
             int otherPc = P(i).getOperand(0);
             if (!IsStatement(otherPc)) continue; // arg match
@@ -192,23 +193,26 @@ struct RuleBook {
 #endif
           int numOps = P.code[pc].num_Operands();
 
-          ReMap reMap;
-
-          // make space for sufficiently many pipes (TODO don't double pipe)
-          int newPc = P.make_space(pc, numOps + 1, reMap);
-          auto & theStat = P.code[newPc]; // moved statment
-#if 0
-          std::cerr << "after make_space (for " << numOps << ") at " << newPc << ":\n";
-          P.dump();
-#endif
 
           // wrap every operand in a pipe
+          int matchPc = pc; // subject to movement
           for (int o = 0; o < numOps; ++o) {
-            int i = newPc - numOps + o;
-            auto & pipeStat = P.code[i];
-            pipeStat.oc = OpCode::Pipe;
-            pipeStat.setOperand(0, theStat.getOperand(o)); // create a new dedicated pipe for that operand
-            theStat.setOperand(o, i); // use the piped operand instead
+            int origOpPc = P(matchPc).getOperand(o);
+            ReMap reMap;
+
+            int pipePc = std::max<>(0, origOpPc + 1); // insert below operand position (or at beginning for args)
+            int newPc = P.make_space(pipePc, 2, reMap);
+            // std::cerr << "after move at " << newPc << ":\n";
+            matchPc++; // match root shifted
+            // std::cerr << "match at " << matchPc << ":\n";
+            // P.dump();
+
+            // insert pipe at allocated position
+            P(pipePc).oc = OpCode::Pipe;
+
+            // tunnel data flow through pipe
+            P(pipePc).setOperand(0, P(matchPc).getOperand(o));
+            P(matchPc).setOperand(o, pipePc);
           }
 #if 0
           std::cerr << "FINAL!\n";
@@ -244,18 +248,19 @@ struct RuleBook {
 
         // remove redundant operations
         case BuiltinRules::Fuse: {
-          std::cerr << "FUSE!\n";
-          P.dump();
+          // std::cerr << "FUSE! " << pc << "\n";
+          // P.dump();
           int firstPc = holes[0]; // the one we keep
           NodeSet killSet;
           for (int i = 1; i < holes.size(); ++i) {
             killSet.insert(holes[i]);
-            P(holes[i]).oc = OpCode::Nop;
+            P(holes[i]).oc = OpCode::Nop; // fuse-and-erase
           }
           killSet.insert(pc);
+          P(pc).oc = OpCode::Nop; //fuse-and-erase
 
           // replace all uses with the remaining instance @firstPc
-          for (int j = firstPc + 1; j <= pc; ++j) {
+          for (int j = firstPc + 1; j < P.size(); ++j) {
             for (int o = 0; o < P(j).num_Operands(); ++o) {
               if (killSet.count(P(j).getOperand(o))) {
                 P(j).setOperand(o, firstPc);
@@ -263,11 +268,11 @@ struct RuleBook {
             }
           }
 
-          P.dump();
 
           // erase nops
           P.compact();
-        }
+          // P.dump();
+        } return;
 
         default:
           abort(); // TODO implement
