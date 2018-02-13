@@ -29,8 +29,6 @@ struct RPG {
     }
   };
 
-  std::uniform_real_distribution<float> constantRand;
-
   struct Sampler {
     std::vector<int> unused;
     std::set<Elem> opQueue;
@@ -164,7 +162,7 @@ struct RPG {
       bool forceOperand = length - i < S.num_Unused() + 1;
 
       if (!forceOperand && // hard criterion to avoid dead code
-          (S.empty() || (constantRand(randGen()) <= pConstant))) { // soft preference criterion
+          (S.empty() || (drawUnitRand() <= pConstant))) { // soft preference criterion
         data_t constVal = drawRandomConstant();
         P.push(build_const(constVal));
 
