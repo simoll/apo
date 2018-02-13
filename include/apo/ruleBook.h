@@ -3,6 +3,7 @@
 
 #include "apo/rewriting.h"
 #include "apo/modelConfig.h"
+#include "apo/exec.h"
 
 #include <unordered_set>
 #include <unordered_map>
@@ -38,8 +39,8 @@ enum class BuiltinRules : int {
   DropPipe = 1, // drop a pipe
   Clone = 2, // TODO clone operation for all pipe-users
   Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
-  // Evaluate = 4, // TODO evaluate instruction and replace with constant
-  Num = 2, // number of extra rules
+  Evaluate = 4, // TODO evaluate instruction and replace with constant
+  Num = 5, // number of extra rules
   Invalid = -1, // error token
 };
 
@@ -121,6 +122,7 @@ struct RuleBook {
         case BuiltinRules::DropPipe: return false;
         case BuiltinRules::Clone: return true;
         case BuiltinRules::Fuse: return false;
+        case BuiltinRules::Evaluate: return false;
         default:
           abort(); // TODO implement
       }
@@ -171,6 +173,16 @@ struct RuleBook {
             if (P(otherPc) == P(pc)) holes.push_back(otherPc);
           }
         } return !holes.empty();
+
+        case BuiltinRules::Evaluate: {
+          if (!P(pc).isOperator()) return false;
+          for (int o = 0; o < P(pc).num_Operands(); ++o) {
+            int opPc = P(pc).getOperand(o);
+            if (!IsStatement(opPc) || P(opPc).oc != OpCode::Constant) return false;
+
+          }
+          return true;
+        }
 
         default:
           abort(); // TODO implement
@@ -272,6 +284,19 @@ struct RuleBook {
           // erase nops
           P.compact();
           // P.dump();
+        } return;
+
+        case BuiltinRules::Evaluate: {
+          // fetch constant params
+          DataVec dataVec; dataVec.reserve(P(pc).num_Operands());
+          for (int o = 0; o < P(pc).num_Operands(); ++o) {
+            int constPc = P(pc).getOperand(o);
+            dataVec.push_back(P(constPc).getValue());
+          }
+
+          // evaluate and encode as constant
+          data_t result = Evaluate(P(pc).oc, dataVec);
+          P(pc) = build_const(result);
         } return;
 
         default:

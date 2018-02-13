@@ -3,6 +3,8 @@
 
 #include "config.h"
 
+#include "apo/ADT/SmallVector.h"
+
 #include <cassert>
 #include <map>
 #include <functional>
@@ -40,11 +42,10 @@ enum class OpCode : int16_t {
 
 // arithmetic data type
 using data_t = uint64_t;
-using DataVec = std::vector<data_t>;
 
 // node index data type
 using node_t = int32_t;
-using NodeVec = std::vector<node_t>;
+using NodeVec = llvm::SmallVector<node_t, 4>;
 
 static bool
 IsCommutative(OpCode oc) {
@@ -115,6 +116,12 @@ PrintIndex(node_t idx, std::ostream & out) {
   }
 }
 
+node_t
+Num_Operands(OpCode oc) {
+  if (oc == OpCode::Nop || oc == OpCode::Constant) return 0;
+  else if (oc == OpCode::Return || oc == OpCode::Pipe) return 1;
+  return 2;
+}
 
 const int operandLimit = 2;
 struct Statement {
@@ -136,11 +143,7 @@ struct Statement {
 
   bool isConstant() const { return oc == OpCode::Constant; }
 
-  int num_Operands() const {
-    if (oc == OpCode::Nop || oc == OpCode::Constant) return 0;
-    else if (oc == OpCode::Return || oc == OpCode::Pipe) return 1;
-    return 2;
-  }
+  int num_Operands() const { return Num_Operands(oc); }
 
   void print(std::ostream & out, int i) const {
     if (oc == OpCode::Nop) { out << "\n"; return; }
