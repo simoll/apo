@@ -1,10 +1,13 @@
 #include "apo/apo.h"
 #include "apo/shared.h"
 #include "apo/ml.h"
+#include "apo/program.h"
+
 #include <iostream>
 #include <sstream>
 #include <ctime>
 #include <iomanip>
+#include <fstream>
 
 using namespace apo;
 
@@ -28,6 +31,8 @@ int main(int argc, char ** argv) {
 
   // train command
   if (cmd == "train") {
+    if (argc != 3) return -1;
+
     const std::string taskFile = argv[2];
 
     // create time-stamped checkpoint (model state) path
@@ -42,10 +47,22 @@ int main(int argc, char ** argv) {
 
     Model::shutdown();
     return 0;
+
+  } else if (cmd == "parse") {
+    if (argc != 3) return -1;
+
+    // parse a program
+    const std::string progFile(argv[2]);
+    std::ifstream in(progFile);
+    auto * P = Program::Parse(in);
+    if (!P) return -1;
+    P->dump();
+    abort(); // TODO do something about this program
   }
 
   // help command
   std::cerr << argv[0] << " <command>\nAvailable commands:\n"
-                           << "\ttrain <scenario.task>\n";
+                           << "\ttrain <scenario.task>\n"
+                           << "\tparse <program.p>\n";
   return 0;
 }

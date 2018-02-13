@@ -102,7 +102,7 @@ PrintOpCode(OpCode oc, std::ostream & out) {
     case OpCode::And: { out << "and"; } break;
     case OpCode::Or: { out << "or"; } break;
     case OpCode::Xor: { out << "xor"; } break;
-    default: abort();
+    default: out << "<UNKOWN>"; return; // unknown
   }
 }
 
@@ -123,12 +123,12 @@ Num_Operands(OpCode oc) {
   return 2;
 }
 
-const int operandLimit = 2;
+const int OperandLimit = 2;
 struct Statement {
   OpCode oc;
 
   union {
-    node_t indices[operandLimit];
+    node_t indices[OperandLimit];
     data_t value;
   } elements;
 
@@ -172,6 +172,16 @@ struct Statement {
   Statement()
   : oc(OpCode::Nop)
   {}
+
+  // generic op - ctor
+  Statement(OpCode _oc, const NodeVec opVec)
+  : oc(_oc)
+  {
+    assert((opVec.size() == num_Operands()) && "wrong number of operands for this OpCode");
+    for (int o = 0; o < num_Operands(); ++o) {
+      elements.indices[o] = opVec[o];
+    }
+  }
 
   // binary op - ctor
   Statement(OpCode _oc, int32_t firstOp, int32_t secondOp)
@@ -268,6 +278,11 @@ struct Program {
 
   int size() const { return code.size(); }
   int num_Params() const { return numParams; }
+
+  Program(int _numParams, const std::vector<Statement> stats)
+  : numParams(_numParams)
+  , code(stats)
+  {}
 
   Program(int _numParams, std::initializer_list<Statement> stats)
   : numParams(_numParams)
@@ -470,6 +485,9 @@ struct Program {
     }
     return false;
   }
+
+  // construct program from stream
+  static Program* Parse(std::istream & in);
 };
 
 // dereferencing less operator
