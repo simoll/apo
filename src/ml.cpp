@@ -77,8 +77,8 @@ Model::~Model() {
   Mutex_guard guard(modelMutex);
 }
 
-Model::Model(const std::string & saverPrefix, const ModelConfig & modelConfig, int _numRules)
-: num_Rules(_numRules)
+Model::Model(const std::string & saverPrefix, const ModelConfig & modelConfig, const RuleBook & _ruleBook)
+: ruleBook(_ruleBook)
 , config(modelConfig)
 {
   init_tflow(); // make sure tensorflow session works as expected
@@ -86,11 +86,15 @@ Model::Model(const std::string & saverPrefix, const ModelConfig & modelConfig, i
 // parse shared configuration
   config.print(std::cerr) << "\n";
 
-  if (num_Rules > config.max_Rules) {
-    std::cerr << "Model does not support mode than " << config.max_Rules << " rules at a time! Aborting..\n";
+  if (num_Rules() > config.max_Rules) {
+    std::cerr << "Model does not support more than " << config.max_Rules << " rules at a time! Aborting..\n";
     abort();
   }
 
+  if (ruleBook.constVec.size() > config.max_OpCodes) {
+    std::cerr << "Model does not support more than " << config.max_OpCodes << " op codes at a time! Aborting..\n";
+    abort();
+  }
 // build Graph
 
 
@@ -197,7 +201,15 @@ Model::encodeOperand(const Statement & stat, int opIdx) const {
 
 int
 Model::encodeOpCode(const Statement & stat) const {
-  return (int) stat.oc;
+  int constIdx;
+  if (stat.isConstant() && ruleBook.getConstantIndex(stat.getValue(), constIdx)) {
+    // use dedicated value opCode (if available)
+    // otherwise default to generic OpCode::Constant opCode
+    int constBaseOC = 1 + (int) OpCode::End_OpCode;
+    return constBaseOC + constIdx;
+  } else {
+    return (int) stat.oc;
+  }
 }
 
 using FeedDict = std::vector<std::pair<string, tensorflow::Tensor>>;
@@ -278,16 +290,16 @@ struct Batch {
     auto action_Mapped = action_feed.tensor<float, 3>();
     for (int t = 0; t < model.config.prog_length; ++t) {
       double pTarget = 0.0;
-      for (int r = 0; r < model.num_Rules; ++r) {
-        pTarget += result.actionDist[t * model.num_Rules + r];
+      for (int r = 0; r < model.num_Rules(); ++r) {
+        pTarget += result.actionDist[t * model.num_Rules() + r];
       }
 
       // std::cerr << "T " << batch_id << " " << t << "  :  " << pTarget << "\n";
       target_Mapped(batch_id, t) = pTarget;
       for (int r = 0; r < model.config.max_Rules; ++r) {
         float pAction = 0.0;
-        if (r < model.num_Rules && (pTarget > 0.0)) {
-          pAction = result.actionDist[t * model.num_Rules + r] / pTarget;
+        if (r < model.num_Rules() && (pTarget > 0.0)) {
+          pAction = result.actionDist[t * model.num_Rules() + r] / pTarget;
           // std::cerr << "B " << batch_id << " " << t << " " << r << "  :  " << pAction << "\n";
         }
         action_Mapped(batch_id, t, r) = pAction;
@@ -450,10 +462,10 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
           float pTarget = targetDist_Mapped(i, t);
 
           // std::cerr << i << " " << t << "  :  " << pTarget << "\n";
-          for (int r = 0; r < num_Rules; ++r) {
+          for (int r = 0; r < num_Rules(); ++r) {
             auto pAction = actionDist_Mapped(i, t, r);
             // std::cerr << i << " " << t << " " << r << "  :  " << pAction << "\n";
-            int i = t*num_Rules + r;
+            int i = t*num_Rules() + r;
             assert(0 <= i && i < res.actionDist.size());
             res.actionDist[i] = pAction * pTarget;
           }
@@ -517,7 +529,7 @@ Model::createStopResult() const {
 }
 
 ResultDist
-Model::createEmptyResult() const { return ResultDist(num_Rules, config.prog_length); }
+Model::createEmptyResult() const { return ResultDist(num_Rules(), config.prog_length); }
 
 void
 ResultDist::print(std::ostream & out) const {

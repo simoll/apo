@@ -27,7 +27,7 @@ conf = parseConfig("model.conf")
 # maximal program len
 prog_length = int(conf["prog_length"])
 
-num_OpCodes = int(conf["num_OpCodes"])
+num_OpCodes = int(conf["max_OpCodes"])
 
 # maximal number of parameters
 num_Params = int(conf["num_Params"])

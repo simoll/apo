@@ -74,7 +74,7 @@ APO::APO()
     : modelConfig("model.conf")
     , rewritePairs(BuildRewritePairs())
     , ruleBook(modelConfig, rewritePairs)
-    , model("build/rdn", modelConfig, ruleBook.num_Rules())
+    , model("build/rdn", modelConfig, ruleBook)
     , montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params)
     , expMut(ruleBook)
 {
@@ -236,7 +236,7 @@ void APO::train(const Job & task) {
     ResultDistVec refResults(task.numSamples);
 
     Task trainTask;
-    while (keepRunning.load()) {
+    {
       clock_t roundTotal = 0;
       size_t numTimedRounds = 0;
 
@@ -336,6 +336,9 @@ void APO::train(const Job & task) {
       ss << task.cpPrefix << "/" << task.taskName << "-" << g << "-final.cp";
       model.saveCheckpoint(ss.str());
       std::cerr << "Final model stored to " << ss.str() << ".\n";
+
+      // shutdown server
+      keepRunning.store(false);
     } // while keepGoing
   });
 #endif

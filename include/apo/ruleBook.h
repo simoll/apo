@@ -56,11 +56,42 @@ struct RuleBook {
 
   const ModelConfig & config;
 
+  DataVec constVec; // recognized constants in the match rules
+  std::map<data_t, int> constIndex; // constant number index
+
+  bool getConstantIndex(data_t constVal, int & idx) const {
+    auto it = constIndex.find(constVal);
+    if (it == constIndex.end()) return false;
+    idx = it->second;
+    return true;
+  }
+
+  void collectConstants(const Program & prog) {
+    for (auto & stat : prog.code) {
+      if (!stat.isConstant()) continue;
+
+      data_t constVal = stat.getValue();
+      auto itIndex = constIndex.find(constVal);
+      if (itIndex != constIndex.end()) continue;
+      int nextNo = constVec.size();
+      constIndex[constVal] = nextNo;
+      constVec.push_back(constVal); // TODO redundant
+    }
+  }
+
   RuleBook(const ModelConfig & modelConfig, const RewritePairVec & _rewritePairs)
   : rewritePairs(_rewritePairs)
   , rewriteRuleVec()
   , config(modelConfig)
   {
+  // mine rule constants
+    for (auto & rule : rewritePairs) {
+      collectConstants(rule.lhs);
+      collectConstants(rule.rhs);
+    }
+    std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
+
+  // index rewrite rules
     for (int i = 0; i < rewritePairs.size(); ++i) {
       const auto & rewPair = rewritePairs[i];
       for (int j = 0; j < 2 - (rewPair.symmetric ? 1 : 0); ++j) {

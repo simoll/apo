@@ -3,6 +3,7 @@
 
 #include "apo/program.h"
 #include "apo/ADT/SmallVector.h"
+#include "apo/shared.h"
 
 namespace apo {
 

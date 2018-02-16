@@ -10,6 +10,7 @@ namespace apo {
 
 
 struct RPG {
+  const RuleBook & ruleBook;
   int numParams;
 
   struct Elem {
@@ -107,38 +108,20 @@ struct RPG {
     bool empty() const { return unused.empty() && opQueue.empty(); }
   };
 
-  std::vector<data_t> constVec; // recognized constants in the match rules
   const double pConstant = 0.20;
 
-  void collectConstants(const Program & prog, std::set<data_t> & seen) {
-    for (auto & stat : prog.code) {
-      if (stat.isConstant()) {
-        if (seen.insert(stat.getValue()).second) {
-          constVec.push_back(stat.getValue());
-        }
-      }
-    }
-  }
-
-  RPG(const RuleBook & ruleBook, int _numParams)
-  : numParams(_numParams)
-  {
-    std::set<data_t> seen;
-    // FIXME factor this out
-    for (auto & rule : ruleBook.rewritePairs) {
-      collectConstants(rule.lhs, seen);
-      collectConstants(rule.rhs, seen);
-    }
-    std::cerr << "found " << constVec.size() << " different constants in rule set!\n";
-  }
+  RPG(const RuleBook & _ruleBook, int _numParams)
+  : ruleBook(_ruleBook)
+  , numParams(_numParams)
+  {}
 
   data_t
   drawRandomConstant() const {
     // random constant
-    std::uniform_int_distribution<int> constIdxRand(0, constVec.size() * 2 - 1);
+    std::uniform_int_distribution<int> constIdxRand(0, ruleBook.constVec.size() * 2 - 1);
     int idx = constIdxRand(randGen());
-    if (idx< constVec.size()) {
-      return constVec[idx]; // known random constant from pool
+    if (idx< ruleBook.constVec.size()) {
+      return ruleBook.constVec[idx]; // known random constant from pool
     } else {
       std::uniform_int_distribution<data_t> constValRand(std::numeric_limits<data_t>::min(), std::numeric_limits<data_t>::max());
       return constValRand(randGen()); // proper random constant

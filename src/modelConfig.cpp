@@ -14,6 +14,7 @@ ModelConfig::ModelConfig(const std::string & configFile) {
   prog_length = confParser.get_or_fail<int>("prog_length");
   num_Params = confParser.get_or_fail<int>("num_Params");
   max_Rules = confParser.get_or_fail<int>("max_Rules");
+  max_OpCodes = confParser.get_or_fail<int>("max_OpCodes");
 }
 
 std::ostream &

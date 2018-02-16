@@ -15,6 +15,7 @@ struct ModelConfig {
   int prog_length;
   int num_Params;
   int max_Rules;
+  int max_OpCodes;
 
   ModelConfig(const std::string & configFile);
   std::ostream & print(std::ostream & out) const;

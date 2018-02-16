@@ -7,6 +7,7 @@
 #include "apo/program.h"
 #include "apo/extmath.h"
 #include "apo/modelConfig.h"
+#include "apo/ruleBook.h"
 
 #include "apo/task.h"
 
@@ -21,7 +22,6 @@ namespace tensorflow {
 
 
 namespace apo {
-
 
 struct ResultDist {
   float stopDist; // [0,1]
@@ -56,8 +56,8 @@ class Model {
 // graph definition
 
 public:
-  int num_Rules; // number of active rules
   const ModelConfig & config;
+  const RuleBook & ruleBook;
 
   const int max_Operands = 2;
 
@@ -65,7 +65,9 @@ public:
   int encodeOperand(const Statement & stat, node_t opIdx) const;
   int encodeOpCode(const Statement & stat) const;
 
-  ResultDist createResultDist() { return ResultDist(num_Rules, config.prog_length); }
+  int num_Rules() const { return ruleBook.num_Rules(); }
+
+  ResultDist createResultDist() { return ResultDist(num_Rules(), config.prog_length); }
 
   // internal learning statistics
   struct Statistics {
@@ -78,7 +80,7 @@ public:
   void flush();
 
 public:
-  Model(const std::string & saverPrefix, const ModelConfig & _modelConfig, int num_Rules);
+  Model(const std::string & saverPrefix, const ModelConfig & _modelConfig, const RuleBook & _ruleBook);
   ~Model();
 
   void loadCheckpoint(const std::string & checkPointFile);
