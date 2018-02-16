@@ -2,6 +2,7 @@
 #include "apo/shared.h"
 #include "apo/ml.h"
 #include "apo/program.h"
+#include "apo/score.h"
 
 #include <iostream>
 #include <sstream>
@@ -23,7 +24,8 @@ int main(int argc, char ** argv) {
   // initialize thread safe random number generators
   InitRandom();
 
-  // pars command
+
+  // parse command
   std::string cmd = "help";
   if (argc >= 2) {
     cmd = argv[1];
@@ -41,28 +43,49 @@ int main(int argc, char ** argv) {
     ss << "mkdir -p " << cpPrefix;
     system(ss.str().c_str());
 
-    APO apo(taskFile, cpPrefix);
+    APO::Job job(taskFile, cpPrefix);
+    APO apo;
 
-    apo.train();
+    apo.train(job);
 
     Model::shutdown();
     return 0;
 
-  } else if (cmd == "parse") {
-    if (argc != 3) return -1;
+  } else if (cmd == "run") { // "run <model-cp> <prog-name>"
+    if (argc != 4) return -1;
 
-    // parse a program
-    const std::string progFile(argv[2]);
+    const std::string cpFile(argv[2]);
+    const std::string progFile(argv[3]);
+
+    // parse program
     std::ifstream in(progFile);
-    auto * P = Program::Parse(in);
+    ProgramPtr P(Program::Parse(in));
     if (!P) return -1;
+
+    // initial prog.
     P->dump();
-    abort(); // TODO do something about this program
+    int startScore = GetProgramScore(*P);
+
+    // set-up engine
+    APO apo;
+    apo.loadCheckpoint(cpFile);
+
+    // optimize
+    const int stepLimit = 256;
+    ProgramVec progVec(1, P);
+    apo.optimize(progVec, APO::Strategy::Greedy, stepLimit);
+
+    // optimized prog.
+    auto endScore = GetProgramScore(*P);
+    P->dump();
+
+    std::cerr << "Start score " << startScore << ", end score: " << endScore << ".\n";
+    return 0;
   }
 
   // help command
   std::cerr << argv[0] << " <command>\nAvailable commands:\n"
                            << "\ttrain <scenario.task>\n"
-                           << "\tparse <program.p>\n";
+                           << "\rtun <modelCheckpoint.cp> <program.p>\n";
   return 0;
 }

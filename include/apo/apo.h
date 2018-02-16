@@ -35,6 +35,11 @@
 namespace apo {
 
 struct APO {
+  // optimization strategy
+  enum class Strategy : int {
+    Greedy = 0,
+  };
+
   ModelConfig modelConfig;
   RewritePairVec rewritePairs;
   RuleBook ruleBook;
@@ -45,44 +50,59 @@ struct APO {
   RPG rpg;
   Mutator expMut;
 
-  std::string taskName; // name of task
+  // training task
+  struct Job {
+    std::string taskName; // name of task
 
-  int minStubLen; //3; // minimal progrm stub len (excluding params and return)
-  int maxStubLen; //4; // maximal program stub len (excluding params and return)
-  int minMutations;// 1; // max number of program mutations
-  int maxMutations;// 1; // max number of program mutations
-  static constexpr double pGenExpand = 0.7; //0.7; // mutator expansion ratio
+    int minStubLen; //3; // minimal progrm stub len (excluding params and return)
+    int maxStubLen; //4; // maximal program stub len (excluding params and return)
+    int minMutations;// 1; // max number of program mutations
+    int maxMutations;// 1; // max number of program mutations
+    static constexpr double pGenExpand = 0.7; //0.7; // mutator expansion ratio
 
-// mc search options
-  int extraExplorationDepth; // number of derivation steps beyond applied number of mutations
-  int maxExplorationDepth; // maximal exploration depth in any case
-  double pRandom; //1.0; // probability of ignoring the model for inference
-  int numOptRounds; //50; // number of optimization retries
-  int numEvalOptRounds; //50; // number of optimization retries
-  double replayRate; // number of replayed instances (from derivation cache)
+    int numShuffle; // # shuffle operations on program
 
-// eval round interval
-  int logRate;
-  size_t numRounds; // total training rounds
-  size_t racketStartRound; // round when the racket should start (model based query)
+  // mc search options
+    int extraExplorationDepth; // number of derivation steps beyond applied number of mutations
+    int maxExplorationDepth; // maximal exploration depth in any case
+    double pRandom; //1.0; // probability of ignoring the model for inference
+    int numOptRounds; //50; // number of optimization retries
+    int numEvalOptRounds; //50; // number of optimization retries
+    double replayRate; // number of replayed instances (from derivation cache)
 
-  bool saveCheckpoints; // save model checkpoints at @logRate
+  // eval round interval
+    int logRate;
+    size_t numRounds; // total training rounds
+    size_t racketStartRound; // round when the racket should start (model based query)
 
-// training
-  int numSamples;     // number of training samples
-  float cacheRatio;   // fraction of training samples from cache
-  int cacheSize;      // number of completed programs to hold in cache
+    bool saveCheckpoints; // save model checkpoints at @logRate
+
+  // training
+    int numSamples;     // number of training samples
+    float cacheRatio;   // fraction of training samples from cache
+    int cacheSize;      // number of completed programs to hold in cache
+    std::string cpPrefix;
+
+    Job(const std::string taskFile, const std::string cpPrefix);
+  };
 
 // number of simulation batches
-  APO(const std::string & taskFile, const std::string & _cpPrefix);
+  APO();
+
+  // load checkpoint file
+  void loadCheckpoint(const std::string cpFile);
 
   void
-  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, int numShuffle, int startIdx, int endIdx);
+  generatePrograms(ProgramVec & progVec, IntVec & maxDistVec, const Job & task, int startIdx, int endIdx);
 
   void
-  generatePrograms(int numSamples, int numShuffle, std::function<void(ProgramPtr P, int numMutations)> &&handler);
+  generatePrograms(int numSamples, const Job & task, std::function<void(ProgramPtr P, int numMutations)> &&handler);
 
-  void train();
+  // train the model according to the loaded task
+  void train(const Job & task);
+
+  // optimize @P
+  void optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit);
 };
 
 

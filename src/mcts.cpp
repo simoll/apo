@@ -10,18 +10,6 @@
 
 namespace apo {
 
-int GetProgramScore(const Program &P) {
-  int score = 0;
-  for (auto & stat : P.code) {
-    if ((stat.oc == OpCode::Constant) ||
-        (stat.oc == OpCode::Nop)) {
-      continue;
-    }
-    score++;
-  }
-  return score;
-}
-
 std::ostream &Derivation::print(std::ostream &out) const {
   out << "Derivation (bestScore=" << bestScore
       << ", dist=" << shortestDerivation << ")";
@@ -128,6 +116,47 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 
   // Otw, rely on the mutator to do the job
   return mut.tryApply(P, rew);
+}
+
+void
+MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & maxStepsVec) {
+  int frozen = 0; // amount of programs that have stopped derivation
+  std::vector<char> alreadyStopped(progVec.size(), false);
+
+  // this loop keeps spinning until all threads have stopped the derivation (++frozen)
+  for (int derStep = 0; frozen < progVec.size(); ++derStep) {
+
+    // query action distribution
+    ResultDistVec actionDistVec(progVec.size());
+    model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
+
+#pragma omp parallel for \
+        reduction(+ : frozen) \
+        shared(actionDistVec,alreadyStopped,progVec,maxStepsVec)
+    for (int t = 0; t < progVec.size(); ++t) { // for all programs
+      if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
+
+    // act (transform or STOP)
+      Action rew;
+      bool signalsStop = false;
+      greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
+
+      // shall we stop after this action?
+      bool stopDerivation = (derStep + 1) >= maxStepsVec[t] || // last derivation round (time out)
+                            (progVec[t]->size() > model.config.prog_length); // in excess of maximal supported program length
+
+      Derivation currState(
+          GetProgramScore(*progVec[t]), // program after greedy action/STOP
+          derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
+      );
+
+    // stop derivating this program
+      if (stopDerivation || signalsStop) {
+        alreadyStopped[t] = true;
+        ++frozen; continue;
+      }
+    }
+  } // derivation loop
 }
 
 // greedyDer - solution that respects STOP (stopDist > stopThreshold)

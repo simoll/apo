@@ -31,16 +31,11 @@ static int CountStops(const DerivationVec &derVec) {
   return a;
 }
 
-// number of simulation batches
-APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
-    : modelConfig("model.conf")
-    , rewritePairs(BuildRewritePairs())
-    , ruleBook(modelConfig, rewritePairs)
-    , model("build/rdn", modelConfig, ruleBook.num_Rules())
-    , cpPrefix(_cpPrefix), montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params)
-    , expMut(ruleBook)
+
+APO::Job::Job(const std::string taskFile, const std::string _cpPrefix)
+    : cpPrefix(_cpPrefix)
 {
-  std::cerr << "Loading task file " << taskFile << "\n";
+  std::cerr << "Loading training job file " << taskFile << "\n";
 
   Parser task(taskFile);
   // random program options
@@ -53,6 +48,7 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   maxStubLen = task.get_or_fail<int>("maxStubLen"); // maximal stub len (exluding params and return)
   minMutations = task.get_or_fail<int>( "minMutations"); // minimal number of mutations
   maxMutations = task.get_or_fail<int>( "maxMutations"); // maximal number of mutations
+  numShuffle = task.get_or_fail<int>( "numShuffle"); // numbers of random shuffles
 
   // mc search options
   extraExplorationDepth = task.get_or_fail<int>("extraExplorationDepth"); // additional derivation steps beyond known number of mutations
@@ -72,15 +68,24 @@ APO::APO(const std::string &taskFile, const std::string &_cpPrefix)
   if (saveCheckpoints) {
     std::cerr << "Saving checkpoints to prefix " << cpPrefix << "\n";
   }
-
+}
+// number of simulation batches
+APO::APO()
+    : modelConfig("model.conf")
+    , rewritePairs(BuildRewritePairs())
+    , ruleBook(modelConfig, rewritePairs)
+    , model("build/rdn", modelConfig, ruleBook.num_Rules())
+    , montOpt(ruleBook, model), rpg(ruleBook, modelConfig.num_Params)
+    , expMut(ruleBook)
+{
   // initialize thread safe random number generators
   InitRandom();
 }
 
 inline void
-APO::generatePrograms(int numSamples, int numShuffle, std::function<void(ProgramPtr P, int numMutations)> &&handleFunc) {
-  std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
-  std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
+APO::generatePrograms(int numSamples, const Job & task, std::function<void(ProgramPtr P, int numMutations)> &&handleFunc) {
+  std::uniform_int_distribution<int> mutRand(task.minMutations, task.maxMutations);
+  std::uniform_int_distribution<int> stubRand(task.minStubLen, task.maxStubLen);
 
   for (int i = 0; i < numSamples; ++i) {
     ProgramPtr P = nullptr;
@@ -93,8 +98,8 @@ APO::generatePrograms(int numSamples, int numShuffle, std::function<void(Program
 
       assert(P->size() <= modelConfig.prog_length);
       for (int j = 0; j < mutSteps; ++j) {
-        expMut.mutate(*P, 1, pGenExpand); // mutate at least once
-        expMut.shuffle(*P, numShuffle);
+        expMut.mutate(*P, 1, task.pGenExpand); // mutate at least once
+        expMut.shuffle(*P, task.numShuffle);
       }
     } while (P->size() > modelConfig.prog_length);
 
@@ -104,14 +109,10 @@ APO::generatePrograms(int numSamples, int numShuffle, std::function<void(Program
   }
 }
 
-void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int numShuffle, int startIdx,
-                           int endIdx) {
-  std::uniform_int_distribution<int> mutRand(minMutations, maxMutations);
-  std::uniform_int_distribution<int> stubRand(minStubLen, maxStubLen);
-
+void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, const Job & task, int startIdx, int endIdx) {
   int i = startIdx;
-  generatePrograms(endIdx - startIdx, numShuffle, [this, &progVec, &maxDerVec, &i](ProgramPtr P, int numMutations) {
-    maxDerVec[i] = std::min(numMutations + extraExplorationDepth, maxExplorationDepth);
+  generatePrograms(endIdx - startIdx, task, [this, &task, &progVec, &maxDerVec, &i](ProgramPtr P, int numMutations) {
+    maxDerVec[i] = std::min(numMutations + task.extraExplorationDepth, task.maxExplorationDepth);
     progVec[i] = ProgramPtr(P);
     ++i;
   });
@@ -119,7 +120,7 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, int numShuff
 
 
 
-void APO::train() {
+void APO::train(const Job & task) {
 // set-up training server
   SampleServer server("server.conf");
 
@@ -129,11 +130,10 @@ void APO::train() {
 
   // hold-out evaluation set
   std::cerr << "-- Buildling evaluation set (" << numEvalSamples << " samples, "
-            << numEvalOptRounds << " optRounds) --\n";
+            << task.numEvalOptRounds << " optRounds) --\n";
   ProgramVec evalProgs(numEvalSamples, nullptr);
   IntVec evalDistVec(numEvalSamples, 0);
-  const int numShuffle = 5;
-  generatePrograms(evalProgs, evalDistVec, numShuffle, 0, evalProgs.size());
+  generatePrograms(evalProgs, evalDistVec, task, 0, evalProgs.size());
 
 #if 0
   // Fuse example
@@ -207,7 +207,7 @@ void APO::train() {
   evalDistVec.push_back(4);
 #endif
 
-  auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, numEvalOptRounds, false);
+  auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, task.numEvalOptRounds, false);
 
   // std::cerr << "Ref "; refEvalDerVec[refEvalDerVec.size() - 1].dump();
 
@@ -219,7 +219,7 @@ void APO::train() {
   auto bestEvalDerVec = refEvalDerVec;
 
 // training
-  assert(minStubLen > 0 && "can not generate program within constraints");
+  assert(task.minStubLen > 0 && "can not generate program within constraints");
 
   std::atomic<bool> keepRunning = true;
 
@@ -228,12 +228,12 @@ void APO::train() {
   // model training - repeatedly draw samples from SampleServer and submit to device for training
 #if 1
   std::thread
-  trainThread([this, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
-    const int dotStep = logRate / 10;
+  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
+    const int dotStep = task.logRate / 10;
 
     // Fetch initial programs
-    ProgramVec progVec(numSamples, nullptr);
-    ResultDistVec refResults(numSamples);
+    ProgramVec progVec(task.numSamples, nullptr);
+    ResultDistVec refResults(task.numSamples);
 
     Task trainTask;
     while (keepRunning.load()) {
@@ -241,10 +241,11 @@ void APO::train() {
       size_t numTimedRounds = 0;
 
       std::cerr << "\n-- Training --\n";
-      for (size_t g = 0; g < numRounds; ++g) {
+      size_t g; // current opt round
+      for (g = 0; g < task.numRounds; ++g) {
 
     // evaluation round logic
-        bool loggedRound = (g % logRate == 0);
+        bool loggedRound = (g % task.logRate == 0);
         if (loggedRound) {
           std::unique_lock lock(cpuMutex); // drop the lock every now and then..
 
@@ -287,9 +288,9 @@ void APO::train() {
               std::cerr); // best of all sampling strategies (improving over time)
 
           // store model
-          if (saveCheckpoints) {
+          if (task.saveCheckpoints) {
             std::stringstream ss;
-            ss << cpPrefix << "/" << taskName << "-" << g << ".cp";
+            ss << task.cpPrefix << "/" << task.taskName << "-" << g << ".cp";
             model.saveCheckpoint(ss.str());
           }
 
@@ -308,7 +309,7 @@ void APO::train() {
         numTimedRounds++;
 
         // fetch a new batch
-        server.drawSamples(progVec, refResults, 0, numSamples);
+        server.drawSamples(progVec, refResults, 0, task.numSamples);
 
         // train model (progVec, refResults)
         Model::Losses L;
@@ -329,6 +330,12 @@ void APO::train() {
         }
 
       } // rounds
+
+      // save final model
+      std::stringstream ss;
+      ss << task.cpPrefix << "/" << task.taskName << "-" << g << "-final.cp";
+      model.saveCheckpoint(ss.str());
+      std::cerr << "Final model stored to " << ss.str() << ".\n";
     } // while keepGoing
   });
 #endif
@@ -336,16 +343,16 @@ void APO::train() {
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::thread
-  searchThread([this, &keepRunning, &server, &cpuMutex, numShuffle]{
+  searchThread([this, &keepRunning, &server, &cpuMutex, &task]{
 
 
     // compute all one-step derivations
     using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
 
     // generate initial programs
-    ProgramVec progVec(numSamples, nullptr);
+    ProgramVec progVec(task.numSamples, nullptr);
     IntVec maxDistVec(progVec.size(), 0);
-    generatePrograms(progVec, maxDistVec, numShuffle, 0, numSamples);
+    generatePrograms(progVec, maxDistVec, task, 0, task.numSamples);
 
 #ifdef APO_ENABLE_DER_CACHE
     // warm up the cache
@@ -361,10 +368,10 @@ void APO::train() {
       // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
       // #pragma omp parallel for ordered
 
-      assert(progVec.size() == numSamples);
-      assert(maxDistVec.size() == numSamples);
+      assert(progVec.size() == task.numSamples);
+      assert(maxDistVec.size() == task.numSamples);
 
-      const int preAllocSize = numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
+      const int preAllocSize = task.numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
 
       // results to find by mcts search
       RewriteVec rewrites;
@@ -410,7 +417,7 @@ void APO::train() {
       DerivationVec refDerVec;
       {
       // use model to improve results
-        if (totalSearchRounds >= racketStartRound) {
+        if (totalSearchRounds >= task.racketStartRound) {
           // model-driven search
           const int modelRounds = 4;
           refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 4, true);
@@ -418,7 +425,7 @@ void APO::train() {
         } else {
           // random search
           std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
-          refDerVec = montOpt.searchDerivations(nextProgs, pRandom, nextMaxDistVec, numOptRounds, false);
+          refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false);
         }
       }
 
@@ -464,19 +471,19 @@ void APO::train() {
       );
       clock_t endSample = clock();
 
-      double dropOutRate = 1.0 - numNextProgs / (double) numSamples;
+      double dropOutRate = 1.0 - numNextProgs / (double) task.numSamples;
 
       // fill up dropped slots with new programs
-      int numRefill = numSamples - numNextProgs;
-      int numReplayedSamples = (int) floor(numRefill * replayRate);
+      int numRefill = task.numSamples - numNextProgs;
+      int numReplayedSamples = (int) floor(numRefill * task.replayRate);
 
       // replay samples
       clock_t startReplay = clock();
-      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, extraExplorationDepth, maxExplorationDepth);
+      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, task.extraExplorationDepth, task.maxExplorationDepth);
       clock_t endReplay = clock();
 
       // fill up with completely new progs
-      generatePrograms(progVec, maxDistVec, numShuffle, actualEndIdx, numSamples);
+      generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);
 
       // report timing stats
       server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);
@@ -489,5 +496,17 @@ void APO::train() {
   keepRunning.store(false); // shutdown all workers
 }
 
+
+void
+APO::loadCheckpoint(const std::string cpFile) {
+  return model.loadCheckpoint(cpFile);
+}
+
+void
+APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
+  assert(optStrat == Strategy::Greedy);
+  IntVec maxDistVec(progVec.size(), stepLimit);
+  montOpt.greedyOptimization(progVec, maxDistVec);
+}
 
 } // namespace apo

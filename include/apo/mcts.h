@@ -13,11 +13,11 @@
 #include "apo/task.h"
 #include "apo/ruleBook.h"
 
+#include "apo/score.h"
+
 namespace apo {
 
 using IntVec = std::vector<int>;
-
-int GetProgramScore(const Program &P);
 
 struct Derivation {
   int bestScore;
@@ -110,6 +110,9 @@ struct MonteCarloOptimizer {
 
   GreedyResult
   greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec);
+
+  // optimize the progarms in @progVec greedily
+  void greedyOptimization(ProgramVec & progVec, const IntVec & maxDistVec);
 
   // random trajectory based model (or uniform dist) sampling
   DerivationVec
