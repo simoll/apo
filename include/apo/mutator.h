@@ -174,12 +174,23 @@ private:
     }
 
     // apply rewrite
+    Program* copP = nullptr;
+    IF_DEBUG {
+      copP = new Program(P);
+    }
+
     ruleBook.transform(ruleId, P, pc, holes);//rewritePairs[pairIdx].rewrite(leftMatch, P, pc, holes);
 
-    IF_DEBUG if (!P.verify()) {
-      std::cerr << "Offending ruleId " << ruleId << " at pc = " << pc << "\n";
-      P.dump();
-      abort();
+    IF_DEBUG {
+      if (!P.verify()) {
+        std::cerr << "Offending ruleId " << ruleId << " at pc = " << pc << "\n";
+        std::cerr << "before:\n";
+        copP->dump();
+        std::cerr << "after:\n";
+        P.dump();
+        abort();
+      }
+      delete copP;
     }
   }
 
