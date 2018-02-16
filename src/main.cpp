@@ -60,7 +60,15 @@ int main(int argc, char ** argv) {
     // parse program
     std::ifstream in(progFile);
     ProgramPtr P(Program::Parse(in));
-    if (!P) return -1;
+    if (!P) {
+      std::cerr << "Could not load program!\n";
+      return -1;
+    }
+
+    if (!P->verify()) {
+      std::cerr << "Program is not well formed!\n";
+      return -2;
+    }
 
     // initial prog.
     P->dump();
@@ -76,8 +84,8 @@ int main(int argc, char ** argv) {
     apo.optimize(progVec, APO::Strategy::Greedy, stepLimit);
 
     // optimized prog.
-    auto endScore = GetProgramScore(*P);
     P->dump();
+    auto endScore = GetProgramScore(*P);
 
     std::cerr << "Start score " << startScore << ", end score: " << endScore << ".\n";
     return 0;
