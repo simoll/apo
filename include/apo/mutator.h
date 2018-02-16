@@ -80,6 +80,8 @@ struct Mutator {
 
       // std::cerr << "after " << i << " : "; P.dump();
     }
+
+    assert(P.verify());
   }
 
   // apply a random mutating rewrite
@@ -175,6 +177,7 @@ private:
     ruleBook.transform(ruleId, P, pc, holes);//rewritePairs[pairIdx].rewrite(leftMatch, P, pc, holes);
 
     IF_DEBUG if (!P.verify()) {
+      std::cerr << "Offending ruleId " << ruleId << " at pc = " << pc << "\n";
       P.dump();
       abort();
     }

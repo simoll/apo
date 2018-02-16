@@ -265,9 +265,11 @@ struct RuleBook {
           int firstPc = holes[0]; // the one we keep
           NodeSet killSet;
           for (int i = 1; i < holes.size(); ++i) {
+            if (firstPc == holes[i]) continue; // protect the first match
             killSet.insert(holes[i]);
             P(holes[i]).oc = OpCode::Nop; // fuse-and-erase
           }
+          assert((firstPc < pc) && "order violation");
           killSet.insert(pc);
           P(pc).oc = OpCode::Nop; //fuse-and-erase
 
