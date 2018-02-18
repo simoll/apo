@@ -217,6 +217,10 @@ struct Statement {
     }
   }
 
+  bool operator !=(const Statement & o) const noexcept {
+    return !(*this == o);
+  }
+
   bool operator==(const Statement & O) const noexcept {
     if (O.oc != oc) return false;
     if (oc == OpCode::Constant) { return elements.value == O.elements.value; }

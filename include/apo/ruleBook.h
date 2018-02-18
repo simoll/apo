@@ -197,12 +197,27 @@ struct RuleBook {
         case BuiltinRules::Fuse: {
           holes.clear();
           // look for identical operations (to the one @pc) that are #-tagged
+          const int endPc = std::numeric_limits<int>::max();
+          int minPc = endPc;
           for (int i = 0; i < pc; ++i) {
             if (P(i).oc != OpCode::Pipe) continue;
             int otherPc = P(i).getOperand(0);
             if (!IsStatement(otherPc)) continue; // arg match
-            if (P(otherPc) == P(pc)) holes.push_back(otherPc);
+            if (P(otherPc) != P(pc)) continue; // statement match
+            if (otherPc < minPc) {
+              // new min incumbent
+              holes.push_back(minPc);
+              minPc =  otherPc;
+            } else if (otherPc != minPc) {
+              holes.push_back(otherPc);
+            }
           }
+
+          // preserved slot at last position
+          if (minPc != endPc) {
+            holes.push_back(minPc);
+          }
+
         } return !holes.empty();
 
         case BuiltinRules::Evaluate: {
@@ -293,22 +308,24 @@ struct RuleBook {
         case BuiltinRules::Fuse: {
           // std::cerr << "FUSE! " << pc << "\n";
           // P.dump();
-          int firstPc = holes[0]; // the one we keep
-          NodeSet killSet;
-          for (int i = 1; i < holes.size(); ++i) {
-            if (firstPc == holes[i]) continue; // protect the first match
+          int lastSlot = holes.size() - 1;
+          // preserved PC
+          int minPc = holes[lastSlot]; // the one we keep
+          NodeSet killSet; // all PCs that are remapped to @minPc
+          for (int i = 0; i < lastSlot; ++i) {
+            assert((minPc != holes[i]) && "by match algo");
             killSet.insert(holes[i]);
             P(holes[i]).oc = OpCode::Nop; // fuse-and-erase
           }
-          assert((firstPc < pc) && "order violation");
+          assert((minPc < pc) && "order violation");
           killSet.insert(pc);
           P(pc).oc = OpCode::Nop; //fuse-and-erase
 
           // replace all uses with the remaining instance @firstPc
-          for (int j = firstPc + 1; j < P.size(); ++j) {
+          for (int j = minPc + 1; j < P.size(); ++j) {
             for (int o = 0; o < P(j).num_Operands(); ++o) {
               if (killSet.count(P(j).getOperand(o))) {
-                P(j).setOperand(o, firstPc);
+                P(j).setOperand(o, minPc);
               }
             }
           }
@@ -316,7 +333,6 @@ struct RuleBook {
 
           // erase nops
           P.compact();
-          // P.dump();
         } return;
 
         case BuiltinRules::Evaluate: {
