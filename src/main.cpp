@@ -81,13 +81,16 @@ int main(int argc, char ** argv) {
     // optimize
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
+    clock_t startOpt = clock();
     apo.optimize(progVec, APO::Strategy::Greedy, stepLimit);
+    clock_t endOpt = clock();
 
     // optimized prog.
     P->dump();
     auto endScore = GetProgramScore(*P);
+    double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
 
-    std::cerr << "Start score " << startScore << ", end score: " << endScore << ".\n";
+    std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
     return 0;
   }
 
