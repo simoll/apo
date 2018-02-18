@@ -206,7 +206,7 @@ struct RuleBook {
             if (P(otherPc) != P(pc)) continue; // statement match
             if (otherPc < minPc) {
               // new min incumbent
-              holes.push_back(minPc);
+              if (minPc != endPc) holes.push_back(minPc);
               minPc =  otherPc;
             } else if (otherPc != minPc) {
               holes.push_back(otherPc);
@@ -308,11 +308,13 @@ struct RuleBook {
         case BuiltinRules::Fuse: {
           // std::cerr << "FUSE! " << pc << "\n";
           // P.dump();
+          assert(!holes.empty());
           int lastSlot = holes.size() - 1;
           // preserved PC
           int minPc = holes[lastSlot]; // the one we keep
           NodeSet killSet; // all PCs that are remapped to @minPc
           for (int i = 0; i < lastSlot; ++i) {
+            assert(0 <= holes[i] && holes[i] < P.size());
             assert((minPc != holes[i]) && "by match algo");
             killSet.insert(holes[i]);
             P(holes[i]).oc = OpCode::Nop; // fuse-and-erase
