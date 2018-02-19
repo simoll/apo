@@ -56,7 +56,7 @@ struct RPG {
       // check whether its safe to peek to already used operands at this point
       int peekDepth = opQueue.size() - 1;
       if (num_Unused() > 0) {
-        bool allowPeek = !opQueue.empty() && (distToLimit > unused.size());
+        bool allowPeek = !opQueue.empty() && (distToLimit + 1 > unused.size());
 
         const float pPeek = 0.8;
         if (!allowPeek || (drawUnitRand() > pPeek) ) {
@@ -134,15 +134,14 @@ struct RPG {
     P.code.reserve(length);
 
     Sampler S;
-    // wrap all arguments in pipes
+    // push (optinonal) arguments
     for (int a = 0; a < numParams; ++a) {
-      P.push(build_pipe(-a - 1));
-      S.addOptionalUseable(a);
+      // P.push(build_pipe(-a - 1));
+      S.addOptionalUseable(-a - 1);
     }
 
-    int s = numParams;
-    for (int i = 0; i < length - 1; ++i, ++s) {
-      bool forceOperand = length - i < S.num_Unused() + 1;
+    for (int i = 0; i < length - 1; ++i) {
+      bool forceOperand = length - i < S.num_Unused() + 2;
 
       if (!forceOperand && // hard criterion to avoid dead code
           (S.empty() || (drawUnitRand() <= pConstant))) { // soft preference criterion
@@ -163,12 +162,17 @@ struct RPG {
       }
 
       // publish the i-th instruction as useable in an operand position
-      S.addUseable(s);
+      S.addUseable(i);
     }
 
     P.push(build_ret(P.size() - 1));
 
-    assert(P.verify());
+    IF_DEBUG {
+      if (!P.verify()) {
+        P.dump();
+        abort();
+      }
+    }
 
     // DEBUG
     if (getenv("DUMP_PROGS")) P.dump();
