@@ -743,10 +743,9 @@ DerStats ScoreDerivations(const DerivationVec &refDer,
                  refDer[i].shortestDerivation) {
         numShorterDer++;
       }
-    }
 
     // number of targets hit
-    if (sampleDer[i].bestScore == refDer[i].bestScore) {
+    } else if (sampleDer[i].bestScore == refDer[i].bestScore) {
       if (sampleDer[i].shortestDerivation > refDer[i].shortestDerivation) {
         numLongerDer++;
       } else {
