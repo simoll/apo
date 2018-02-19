@@ -47,7 +47,6 @@ int main(int argc, char ** argv) {
     APO apo;
 
     apo.train(job);
-
     Model::shutdown();
     return 0;
 
@@ -91,6 +90,8 @@ int main(int argc, char ** argv) {
     double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
 
     std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
+
+    Model::shutdown();
     return 0;
   }
 
