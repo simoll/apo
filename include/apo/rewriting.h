@@ -32,12 +32,12 @@ rec_MatchPattern(const Program & prog, int pc, const Program & pattern, int patt
     return false; // can only match parameters with placeholders
 
   } else {
-    nodes.insert(pc); // keep track of matched nodes
+    nodes.insert(pc); // keep track of matched nodes // SLOW!! (7.21)
     oMinMatched = std::min(oMinMatched, pc);
 
     OpCode oc = prog.code[pc].oc;
-    if (oc != pattern.code[patternPc].oc) return false;
-    if (oc == OpCode::Constant) {
+    if (oc != pattern.code[patternPc].oc) return false; // 3.38
+    if (oc == OpCode::Constant) { // 5.05
       // constant matching
       return pattern.code[patternPc].getValue() == prog.code[pc].getValue(); // matching constant
 
@@ -81,7 +81,7 @@ MatchPattern(const Program & prog, int pc, const Program & pattern, NodeVec & ho
     for (int o = 0; ok && (o < prog.code[i].num_Operands()); ++o) {
       int opIdx = prog.code[i].getOperand(o);
       if (opIdx < 0 || opIdx == pc) continue; // operand is parameter or the match root (don't care)
-      if (matchedNodes.count(opIdx)) { // uses part of the match
+      if (opIdx >= minMatchedNode && matchedNodes.count(opIdx)) { // uses part of the match
         if (!matchedNodes.count(i)) { // .. only possible if this instruction is also part of th match
           ok = false;
           break;
