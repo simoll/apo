@@ -216,6 +216,7 @@ void APO::train(const Job & task) {
   std::cerr << "Stop ratio  " << stopRatio << ".\n";
 
 
+  // abort(); // BENCHMARKING
   auto bestEvalDerVec = refEvalDerVec;
 
 // training
@@ -414,6 +415,7 @@ void APO::train(const Job & task) {
       }
       clock_t endGenerateMove = clock();
 
+      // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
       clock_t startDer = clock();
       // best-effort search for optimal program
       // nextProgs -> refDerVec
@@ -423,7 +425,7 @@ void APO::train(const Job & task) {
         if (totalSearchRounds >= task.racketStartRound) {
           // model-driven search
           const int modelRounds = 4;
-          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, 10, true);
+          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, modelRounds, true);
 
         } else {
           // random search
