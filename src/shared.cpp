@@ -26,6 +26,7 @@ InitRandom() {
 #else
   size_t seed = 42;
   threadGens.emplace_back(seed);
+  unitDists.emplace_back(0, 1);
 #endif
 }
 
@@ -33,7 +34,7 @@ inline int getThreadId() {
 #ifdef _OPENMP
   return omp_get_thread_num();
 #else
-  return 0
+  return 0;
 #endif
 }
 
