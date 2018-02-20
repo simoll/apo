@@ -6,7 +6,8 @@
 #include "apo/exec.h"
 
 #include <unordered_set>
-#include <unordered_map>
+#include <iostream>
+#include <string>
 
 namespace apo {
 
@@ -60,6 +61,15 @@ struct RuleBook {
   DataVec constVec; // recognized constants in the match rules
   std::map<data_t, int> constIndex; // constant number index
 
+  static int GetOcKey(OpCode oc, bool expanding) { return (int) oc + expanding; }
+  // array of rule indices (that match statement with a specific opCode)
+  const std::vector<int> &
+  getRulesForOpCode(OpCode oc, bool expanding) const { return ocIndex[GetOcKey(oc, expanding)]; }
+  std::vector<int> &
+  getRulesForOpCode(OpCode oc, bool expanding) { return ocIndex[GetOcKey(oc, expanding)]; }
+
+  std::vector<std::vector<int>> ocIndex;
+
   bool getConstantIndex(data_t constVal, int & idx) const {
     auto it = constIndex.find(constVal);
     if (it == constIndex.end()) return false;
@@ -84,6 +94,7 @@ struct RuleBook {
   : rewritePairs(_rewritePairs)
   , rewriteRuleVec()
   , config(modelConfig)
+  , ocIndex(2 * rewritePairs.size() + (int) BuiltinRules::Num) // safe size
   {
   // mine rule constants
     for (auto & rule : rewritePairs) {
@@ -100,8 +111,30 @@ struct RuleBook {
         int ruleId = rewriteRuleVec.size();
         bool expanding = rewritePairs[i].isExpanding(leftToRight);
         rewriteRuleVec.emplace_back(i, leftToRight, expanding);
+
+        OpCode rootOc;
+        if (rewritePairs[i].getRootOpCode(leftToRight, rootOc)) {
+          // add to ruleVec for "rootOc x expanding"
+          getRulesForOpCode(rootOc, expanding).push_back(ruleId);
+        } else {
+          // add to ruleVec for "expanding"
+          for_such([](OpCode oc){ return true; },
+              [this, ruleId, expanding](OpCode oc) {
+            getRulesForOpCode(oc, expanding).push_back(ruleId);
+          });
+        }
       }
     }
+
+  // add builtin rules
+    for_such([](OpCode oc){ return true; },
+      [this](OpCode oc) {
+        for (int b = 0; b < (int) BuiltinRules::Num; ++b) {
+        int ruleId = getBuiltinID((BuiltinRules) b);
+        bool expanding = isExpanding(ruleId);
+          getRulesForOpCode(oc, expanding).push_back(ruleId);
+        }
+    });
 
     std::cerr << "RuleBook::num_Rules = " << num_Rules() << "\n";
   }

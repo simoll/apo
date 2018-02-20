@@ -85,7 +85,7 @@ GetNeutralRHS(OpCode oc) {
 static
 void
 for_such(std::function<bool(OpCode oc)> filterFunc, std::function<void(OpCode oc)> userFunc) {
-  for (int16_t oc = (int16_t) OpCode::Begin_OpCode; oc <= (int16_t) OpCode::End_OpCode; ++oc) {
+  for (int32_t oc = (int32_t) OpCode::Begin_OpCode; oc <= (int32_t) OpCode::End_OpCode; ++oc) {
     if (filterFunc((OpCode) oc)) userFunc((OpCode) oc);
   }
 }

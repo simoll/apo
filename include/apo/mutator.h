@@ -84,12 +84,13 @@ struct Mutator {
     assert(P.verify());
   }
 
+  // TODO rewrite using match ledger
   // apply a random mutating rewrite
   void mutate(Program & P, int steps, float pExpand, std::function<void(int pc, int ruleId, const Program & P)> handler) const {
     if (steps <= 0) return;
 
     std::uniform_real_distribution<float> shrinkRand(0, 1);
-    std::uniform_int_distribution<int> ruleRand(0, ruleBook.num_Rules() - 1);
+    std::uniform_int_distribution<int> ruleRand(0, std::numeric_limits<int>::max());
 
     for (int i = 0; i < steps; ) {
       // pick a random pc
@@ -104,14 +105,18 @@ struct Mutator {
       // std::cerr << "(" << pc << ", " << leftMatch << ", " << numSkips << ")\n";
       // check if any rule matches
       bool hasMatch = false;
-      int ruleId = 0;
+      int ruleVecId = 0;
 
-      for (int t = 0; t < ruleBook.num_Rules(); ++t) {
-        if (ruleBook.isExpanding(t) != expandingMatch) continue;
+      const auto & ruleVec = ruleBook.getRulesForOpCode(P(pc).oc, expandingMatch);
+      if (ruleVec.empty()) continue; // no applicable rule
 
-        if (ruleBook.matchRule(t, P, pc, holes)) {
+      for (int t = 0; t < ruleVec.size(); ++t) {
+        // if (ruleBook.isExpanding(t) != expandingMatch) continue; // redundant
+        int testRuleId = ruleVec[t];
+
+        if (ruleBook.matchRule(testRuleId, P, pc, holes)) {
           hasMatch = true;
-          ruleId = t;
+          ruleVecId = t;
           break;
         }
       }
@@ -120,15 +125,17 @@ struct Mutator {
       if (!hasMatch) continue;
 
       // number of applicable rewritePairs to skip
-      int numSkips = ruleRand(randGen());
+      int numSkips = ruleRand(randGen()) % ruleVec.size();
 
       NodeSet matchedNodes;
+      int ruleId = ruleVec[ruleVecId];
       for (int skip = 1; skip < numSkips; ) {
-        ruleId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
-        if (ruleId >= ruleBook.num_Rules()) ruleId -= ruleBook.num_Rules();
-        if (ruleBook.isExpanding(ruleId) != expandingMatch) continue;
+        ruleVecId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
+        if (ruleVecId >= ruleVec.size()) ruleVecId -= ruleVec.size();
+        // if (ruleBook.isExpanding(ruleId) != expandingMatch) continue; // redundant
 
         matchedNodes.clear();
+        ruleId = ruleVec[ruleVecId]; // translate ruleVecId
         if (ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
           ++skip;
         }

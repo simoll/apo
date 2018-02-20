@@ -161,6 +161,17 @@ struct RewritePair {
     if (matchLeft) return rhs; else return lhs;
   }
 
+  // return match root opcode (for indexing)
+  bool getRootOpCode(bool matchLeft, OpCode & rootOc) const {
+    const auto & matchProg = getMatchProg(matchLeft);
+    int retPc = matchProg.getReturnIndex();
+    if (!IsStatement(retPc)) return false;
+    else {
+      rootOc = matchProg(retPc).oc;
+      return true;
+    }
+  }
+
   RewritePair(Program _lhs, Program _rhs)
   : lhs(_lhs)
   , rhs(_rhs)
