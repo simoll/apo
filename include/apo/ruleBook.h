@@ -29,8 +29,9 @@ struct Action {
 struct RewriteRule {
   int pairId;
   bool leftToRight;
-  RewriteRule(int _pairId, bool _leftToRight)
-  : pairId(_pairId), leftToRight(_leftToRight)
+  bool expanding; // cached result
+  RewriteRule(int _pairId, bool _leftToRight, bool _expanding)
+  : pairId(_pairId), leftToRight(_leftToRight), expanding(_expanding)
   {}
 };
 
@@ -97,7 +98,8 @@ struct RuleBook {
       for (int j = 0; j < 2 - (rewPair.symmetric ? 1 : 0); ++j) {
         bool leftToRight = !(bool) j; // default to lhs -> rhs
         int ruleId = rewriteRuleVec.size();
-        rewriteRuleVec.emplace_back(i, leftToRight);
+        bool expanding = rewritePairs[i].isExpanding(leftToRight);
+        rewriteRuleVec.emplace_back(i, leftToRight, expanding);
       }
     }
 
@@ -144,9 +146,10 @@ struct RuleBook {
 
   // RewriteAction wrapping layer
   inline bool isExpanding(int ruleId) const {
-    const RewriteRule* rewRule = fetchRewriteRule(ruleId);
-    if (rewRule) {
-      return rewritePairs[rewRule->pairId].isExpanding(rewRule->leftToRight);
+    if (ruleId < getBuiltinStart()) {
+      const RewriteRule* rewRule = fetchRewriteRule(ruleId);
+      assert (rewRule);
+      return rewRule->expanding; //rewritePairs[rewRule->pairId].isExpanding(rewRule->leftToRight);
     } else {
       switch (fetchBuiltinRule(ruleId)) {
         case BuiltinRules::PipeWrapOps: return true;
