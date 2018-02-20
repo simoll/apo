@@ -98,6 +98,6 @@ int main(int argc, char ** argv) {
   // help command
   std::cerr << argv[0] << " <command>\nAvailable commands:\n"
                            << "\ttrain <scenario.task>\n"
-                           << "\rtun <modelCheckpoint.cp> <program.p>\n";
+                           << "\trun <modelCheckpoint.cp> <program.p>\n";
   return 0;
 }
