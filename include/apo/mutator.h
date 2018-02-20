@@ -124,7 +124,8 @@ struct Mutator {
 
       NodeSet matchedNodes;
       for (int skip = 1; skip < numSkips; ) {
-        ruleId = (ruleId + 1) % ruleBook.num_Rules();
+        ruleId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
+        if (ruleId >= ruleBook.num_Rules()) ruleId -= ruleBook.num_Rules();
         if (ruleBook.isExpanding(ruleId) != expandingMatch) continue;
 
         matchedNodes.clear();
