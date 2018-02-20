@@ -105,41 +105,49 @@ struct Mutator {
       // std::cerr << "(" << pc << ", " << leftMatch << ", " << numSkips << ")\n";
       // check if any rule matches
       bool hasMatch = false;
-      int ruleVecId = 0;
 
       const auto & ruleVec = ruleBook.getRulesForOpCode(P(pc).oc, expandingMatch);
       if (ruleVec.empty()) continue; // no applicable rule
 
-      for (int t = 0; t < ruleVec.size(); ++t) {
-        // if (ruleBook.isExpanding(t) != expandingMatch) continue; // redundant
-        int testRuleId = ruleVec[t];
+      // drawn random sample base
+      int vecBaseId = ruleRand(randGen()) % ruleVec.size();
+      int ruleVecId = vecBaseId;
+      int ruleId;
 
-        if (ruleBook.matchRule(testRuleId, P, pc, holes)) {
+      // look for applicable rule (starting from vecBaseId)
+      NodeSet matchedNodes;
+      for (int t = vecBaseId; t < vecBaseId + ruleVec.size(); ++t) {
+        // if (ruleBook.isExpanding(t) != expandingMatch) continue; // redundant
+        int testVecId = t >= ruleVec.size() ? t - ruleVec.size() : t; // TODO split loop
+        int testRuleId = ruleVec[testVecId];
+
+        if (ruleBook.matchRule_ext(testRuleId, P, pc, holes, matchedNodes)) {
           hasMatch = true;
-          ruleVecId = t;
+          // ruleVecId = testVecId;
+          ruleId = testRuleId;
           break;
         }
+        matchedNodes.clear();
       }
 
       // no rule matches -> pick different rule
       if (!hasMatch) continue;
 
       // number of applicable rewritePairs to skip
-      int numSkips = ruleRand(randGen()) % ruleVec.size();
+      // int numSkips = ruleRand(randGen()) % ruleVec.size();
 
-      NodeSet matchedNodes;
-      int ruleId = ruleVec[ruleVecId];
-      for (int skip = 1; skip < numSkips; ) {
-        ruleVecId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
-        if (ruleVecId >= ruleVec.size()) ruleVecId -= ruleVec.size();
+      // int ruleId = ruleVec[ruleVecId];
+      // for (int skip = 1; skip < numSkips; ) {
+        // ruleVecId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
+        // if (ruleVecId >= ruleVec.size()) ruleVecId -= ruleVec.size();
         // if (ruleBook.isExpanding(ruleId) != expandingMatch) continue; // redundant
 
-        matchedNodes.clear();
-        ruleId = ruleVec[ruleVecId]; // translate ruleVecId
-        if (ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
-          ++skip;
-        }
-      }
+      //  matchedNodes.clear();
+      //   ruleId = ruleVec[ruleVecId]; // translate ruleVecId
+      //   if (ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
+      //     ++skip;
+      //   }
+      // }
 
       // call back
       handler(pc, ruleId, P);
