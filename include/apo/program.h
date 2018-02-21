@@ -41,10 +41,10 @@ enum class OpCode : int16_t {
 };
 
 // arithmetic data type
-using data_t = uint64_t;
+using data_t = uint32_t;
 
 // node index data type
-using node_t = int32_t;
+using node_t = int16_t;
 using NodeVec = llvm::SmallVector<node_t, 4>;
 
 static bool

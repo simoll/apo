@@ -196,7 +196,7 @@ Model::translateOperand(node_t idx) const {
 }
 
 int
-Model::encodeOperand(const Statement & stat, int opIdx) const {
+Model::encodeOperand(const Statement & stat, node_t opIdx) const {
   if (opIdx >= stat.num_Operands()) {
     return 0; // zero feed
   } else {
