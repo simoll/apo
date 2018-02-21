@@ -404,23 +404,34 @@ struct Program {
   }
 
   // compact all no-op (OpCode::Nop) nodes
-  void compact() {
-    int j = 0;
-    ReMap operandMap;
+  // TODO make this more efficient (no map!!, start pc)
+  void compact(int startPc = 0) {
+    int j = startPc;
+    std::vector operandMap(size(), -1); // maps old operands to new operands
 
-    for (int i = 0; i < code.size(); ++i) {
+    bool operandsChanged = false;
+    for (int i = startPc; i < code.size(); ++i) {
       if (code[i].oc == OpCode::Nop) continue;
 
       // compact
       operandMap[i] = j;
       int slot = j++;
-      code[slot] = code[i];
-      if (i != slot) code[i].oc = OpCode::Nop;
 
+      // move instruction
+      if (i != slot) {
+        code[slot] = code[i];
+        code[i].oc = OpCode::Nop;
+        operandsChanged = true; // have to remap operands from now on
+      }
+
+      if (!operandsChanged) continue; // no need to remap operands (yet)
       // remap operands
       for (int o = 0; o < code[slot].num_Operands(); ++o) {
         int old = code[slot].getOperand(o);
-        if (old >= 0) code[slot].setOperand(o, operandMap[old]);
+        if (old < 0) continue; // not a statement
+        int remapped = operandMap[old];
+        if (remapped < 0) continue; // unchanged operand
+        code[slot].setOperand(o, remapped);
       }
     }
 

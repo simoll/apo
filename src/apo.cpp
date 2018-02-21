@@ -94,7 +94,7 @@ APO::generatePrograms(int numSamples, const Job & task, std::function<void(Progr
     do {
       int stubLen = stubRand(randGen());
       mutSteps = mutRand(randGen());
-      P.reset(rpg.generate(stubLen));
+      P.reset(rpg.generate_ext(stubLen));
 
       assert(P->size() <= modelConfig.prog_length);
       for (int j = 0; j < mutSteps; ++j) {
@@ -214,7 +214,6 @@ void APO::train(const Job & task) {
   int numStops = CountStops(refEvalDerVec);
   double stopRatio = numStops / (double)refEvalDerVec.size();
   std::cerr << "Stop ratio  " << stopRatio << ".\n";
-
 
   // abort(); // BENCHMARKING
   auto bestEvalDerVec = refEvalDerVec;
@@ -509,9 +508,21 @@ APO::loadCheckpoint(const std::string cpFile) {
 
 void
 APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
-  assert(optStrat == Strategy::Greedy);
-  IntVec maxDistVec(progVec.size(), stepLimit);
-  montOpt.greedyOptimization(progVec, maxDistVec);
+  switch (optStrat) {
+  case Strategy::Greedy: {
+    assert(optStrat == Strategy::Greedy);
+    IntVec maxDistVec(progVec.size(), stepLimit);
+    montOpt.greedyOptimization(progVec, maxDistVec);
+  } return;
+  case Strategy::Random: {
+    // TODO provide actual implementation
+    IntVec maxDistVec(progVec.size(), stepLimit);
+    const int numOptRounds = 10000;
+    DerivationVec derVec = montOpt.searchDerivations(progVec, 1.0, maxDistVec, numOptRounds, false);
+    derVec[0].print(std::cerr);
+  } return;
+  default: abort(); // unsupported strategy
+  }
 }
 
 } // namespace apo

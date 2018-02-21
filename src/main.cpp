@@ -50,6 +50,48 @@ int main(int argc, char ** argv) {
     Model::shutdown();
     return 0;
 
+  } else if (cmd == "rand") { // "mcts <samples> <prog-name>'
+    if (argc != 3) return -1;
+
+    const std::string progFile(argv[2]);
+
+    // parse program
+    std::ifstream in(progFile);
+    ProgramPtr P(Program::Parse(in));
+    if (!P) {
+      std::cerr << "Could not load program!\n";
+      return -1;
+    }
+
+    if (!P->verify()) {
+      std::cerr << "Program is not well formed!\n";
+      return -2;
+    }
+
+    // initial prog.
+    P->dump();
+    int startScore = GetProgramScore(*P);
+
+    // set-up engine
+    APO apo;
+
+    // optimize
+    const int stepLimit = 256;
+    ProgramVec progVec(1, P);
+    clock_t startOpt = clock();
+    apo.optimize(progVec, APO::Strategy::Random, stepLimit);
+    clock_t endOpt = clock();
+
+    // optimized prog.
+    // P->dump();
+    // auto endScore = GetProgramScore(*P);
+    double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
+
+    std::cerr << "Opt time= " << optTime << "s\n";
+    //  std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
+
+    Model::shutdown();
+    return 0;
   } else if (cmd == "run") { // "run <model-cp> <prog-name>"
     if (argc != 4) return -1;
 

@@ -37,7 +37,8 @@ namespace apo {
 struct APO {
   // optimization strategy
   enum class Strategy : int {
-    Greedy = 0,
+    Greedy = 0, // greedy model driven strategy
+    Random = 1 // uniform sampling strategy (no model)
   };
 
   ModelConfig modelConfig;

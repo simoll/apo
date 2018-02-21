@@ -341,7 +341,7 @@ struct RuleBook {
             }
           }
           P(pc).oc = OpCode::Nop;
-          P.compact();
+          P.compact(pc);
         } return;
 
         // clone the operation for all pipe users
@@ -383,7 +383,7 @@ struct RuleBook {
 
 
           // erase nops
-          P.compact();
+          P.compact(minPc + 1);
         } return;
 
         case BuiltinRules::Evaluate: {
@@ -401,7 +401,7 @@ struct RuleBook {
 
         case BuiltinRules::Erase: {
           P(pc).oc = OpCode::Nop;
-          P.compact();
+          P.compact(pc);
         } return;
 
         default:
