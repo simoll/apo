@@ -39,10 +39,11 @@ struct RewriteRule {
 enum class BuiltinRules : int {
   PipeWrapOps = 0, // wrap all operands in pipes
   DropPipe = 1, // drop a pipe
-  Clone = 2, // TODO clone operation for all pipe-users
-  Fuse = 3, // TODO fuse with other instructions (erases all pipe annotated operations that yield the same result)
-  Evaluate = 4, // TODO evaluate instruction and replace with constant
-  Num = 5, // number of extra rules
+  Clone = 2, // clone operation for all pipe-users
+  Fuse = 3, // fuse with other instructions (erases all pipe annotated operations that yield the same result)
+  Evaluate = 4, // evaluate instruction and replace with constant
+  Erase = 5, // remove instruction if unused
+  Num = 6, // number of extra rules
   Invalid = -1, // error token
 };
 
@@ -190,6 +191,7 @@ struct RuleBook {
         case BuiltinRules::Clone: return true;
         case BuiltinRules::Fuse: return false;
         case BuiltinRules::Evaluate: return false;
+        case BuiltinRules::Erase: return false;
         default:
           abort(); // TODO implement
       }
@@ -264,6 +266,17 @@ struct RuleBook {
 
           }
           return true;
+        }
+
+        case BuiltinRules::Erase: {
+          if (P(pc).oc == OpCode::Return) return false;
+          for (int i = pc + 1; i < P.size(); ++i) {
+            for (int o = 0; o < P(i).num_Operands(); ++o) {
+              if (P(i).getOperand(o) == pc) return false;
+            }
+          }
+
+          return true; // unused instruction
         }
 
         default:
@@ -384,6 +397,11 @@ struct RuleBook {
           // evaluate and encode as constant
           data_t result = Evaluate(P(pc).oc, dataVec);
           P(pc) = build_const(result);
+        } return;
+
+        case BuiltinRules::Erase: {
+          P(pc).oc = OpCode::Nop;
+          P.compact();
         } return;
 
         default:
