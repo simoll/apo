@@ -110,44 +110,15 @@ struct Mutator {
       if (ruleVec.empty()) continue; // no applicable rule
 
       // drawn random sample base
-      int vecBaseId = ruleRand(randGen()) % ruleVec.size();
-      int ruleVecId = vecBaseId;
-      int ruleId;
+      int ruleVecId = ruleRand(randGen()) % ruleVec.size();
 
-      // look for applicable rule (starting from vecBaseId)
+      // check for match
       NodeSet matchedNodes;
-      for (int t = vecBaseId; t < vecBaseId + ruleVec.size(); ++t) {
-        // if (ruleBook.isExpanding(t) != expandingMatch) continue; // redundant
-        int testVecId = t >= ruleVec.size() ? t - ruleVec.size() : t; // TODO split loop
-        int testRuleId = ruleVec[testVecId];
+      int ruleId = ruleVec[ruleVecId];
 
-        if (ruleBook.matchRule_ext(testRuleId, P, pc, holes, matchedNodes)) {
-          hasMatch = true;
-          // ruleVecId = testVecId;
-          ruleId = testRuleId;
-          break;
-        }
-        matchedNodes.clear();
+      if (!ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
+        continue; // re-draw
       }
-
-      // no rule matches -> pick different rule
-      if (!hasMatch) continue;
-
-      // number of applicable rewritePairs to skip
-      // int numSkips = ruleRand(randGen()) % ruleVec.size();
-
-      // int ruleId = ruleVec[ruleVecId];
-      // for (int skip = 1; skip < numSkips; ) {
-        // ruleVecId++;// = (ruleId + 1) % ruleBook.num_Rules(); // slow IDIV
-        // if (ruleVecId >= ruleVec.size()) ruleVecId -= ruleVec.size();
-        // if (ruleBook.isExpanding(ruleId) != expandingMatch) continue; // redundant
-
-      //  matchedNodes.clear();
-      //   ruleId = ruleVec[ruleVecId]; // translate ruleVecId
-      //   if (ruleBook.matchRule_ext(ruleId, P, pc, holes, matchedNodes)) {
-      //     ++skip;
-      //   }
-      // }
 
       // call back
       handler(pc, ruleId, P);

@@ -5,9 +5,31 @@
 #include "apo/program.h"
 #include <queue>
 #include "apo/ruleBook.h"
+#include "apo/shared.h"
+#include "apo/extmath.h"
 
 namespace apo {
 
+static CatDist
+CreateRandomOpCodeDist() {
+  const double smoothing = 0.001; // minimal mass *before* scaling
+  const double exponent = 6; // increase to get closer to hard on/off behavior
+
+  CatDist dist((int) OpCode::End_OpCode + 1, 0.0);
+
+  for (int i = 0; i < dist.size(); ++i) {
+    dist[i] = smoothing + pow(drawUnitRand(), exponent);
+  }
+
+  // zero out utilility opCodes
+  dist[(int) OpCode::Nop] = 0.0;
+  dist[(int) OpCode::Pipe] = 0.0;
+  dist[(int) OpCode::Return] = 0.0;
+  dist[(int) OpCode::Constant] = 0.0;
+
+  Normalize(dist);
+  return dist;
+}
 
 struct RPG {
   const RuleBook & ruleBook;
@@ -126,6 +148,59 @@ struct RPG {
       std::uniform_int_distribution<data_t> constValRand(std::numeric_limits<data_t>::min(), std::numeric_limits<data_t>::max());
       return constValRand(randGen()); // proper random constant
     }
+  }
+
+  Program*
+  generate_ext(int length) {
+    CatDist ocDist = CreateRandomOpCodeDist();
+
+    Program & P = *(new Program(numParams, {}));
+    P.code.reserve(length);
+
+    Sampler S;
+    // push (optinonal) arguments
+    for (int a = 0; a < numParams; ++a) {
+      // P.push(build_pipe(-a - 1));
+      S.addOptionalUseable(-a - 1);
+    }
+
+    for (int i = 0; i < length - 1; ++i) {
+      bool forceOperand = length - i < S.num_Unused() + 2;
+
+      if (!forceOperand && // hard criterion to avoid dead code
+          (S.empty() || (drawUnitRand() <= pConstant))) { // soft preference criterion
+        data_t constVal = drawRandomConstant();
+        P.push(build_const(constVal));
+
+      } else {
+        // pick random opCode and operands
+        // int beginBin = (int) OpCode::Begin_Binary;
+        // int endBin = (int) OpCode::End_Binary;
+
+        OpCode oc = (OpCode) SampleCategoryDistribution(ocDist, drawUnitRand());
+        int distToLimit = length - 1 - i;
+        int firstOp = S.acquireOperand(distToLimit);
+        int sndOp = S.acquireOperand(distToLimit);
+        P.push(Statement(oc, firstOp, sndOp));
+      }
+
+      // publish the i-th instruction as useable in an operand position
+      S.addUseable(i);
+    }
+
+    P.push(build_ret(P.size() - 1));
+
+    IF_DEBUG {
+      if (!P.verify()) {
+        P.dump();
+        abort();
+      }
+    }
+
+    // DEBUG
+    if (getenv("DUMP_PROGS")) P.dump();
+
+    return &P;
   }
 
   Program*

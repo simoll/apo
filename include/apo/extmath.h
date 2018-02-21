@@ -17,12 +17,13 @@ using CatDist = std::vector<float>;
 void DumpDist(const CatDist & dist);
 void PrintDist(const CatDist & dist, std::ostream &);
 
-static void
+static double
 Normalize(CatDist & dist) {
   double a = 0;
   for (auto v : dist) { a += v; }
-  if (a == 0.0) return;
+  if (a == 0.0) return 0.0;
   for (auto & v : dist) { v /= a; }
+  return a;
 }
 
 static bool
