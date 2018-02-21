@@ -224,7 +224,9 @@ struct RewritePair {
     IF_VERBOSE { std::cerr << "-- after erase at " << rootPc << " --\n"; prog.dump(); }
 
     // make space for rewrite rule
-    ReMap reMap;
+    const int maxExpand = getRewriteProg(matchLeft).size();
+    ReMap reMap(prog.size() + maxExpand);
+
     int afterInsertPc = prog.make_space(rootPc + 1, getRewriteProg(matchLeft).size(), reMap);
     // updated match root
     int mappedRootPc = reMap.count(rootPc) ? reMap[rootPc] : rootPc;

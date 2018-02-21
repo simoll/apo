@@ -271,7 +271,19 @@ GetHoleIndex(int32_t valueIdx) {
   return -(valueIdx + 1);
 }
 
-using ReMap = std::map<int32_t, int32_t>;
+static int Sentinel = -999;
+struct ReMap {
+  std::vector<int> data;
+
+  ReMap(int size)
+  : data(size, Sentinel)
+  {}
+
+  bool count(int i) const { return i >= 0 && i < data.size() && data[i] != Sentinel; }
+  int & operator[](int i) { return data[i]; }
+  int operator[](int i) const { return data[i]; }
+};
+// using ReMap = std::map<int32_t, int32_t>;
 
 struct Program {
   // number of parameters

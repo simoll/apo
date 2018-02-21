@@ -307,7 +307,7 @@ struct RuleBook {
             int origOpPc = P(matchPc).getOperand(o);
             int pipePc = std::max<>(0, origOpPc + 1); // insert below operand position (or at beginning for args)
 
-            ReMap reMap;
+            ReMap reMap(P.size() + 1);
             int newPc = P.make_space(pipePc, 2, reMap);
             // std::cerr << "after move at " << newPc << ":\n";
             matchPc++; // match root shifted
@@ -346,7 +346,6 @@ struct RuleBook {
 
         // clone the operation for all pipe users
         case BuiltinRules::Clone: {
-          ReMap reMap;
           for (int i = 0; i < holes.size(); ++i) {
             int pipePc = holes[i];
             P.code[pipePc] = P.code[pc]; // clone operation for user
