@@ -130,8 +130,6 @@ struct RPG {
     bool empty() const { return unused.empty() && opQueue.empty(); }
   };
 
-  const double pConstant = 0.20;
-
   RPG(const RuleBook & _ruleBook, int _numParams)
   : ruleBook(_ruleBook)
   , numParams(_numParams)
@@ -164,6 +162,7 @@ struct RPG {
       S.addOptionalUseable(-a - 1);
     }
 
+    const double pConstant = 0.2 + 0.4 * drawUnitRand();
     for (int i = 0; i < length - 1; ++i) {
       bool forceOperand = length - i < S.num_Unused() + 2;
 
@@ -215,6 +214,7 @@ struct RPG {
       S.addOptionalUseable(-a - 1);
     }
 
+    const double pConstant = 0.20;
     for (int i = 0; i < length - 1; ++i) {
       bool forceOperand = length - i < S.num_Unused() + 2;
 
