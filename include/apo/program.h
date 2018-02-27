@@ -419,7 +419,7 @@ struct Program {
   // TODO make this more efficient (no map!!, start pc)
   void compact(int startPc = 0) {
     int j = startPc;
-    std::vector operandMap(size(), -1); // maps old operands to new operands
+    std::vector<int> operandMap(size(), -1); // maps old operands to new operands
 
     bool operandsChanged = false;
     for (int i = startPc; i < code.size(); ++i) {
