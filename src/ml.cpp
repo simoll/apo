@@ -5,7 +5,10 @@
 
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/platform/env.h"
+
+#ifdef APO_ENABLE_CUDA
 #include "tensorflow/core/common_runtime/gpu/gpu_init.h"
+#endif
 
 #include <limits>
 #include <cassert>

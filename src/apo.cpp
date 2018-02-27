@@ -221,7 +221,7 @@ void APO::train(const Job & task) {
 // training
   assert(task.minStubLen > 0 && "can not generate program within constraints");
 
-  std::atomic<bool> keepRunning = true;
+  std::atomic<bool> keepRunning; keepRunning.store(true);
 
   std::mutex cpuMutex; // to co-ordinate multi-threaded processing on the GPU (eg searchThread and evaluation rounds on the trainThread)
 
@@ -247,7 +247,7 @@ void APO::train(const Job & task) {
     // evaluation round logic
         bool loggedRound = (g % task.logRate == 0);
         if (loggedRound) {
-          std::unique_lock lock(cpuMutex); // drop the lock every now and then..
+          std::unique_lock<std::mutex> lock(cpuMutex); // drop the lock every now and then..
 
         // dump some statistics
           auto mlStats = model.query_stats();
@@ -428,7 +428,7 @@ void APO::train(const Job & task) {
 
         } else {
           // random search
-          std::unique_lock lock(cpuMutex); // acquire lock for most CPU-heavy task
+          std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
           refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false);
         }
       }

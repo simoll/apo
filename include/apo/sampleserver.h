@@ -135,7 +135,7 @@ SampleServer {
 
   void
   addSearchRoundStats(clock_t deltaGenerateMove, clock_t deltaDer, clock_t deltaSampleActions, clock_t deltaReplay) {
-    std::unique_lock lock(queueMutex);
+    std::unique_lock<std::mutex> lock(queueMutex);
     serverStats.numSearchRounds++;
     serverStats.generateMoveTotalTime += deltaGenerateMove;
     serverStats.derTotalTime += deltaDer;
@@ -147,7 +147,7 @@ SampleServer {
   // read out current stats and reset
   ServerStats
   resetServerStats() {
-    std::unique_lock lock(queueMutex);
+    std::unique_lock<std::mutex> lock(queueMutex);
     auto currStats = serverStats;
     serverStats = ServerStats();
 
@@ -172,7 +172,7 @@ SampleServer {
   submitResults(ProgramVec & progVec, const ResultDistVec & resDistVec) {
     // TODO append a random fraction to the replay queue
     {
-      std::unique_lock queueLock(queueMutex);
+      std::unique_lock<std::mutex> queueLock(queueMutex);
 
       // wait until slots in the training queue become available
       clock_t stallTime = 0;
@@ -285,7 +285,7 @@ SampleServer {
   void
   drawSamples(ProgramVec & oProgs, ResultDistVec & oResultDist, int startIdx, int endIdx) {
     {
-      std::unique_lock queueLock(queueMutex);
+      std::unique_lock<std::mutex> queueLock(queueMutex);
 
     // wait until samples become available
       const int numNeeded = endIdx - startIdx;
