@@ -357,7 +357,7 @@ with tf.Session() as sess:
 
     tf.summary.scalar('loss', loss)
 
-    if True:
+    if False:
     # learning rate configuration
       starter_learning_rate = 0.001
       # end_learning_rate = 0.0001
@@ -372,7 +372,7 @@ with tf.Session() as sess:
     
     else:
       # learning rate parameter
-      learning_rate = tf.get_variable("learning_rate", initializer=0.0001, dtype=tf.float32, trainable=False)
+      learning_rate = tf.get_variable("learning_rate", initializer=0.001, dtype=tf.float32, trainable=False)
       
       # set_learning_rate op (to set learning_rate from APO)
       new_learning_rate = tf.placeholder(tf.float32, [], "new_learning_rate")

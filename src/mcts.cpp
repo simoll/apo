@@ -249,19 +249,21 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
                                                      const double pRandom,
                                                      const IntVec & maxStepsVec,
                                                      const int numOptRounds,
-                                                     bool allowFallback) {
+                                                     bool allowFallback,
+                                                     SearchPerfStats * oStats) {
   if (pRandom < 1.0)
-    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback);
+    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, oStats);
   else
-    return searchDerivations_Default(progVec, maxStepsVec, numOptRounds);
+    return searchDerivations_Default(progVec, maxStepsVec, numOptRounds); // does not support profiling
 }
 
 // optimized version for model-based seaerch
 DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
     const ProgramVec &progVec, const double pRandom, const std::vector<int> & maxDistVec,
-    const int numOptRounds, const bool useRandomFallback) {
+    const int numOptRounds, const bool useRandomFallback, SearchPerfStats * oPerfStats) {
   assert(pRandom < 1.0 && "use _Debug implementation instead");
 
+  clock_t searchStart = clock();
   const int numSamples = progVec.size();
 
   // start with STOP derivation
@@ -270,16 +272,22 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
     states.emplace_back(*progVec[i]);
   }
 
+
 #define IF_DEBUG_DER if (false)
 
   // pre-compute initial program distribution
   ResultDistVec initialProgDist(progVec.size());
   Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+  clock_t joinStart = clock();
   handle.join();
+  clock_t joinEnd = clock();
+  clock_t initialJoinTime = joinEnd - joinStart;
 
   // pre-compute maximal derivation distance
   int commonMaxDist = 0;
   for (int d : maxDistVec) commonMaxDist = std::max(commonMaxDist, d);
+
+  clock_t inferStallTotal = 0;
 
   // number of derivation walks
   for (int r = 0; r < numOptRounds; ++r) {
@@ -307,7 +315,10 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
                 modelRewriteDist, roundProgs, startIdx,
                 endIdx); // TODO also pipeline with the derivation loop
           }
+          clock_t joinStart = clock();
           inferThread.join(); // join with last inference thread
+          clock_t joinEnd = clock();
+          inferStallTotal += joinEnd - joinStart;
 
           if (endIdx < nextEndIdx) { // there is a batch coming after this one
             // start infering dist for next batch
@@ -426,6 +437,15 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
       if (inferThread.joinable())
         inferThread.join();
     }
+  }
+
+  clock_t searchEnd = clock();
+
+  if (oPerfStats) {
+    double searchSecs = (searchEnd - searchStart) / (double) CLOCKS_PER_SEC;
+    double initialStallSecs = initialJoinTime / (double) CLOCKS_PER_SEC;
+    double inferStallSecs = inferStallTotal / (double) CLOCKS_PER_SEC;
+    *oPerfStats = SearchPerfStats{searchSecs, initialStallSecs, inferStallSecs};
   }
 
 #undef IF_DEBUG_DER

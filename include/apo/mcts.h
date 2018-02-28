@@ -54,6 +54,17 @@ enum StopReason {
   NoPossibleAction = 3, // there is no applicable action
 };
 
+struct
+SearchPerfStats {
+  double totalDerTime; // total time spent in searchDerivation
+  double initialInferStall; // time spent in initial inference
+  double totalInferStall; // total time stalled for pending inference
+
+  void dump() const {
+    std::cerr << "PerfStats { totalDerTime = " << totalDerTime << ", initialStall = " << initialInferStall << ", totalInferStall = " << totalInferStall << " }\n";
+  }
+};
+
 // optimize the given program @P using @model (or a uniform random rule application using @maxDist)
 // maximal derivation length is @maxDist
 // will return the sequence to the best-seen program (even if the model decides to go on)
@@ -116,11 +127,11 @@ struct MonteCarloOptimizer {
 
   // random trajectory based model (or uniform dist) sampling
   DerivationVec
-  searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback);
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback, SearchPerfStats * oPerfStats = nullptr);
 
   // optimized version for model-based seaerch
   DerivationVec
-  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback);
+  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback, SearchPerfStats * oPerfStats);
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec

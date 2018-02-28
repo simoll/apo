@@ -423,8 +423,10 @@ void APO::train(const Job & task) {
       // use model to improve results
         if (totalSearchRounds >= task.racketStartRound) {
           // model-driven search
+          SearchPerfStats searchStats;
           const int modelRounds = 4;
-          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, modelRounds, true);
+          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, modelRounds, true, &searchStats);
+          searchStats.dump();
 
         } else {
           // random search
