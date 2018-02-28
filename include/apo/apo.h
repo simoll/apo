@@ -74,7 +74,13 @@ struct APO {
   // eval round interval
     int logRate;
     size_t numRounds; // total training rounds
-    size_t racketStartRound; // round when the racket should start (model based query)
+
+  // reinforcement learning options
+    size_t reinStartRound;
+    size_t reinEndRound;
+    size_t reinSamples; // number of reinforcement samples
+    double reinStartRatio;
+    double reinEndRatio;
 
     bool saveCheckpoints; // save model checkpoints at @logRate
 

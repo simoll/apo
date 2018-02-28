@@ -59,9 +59,15 @@ APO::Job::Job(const std::string taskFile, const std::string _cpPrefix)
 
   logRate = task.get_or_fail<int>( "logRate"); // 10; // number of round followed by an evaluation
   numRounds = task.get_or_fail<size_t>( "numRounds"); // 10; // number of round followed by an evaluation
-  racketStartRound = task.get_or_fail<size_t>( "racketStartRound"); // 10; // number of round followed by an evaluation
 
-  replayRate = task.get_or_fail<double>("replayRate"); // 10; // number of round followed by an evaluation
+  // reinforcement options
+  reinSamples = task.get_or_fail<size_t>( "reinSamples"); // number of reinforcement samples
+  reinStartRound = task.get_or_fail<size_t>( "reinStartRound"); // start round for reinforcement learning (uniform random sampling before)
+  reinEndRound = task.get_or_fail<size_t>( "reinEndRound"); // round when the final reinforcement ratio shall be used
+  reinStartRatio = task.get_or_fail<double>( "reinStartRatio"); // initial probability of using the model distribution
+  reinEndRatio = task.get_or_fail<double>( "reinEndRatio"); // initial probability of using the model distribution
+
+  replayRate = task.get_or_fail<double>("replayRate");  // (deprecated) number of rounds to replay
 
   saveCheckpoints = task.get_or_fail<int>("saveModel") != 0; // save model checkpoints at @logRate
 
@@ -416,17 +422,20 @@ void APO::train(const Job & task) {
 
       // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
       clock_t startDer = clock();
-      // best-effort search for optimal program
-      // nextProgs -> refDerVec
+
+      // reinforcement ratio
+      double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
+      double pModel = task.reinStartRatio + (task.reinEndRatio - task.reinEndRatio) * reinScale;
+
+      // reference derivation search (random / model driven)
       DerivationVec refDerVec;
       {
-      // use model to improve results
-        if (totalSearchRounds >= task.racketStartRound) {
+        if (pModel > 0.0) {
           // model-driven search
-          SearchPerfStats searchStats;
-          const int modelRounds = 4;
-          refDerVec = montOpt.searchDerivations(nextProgs, 0.1, nextMaxDistVec, modelRounds, true, &searchStats);
-          searchStats.dump();
+          // SearchPerfStats searchStats;
+          const int modelRounds = task.reinSamples;
+          refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, nullptr); // &searchStats);
+          // searchStats.dump();
 
         } else {
           // random search
@@ -492,7 +501,7 @@ void APO::train(const Job & task) {
       generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);
 
       // report timing stats
-      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay);
+      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay, nextProgs.size(), pModel);
     }
   });
 

@@ -13,7 +13,11 @@ numRounds 1000000
 saveModel 1
 numSamples 32
 numOptRounds 200
-racketStartRound 200
+reinStartRound 200
+reinEndRound 100000
+reinStartRatio 0.1
+reinEndRatio 1.0
+reinSamples 4
 cacheSize 100000
 replayRate 0.0
 numShuffle 20
