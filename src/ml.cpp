@@ -326,15 +326,16 @@ struct Batch {
   }
 
   FeedDict
-  buildFeed() {
+  buildFeed(std::string towerName) {
+    // bool hasRefData - pass reference inputs for training and loss computations
     FeedDict dict = {
-      {"oc_data", oc_feed},
-      {"firstOp_data", firstOp_feed},
-      {"sndOp_data", sndOp_feed},
-      {"length_data", length_feed},
-      {"stop_in", stop_feed},
-      {"target_in", target_feed},
-      {"action_in", action_feed}
+      {"oc_data_" + towerName, oc_feed},
+      {"firstOp_data_" + towerName, firstOp_feed},
+      {"sndOp_data_" + towerName, sndOp_feed},
+      {"length_data_" + towerName, length_feed},
+      {"stop_in_" + towerName, stop_feed},
+      {"target_in_" + towerName, target_feed},
+      {"action_in_" + towerName, action_feed}
     };
     return dict;
   }
@@ -368,6 +369,8 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
     Mutex_guard guard(modelMutex);
     Losses L{0.0, 0.0, 0.0};
 
+    std::string trainTower = "train";
+
     for (Batch & batch : *batchVec) {
       IF_DEBUG_TRAIN batch.print(std::cerr);
       // The session will initialize the outputs
@@ -376,13 +379,13 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
       // std::cout << " Training on batch " << s << "\n";
       for (int i = 0; i < config.batch_train_steps; ++i) {
         outputs.clear();
-        TF_CHECK_OK( session->Run(batch.buildFeed(), {}, {"train_dist_op"}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(trainTower), {}, {"train_dist_op"}, &outputs) );
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
         // writer.add_summary(summary, i)
       }
 
       if (oLosses) {
-        TF_CHECK_OK( session->Run(batch.buildFeed(), {"mean_stop_loss", "mean_target_loss", "mean_action_loss"}, {}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(trainTower), {"mean_stop_loss_" + trainTower, "mean_target_loss_" + trainTower, "mean_action_loss_" + trainTower}, {}, &outputs) );
         float pStopLoss = outputs[0].scalar<float>()(0);
         float pTargetLoss = outputs[1].scalar<float>()(0);
         float pActionLoss = outputs[2].scalar<float>()(0);
@@ -415,8 +418,8 @@ Model::flush() {
 
 #define IF_DEBUG_INFER if (false)
 Task
-Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx) {
-  IF_DEBUG_INFER { std::cerr << "ml::infer_dist start=" << startIdx << ", end=" << endIdx << "\n"; }
+Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName) {
+  IF_DEBUG_INFER { std::cerr << "ml::infer_dist start=" << startIdx << ", end=" << endIdx << ", towerName = " << towerName << "\n"; }
   Program emptyP(config.num_Params, {}); // the empty program
 
   auto batchVec = new std::vector<Batch>();
@@ -441,7 +444,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
     batchVec->push_back(batch);
   }
 
-  auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx]{
+  auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx, towerName]{
     Mutex_guard guard(modelMutex);
 
     for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
@@ -452,7 +455,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       IF_DEBUG_INFER batch.print(std::cerr);
       // The session will initialize the outputs
       std::vector<tensorflow::Tensor> outputs;
-      TF_CHECK_OK( session->Run(batch.buildFeed(), {"pred_stop_dist", "pred_target_dist", "pred_action_dist"}, {}, &outputs) );
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {"pred_stop_dist_" + towerName, "pred_target_dist_" + towerName, "pred_action_dist_" + towerName}, {}, &outputs) );
 
       // writer.add_summary(summary, i)
       auto stopDistTensor = outputs[0];

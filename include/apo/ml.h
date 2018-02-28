@@ -100,7 +100,7 @@ public:
   Statistics query_stats();
 
   // distribution over selections
-  Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx);
+  Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName = "infer");
 
   // returns a plain STOP result
   ResultDist createStopResult() const;
