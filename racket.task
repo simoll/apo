@@ -17,7 +17,7 @@ reinStartRound 200
 reinEndRound 100000
 reinStartRatio 0.1
 reinEndRatio 0.95
-reinSamples 4
+reinSamples 10
 cacheSize 100000
 replayRate 0.0
 numShuffle 20
