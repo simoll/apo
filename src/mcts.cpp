@@ -119,7 +119,7 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 }
 
 void
-MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & maxStepsVec) {
+MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & maxStepsVec, std::string inferTower) {
   int frozen = 0; // amount of programs that have stopped derivation
   std::vector<char> alreadyStopped(progVec.size(), false);
 
@@ -128,7 +128,7 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & max
 
     // query action distribution
     ResultDistVec actionDistVec(progVec.size());
-    model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
+    model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
 
 #pragma omp parallel for \
         reduction(+ : frozen) \
@@ -163,7 +163,7 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & max
 // bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const IntVec & maxStepsVec) {
+                                      const IntVec & maxStepsVec, std::string inferTower) {
   ProgramVec progVec = Clone(origProgVec);
 
   DerivationVec stopStates;
@@ -187,7 +187,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 
     // query action distribution
     ResultDistVec actionDistVec(progVec.size());
-    model.infer_dist(actionDistVec, progVec, 0, progVec.size()).join();
+    model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
 
 #pragma omp parallel for \
         reduction(+ : frozen) \
@@ -250,17 +250,26 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
                                                      const IntVec & maxStepsVec,
                                                      const int numOptRounds,
                                                      bool allowFallback,
-                                                     SearchPerfStats * oStats) {
-  if (pRandom < 1.0)
-    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, oStats);
-  else
+                                                     const DeviceVec & devices,
+                                                     SearchPerfStats * oStats)
+{
+  if (pRandom < 1.0) {
+    // model-driven search
+    DerivationVec bestDer;
+    std::string inferTower = devices[0].tower;
+    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, inferTower, oStats);
+  } else {
+    // random search
     return searchDerivations_Default(progVec, maxStepsVec, numOptRounds); // does not support profiling
+  }
 }
 
 // optimized version for model-based seaerch
 DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
     const ProgramVec &progVec, const double pRandom, const std::vector<int> & maxDistVec,
-    const int numOptRounds, const bool useRandomFallback, SearchPerfStats * oPerfStats) {
+    const int numOptRounds, const bool useRandomFallback, std::string inferTower,
+    SearchPerfStats * oPerfStats)
+{
   assert(pRandom < 1.0 && "use _Debug implementation instead");
 
   clock_t searchStart = clock();
@@ -277,7 +286,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
   // pre-compute initial program distribution
   ResultDistVec initialProgDist(progVec.size());
-  Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size());
+  Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size(), inferTower);
   clock_t joinStart = clock();
   handle.join();
   clock_t joinEnd = clock();
@@ -313,7 +322,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
             // first instance -> run inference for first and second batch
             inferThread = model.infer_dist(
                 modelRewriteDist, roundProgs, startIdx,
-                endIdx); // TODO also pipeline with the derivation loop
+                endIdx, inferTower); // TODO also pipeline with the derivation loop
           }
           clock_t joinStart = clock();
           inferThread.join(); // join with last inference thread
@@ -324,11 +333,11 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
             // start infering dist for next batch
             assert(!inferThread.joinable());
             inferThread = model.infer_dist(modelRewriteDist, roundProgs, endIdx,
-                                           nextEndIdx);
+                                           nextEndIdx, inferTower);
           } else { // no more batches for this derivation step
             assert(!inferThread.joinable());
             inferThread = model.infer_dist(modelRewriteDist, roundProgs, endIdx,
-                                           nextEndIdx);
+                                           nextEndIdx, inferTower);
           }
         }
 

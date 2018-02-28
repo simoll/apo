@@ -213,8 +213,9 @@ void APO::train(const Job & task) {
   evalProgs.emplace_back(P);
   evalDistVec.push_back(4);
 #endif
+  const DeviceVec & inferDevices = devices.getDevices("infer");
 
-  auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, task.numEvalOptRounds, false);
+  auto refEvalDerVec = montOpt.searchDerivations(evalProgs, 1.0, evalDistVec, task.numEvalOptRounds, false, inferDevices);
 
   // std::cerr << "Ref "; refEvalDerVec[refEvalDerVec.size() - 1].dump();
 
@@ -235,8 +236,16 @@ void APO::train(const Job & task) {
   // model training - repeatedly draw samples from SampleServer and submit to device for training
 #if 1
   std::thread
-  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
+  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex, &inferDevices] {
     const int dotStep = task.logRate / 10;
+
+    const auto & trainDevices = devices.getDevices("train");
+    if (trainDevices.size() != 1) {
+    std::cerr << "trainThread: Expected exactly one train device, was " << trainDevices.size() << ".\n";
+      keepRunning.store(false);
+      exit(-1);
+    }
+    std::string trainTower = trainDevices[0].tower;
 
     // Fetch initial programs
     ProgramVec progVec(task.numSamples, nullptr);
@@ -266,7 +275,7 @@ void APO::train(const Job & task) {
           serverStats.print(std::cerr);
 
           // evaluation statistics
-          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec);
+          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices[0].tower);
 
           std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
@@ -321,7 +330,7 @@ void APO::train(const Job & task) {
         // train model (progVec, refResults)
         Model::Losses L;
         if (trainTask.joinable()) trainTask.join(); // TODO move this into the ml.cpp
-        trainTask = model.train_dist(progVec, refResults, loggedRound ? &L : nullptr);
+        trainTask = model.train_dist(progVec, refResults, trainTower, loggedRound ? &L : nullptr);
 
         if (loggedRound) {
         // compute number of stops in reference result
@@ -353,7 +362,7 @@ void APO::train(const Job & task) {
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::thread
-  searchThread([this, &keepRunning, &server, &cpuMutex, &task]{
+  searchThread([this, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
 
 
     // compute all one-step derivations
@@ -436,13 +445,13 @@ void APO::train(const Job & task) {
         // model-driven search
         // SearchPerfStats searchStats;
         const int modelRounds = task.reinSamples;
-        refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, nullptr); // &searchStats);
+        refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, inferDevices, nullptr); // &searchStats);
         // searchStats.dump();
 
       } else {
         // random search
         std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
-        refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false);
+        refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, inferDevices);
       }
 
 
@@ -520,17 +529,19 @@ APO::loadCheckpoint(const std::string cpFile) {
 
 void
 APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
+  const auto & inferDevices = devices.getDevices("infer");
+
   switch (optStrat) {
   case Strategy::Greedy: {
     assert(optStrat == Strategy::Greedy);
     IntVec maxDistVec(progVec.size(), stepLimit);
-    montOpt.greedyOptimization(progVec, maxDistVec);
+    montOpt.greedyOptimization(progVec, maxDistVec, inferDevices[0].tower);
   } return;
   case Strategy::Random: {
     // TODO provide actual implementation
     IntVec maxDistVec(progVec.size(), stepLimit);
     const int numOptRounds = 10000;
-    DerivationVec derVec = montOpt.searchDerivations(progVec, 1.0, maxDistVec, numOptRounds, false);
+    DerivationVec derVec = montOpt.searchDerivations(progVec, 1.0, maxDistVec, numOptRounds, false, inferDevices);
     derVec[0].print(std::cerr);
   } return;
   default: abort(); // unsupported strategy

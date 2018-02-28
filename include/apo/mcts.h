@@ -13,6 +13,7 @@
 #include "apo/task.h"
 #include "apo/ruleBook.h"
 
+#include "apo/devices.h"
 #include "apo/score.h"
 
 namespace apo {
@@ -121,18 +122,18 @@ struct MonteCarloOptimizer {
   };
 
   GreedyResult
-  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec);
+  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, std::string towerName);
 
   // optimize the progarms in @progVec greedily
-  void greedyOptimization(ProgramVec & progVec, const IntVec & maxDistVec);
+  void greedyOptimization(ProgramVec & progVec, const IntVec & maxDistVec, std::string towerName);
 
   // random trajectory based model (or uniform dist) sampling
   DerivationVec
-  searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback, SearchPerfStats * oPerfStats = nullptr);
+  searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback, const DeviceVec & inferDevices, SearchPerfStats * oPerfStats = nullptr);
 
   // optimized version for model-based seaerch
   DerivationVec
-  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback, SearchPerfStats * oPerfStats);
+  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback, std::string towerName, SearchPerfStats * oPerfStats);
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec

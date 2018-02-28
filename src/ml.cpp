@@ -56,7 +56,7 @@ Model::init_tflow() {
   // TODO enable XLA (single threaded only)
   // opts.config.mutable_graph_options()->mutable_optimizer_options()->set_global_jit_level(OptimizerOptions_GlobalJitLevel_ON_1);
 
-#if 0
+#if 1
   // enable to debug device mapping
   opts.config.set_log_device_placement(true);
 #endif
@@ -329,13 +329,13 @@ struct Batch {
   buildFeed(std::string towerName) {
     // bool hasRefData - pass reference inputs for training and loss computations
     FeedDict dict = {
-      {"oc_data_" + towerName, oc_feed},
-      {"firstOp_data_" + towerName, firstOp_feed},
-      {"sndOp_data_" + towerName, sndOp_feed},
-      {"length_data_" + towerName, length_feed},
-      {"stop_in_" + towerName, stop_feed},
-      {"target_in_" + towerName, target_feed},
-      {"action_in_" + towerName, action_feed}
+      {towerName + "/oc_data", oc_feed},
+      {towerName + "/firstOp_data", firstOp_feed},
+      {towerName + "/sndOp_data", sndOp_feed},
+      {towerName + "/length_data", length_feed},
+      {towerName + "/stop_in", stop_feed},
+      {towerName + "/target_in", target_feed},
+      {towerName + "/action_in", action_feed}
     };
     return dict;
   }
@@ -344,7 +344,7 @@ struct Batch {
 #define IF_DEBUG_TRAIN if (false)
 // train model on a batch of programs (returns loss)
 Task
-Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLosses) {
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::string towerName, Losses * oLosses) {
   IF_DEBUG_TRAIN std::cerr << "ml::train_dist\n";
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
@@ -365,11 +365,9 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
   }
 
   // synchronize with pending training session
-  Task workerThread([this, batchVec, oLosses, num_Samples]{
+  Task workerThread([this, batchVec, oLosses, towerName, num_Samples]{
     Mutex_guard guard(modelMutex);
     Losses L{0.0, 0.0, 0.0};
-
-    std::string trainTower = "train";
 
     for (Batch & batch : *batchVec) {
       IF_DEBUG_TRAIN batch.print(std::cerr);
@@ -379,13 +377,13 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses 
       // std::cout << " Training on batch " << s << "\n";
       for (int i = 0; i < config.batch_train_steps; ++i) {
         outputs.clear();
-        TF_CHECK_OK( session->Run(batch.buildFeed(trainTower), {}, {"train_dist_op"}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {}, {"train_dist_op"}, &outputs) );
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
         // writer.add_summary(summary, i)
       }
 
       if (oLosses) {
-        TF_CHECK_OK( session->Run(batch.buildFeed(trainTower), {"mean_stop_loss_" + trainTower, "mean_target_loss_" + trainTower, "mean_action_loss_" + trainTower}, {}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {towerName + "/mean_stop_loss", towerName + "/mean_target_loss", towerName + "/mean_action_loss"}, {}, &outputs) );
         float pStopLoss = outputs[0].scalar<float>()(0);
         float pTargetLoss = outputs[1].scalar<float>()(0);
         float pActionLoss = outputs[2].scalar<float>()(0);
@@ -455,7 +453,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       IF_DEBUG_INFER batch.print(std::cerr);
       // The session will initialize the outputs
       std::vector<tensorflow::Tensor> outputs;
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {"pred_stop_dist_" + towerName, "pred_target_dist_" + towerName, "pred_action_dist_" + towerName}, {}, &outputs) );
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
 
       // writer.add_summary(summary, i)
       auto stopDistTensor = outputs[0];

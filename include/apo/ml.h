@@ -95,12 +95,12 @@ public:
     std::ostream& print(std::ostream & out) const;
   };
 
-  Task train_dist(const ProgramVec& progs, const ResultDistVec& results, Losses * oLoss);
+  Task train_dist(const ProgramVec& progs, const ResultDistVec& results, std::string towerName, Losses * oLoss);
 
   Statistics query_stats();
 
   // distribution over selections
-  Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName = "infer");
+  Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName);
 
   // returns a plain STOP result
   ResultDist createStopResult() const;

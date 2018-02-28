@@ -401,37 +401,36 @@ with tf.Session() as sess:
         trainTower = towerName
 
 
-    # attach optimizer to "train" device
-    with tf.variable_scope(trainTower):
-        if False:
-        # learning rate configuration
-          starter_learning_rate = 0.001
-          # end_learning_rate = 0.0001
-          decay_steps = 1000
-          decay_rate = 0.99
+    # attach optimizer to "train" device (defining the unique "train_dist_op")
+    if False:
+    # learning rate configuration
+      starter_learning_rate = 0.001
+      # end_learning_rate = 0.0001
+      decay_steps = 1000
+      decay_rate = 0.99
 
-          learning_rate = tf.train.exponential_decay(starter_learning_rate,
-                                                    global_step,
-                                                    decay_steps,
-                                                    decay_rate,
-                                                    name="learning_rate")
-        
-        else:
-          # learning rate parameter
-          learning_rate = tf.get_variable("learning_rate", initializer=0.001, dtype=tf.float32, trainable=False)
-          
-          # set_learning_rate op (to set learning_rate from APO)
-          new_learning_rate = tf.placeholder(tf.float32, [], "new_learning_rate")
-          tf.assign(learning_rate, new_learning_rate, name="set_learning_rate")
+      learning_rate = tf.train.exponential_decay(starter_learning_rate,
+                                                global_step,
+                                                decay_steps,
+                                                decay_rate,
+                                                name="learning_rate")
+    
+    else:
+      # learning rate parameter
+      learning_rate = tf.get_variable("learning_rate", initializer=0.001, dtype=tf.float32, trainable=False)
+      
+      # set_learning_rate op (to set learning_rate from APO)
+      new_learning_rate = tf.placeholder(tf.float32, [], "new_learning_rate")
+      tf.assign(learning_rate, new_learning_rate, name="set_learning_rate")
 
-        with tf.device(devName):
-          # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-          optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
+    with tf.device(devName):
+      # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+      optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-          train_dist_op = optimizer.minimize(
-              loss=devLoss,
-              global_step=global_step,
-              name="train_dist_op")
+      train_dist_op = optimizer.minimize(
+          loss=devLoss,
+          global_step=global_step,
+          name="train_dist_op")
 
     # tf.summary.scalar('loss', cpuLoss[0])
 
