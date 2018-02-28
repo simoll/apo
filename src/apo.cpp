@@ -430,7 +430,7 @@ void APO::train(const Job & task) {
       if (totalSearchRounds > task.reinStartRound) {
         // reinforcement ratio
         double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
-        pModel = task.reinStartRatio + (task.reinEndRatio - task.reinEndRatio) * reinScale;
+        pModel = task.reinStartRatio + (task.reinEndRatio - task.reinStartRatio) * reinScale;
 
         // model-driven search
         // SearchPerfStats searchStats;
