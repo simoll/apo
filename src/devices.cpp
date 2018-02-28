@@ -25,21 +25,21 @@ Devices::Devices(std::string deviceFile)
 : taskDevices()
 {
   std::ifstream in(deviceFile);
-  std::string devName, taskSet;
+  std::string devName, towerName, taskSet;
   int rating = 1;
 
-  in >> devName >> taskSet >> rating;
+  in >> devName >> towerName >> taskSet >> rating;
   while (!devName.empty()) {
     // parse device mapping
     if (devName[0] != '#') {
-      ForToken(taskSet, ',', [this, devName, rating](std::string taskToken) {
-          taskDevices[taskToken].push_back(Device{devName, rating});
+      ForToken(taskSet, ',', [this, devName, towerName, rating](std::string taskToken) {
+          taskDevices[taskToken].push_back(Device{devName, towerName, rating});
       });
     }
 
     // next device in list
     devName = "";
-    in >> devName >> taskSet >> rating;
+    in >> devName >> towerName >> taskSet >> rating;
   }
 
   dump();
@@ -48,7 +48,7 @@ Devices::Devices(std::string deviceFile)
 static
 std::ostream&
 DumpVec(const DeviceVec & devVec) {
- for (const auto & dev : devVec) std::cerr << " " << dev.tower << ",r=" << dev.rating;
+ for (const auto & dev : devVec) std::cerr << " " << dev.tower << "@" << dev.tfDevice << ",r=" << dev.rating;
  return std::cerr;
 }
 

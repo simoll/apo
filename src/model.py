@@ -361,17 +361,38 @@ with tf.Session() as sess:
       return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
     # END buildTower
 
-    # inference device
-    with tf.variable_scope(tf.get_variable_scope()) as scope:
-      with tf.device("/cpu:0"):
-        with tf.variable_scope("state"):
-          cpuTower = buildTower("infer") # inference device
+    hasTrainDevice = False
+    hasInferDevice = False
+    laterDevice = False
 
-      # training device
-      with tf.device("/gpu:0"):
-        with tf.variable_scope("state", reuse=True):
-          gpuTower = buildTower("train") # training device
-        gpuLoss = gpuTower[0]
+    with tf.variable_scope(tf.get_variable_scope()) as scope:
+      for line in open("devices.conf", 'r'):
+        if len(line) == 0 or line[0] == "#":
+          continue
+        parts = line.split(" ")
+        devName = parts[0]
+        towerName = parts[1]
+        taskSet = parts[2]
+        rating = int(parts[3])
+
+        # build tower
+        with tf.device(devName):
+          with tf.variable_scope("state", reuse=laterDevice):
+            devTower = buildTower(towerName)
+
+        laterDevice=True
+        hasInferDevice = hasInferDevice or ("infer" in taskSet)
+
+        if not "train" in taskSet:
+          continue
+
+        # configure training device
+        if hasTrainDevice:
+          print("Already defined a training device!!!\n")
+          raise SystemExit
+
+        hasTrainDevice = True
+        devLoss = devTower[0]
 
         if False:
         # learning rate configuration
@@ -398,7 +419,7 @@ with tf.Session() as sess:
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
         train_dist_op = optimizer.minimize(
-            loss=gpuLoss,
+            loss=devLoss,
             global_step=global_step,
             name="train_dist_op")
 

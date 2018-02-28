@@ -9,8 +9,9 @@
 namespace apo {
 
 struct Device {
-  std::string tower;
-  int rating;
+  std::string tfDevice; // tensorflow device name
+  std::string tower; // tower op suffix
+  int rating; // performance rating (used for load distribution)
 };
 
 using DeviceVec = std::vector<Device>;
