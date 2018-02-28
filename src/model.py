@@ -75,27 +75,27 @@ with tf.Session() as sess:
     param_data = tf.get_variable("param_embed", [num_Params, state_size])
 
     # devName="/gpu:0"
-    def buildTower(towerName):
+    def buildTower():
       # shared embedding
-      # with tf.device("/cpu:0"):
-      oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
-      oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
+      with tf.device("/cpu:0"):
+        oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
+        oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
 
       # number of instructions in the program
-      length_data = tf.placeholder(tf.int32, [None], name="length_data_" + towerName)
+      length_data = tf.placeholder(tf.int32, [None], name="length_data")
       batch_size=tf.shape(length_data)[0]
       
       # opCode per instruction
-      oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data_" + towerName)
+      oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
       
       # first operand index per instruction
-      firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data_" + towerName)
+      firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
       
       # second operand index per instruction
-      sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data_" + towerName)
+      sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
 
       oc_inputs = tf.nn.embedding_lookup(oc_embedding, oc_data) # [batch_size x idx x embed_size]
-      print("oc_inputs on {}: {}".format(towerName, oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
+      print("oc_inputs : {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
 
       # build the network
       zero_batch = tf.zeros([batch_size, state_size], dtype=data_type())
@@ -327,14 +327,14 @@ with tf.Session() as sess:
 
       ## predictions ##
       # distributions
-      tf.nn.sigmoid(action_logits,name="pred_action_dist_" + towerName)
-      tf.nn.sigmoid(target_logits,name="pred_target_dist_" + towerName)
+      tf.nn.sigmoid(action_logits,name="pred_action_dist")
+      tf.nn.sigmoid(target_logits,name="pred_target_dist")
 
       ### reference input & training ###
       # reference input #
-      stop_in = tf.placeholder(data_type(), [None], name="stop_in_" + towerName) # stop indicator
-      action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in_" + towerName) # action distribution (over rules per instruction)
-      target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in_" + towerName) # target distribution (over instructions (per program))
+      stop_in = tf.placeholder(data_type(), [None], name="stop_in") # stop indicator
+      action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in") # action distribution (over rules per instruction)
+      target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in") # target distribution (over instructions (per program))
 
       # training #
       # stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
@@ -351,11 +351,11 @@ with tf.Session() as sess:
 
       # conditional loss (only penalize rule/target if !stop_in)
       loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
-      tf.identity(loss, "loss_" + towerName)
+      tf.identity(loss, "loss")
 
-      mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss_" + towerName)
-      mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss_" + towerName)
-      mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss_" + towerName)
+      mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
+      mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss")
+      mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
 
       # return action handles
       return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
@@ -363,22 +363,27 @@ with tf.Session() as sess:
 
     hasTrainDevice = False
     hasInferDevice = False
-    laterDevice = False
+    laterDevice = None # same as False from Tensorflow 1.1
+    trainTower = None # tower used for training
 
+    # create one tower for each device
     with tf.variable_scope(tf.get_variable_scope()) as scope:
       for line in open("devices.conf", 'r'):
         if len(line) == 0 or line[0] == "#":
           continue
+
+        # actual device entry 
         parts = line.split(" ")
-        devName = parts[0]
-        towerName = parts[1]
-        taskSet = parts[2]
-        rating = int(parts[3])
+        devName = parts[0]     # tensorflow device name, eg "/gpu:0"
+        towerName = parts[1]   # tower name to be used in apo, eg "g0"
+        taskSet = parts[2]     # task set this device shall be associated with, eg "infer,train"
+        rating = int(parts[3]) # device performance rating, eg CPU has 1 , GPU has 10
 
         # build tower
         with tf.device(devName):
-          with tf.variable_scope("state", reuse=laterDevice):
-            devTower = buildTower(towerName)
+          with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
+            with tf.name_scope(towerName):
+              devTower = buildTower()
 
         laterDevice=True
         hasInferDevice = hasInferDevice or ("infer" in taskSet)
@@ -393,7 +398,11 @@ with tf.Session() as sess:
 
         hasTrainDevice = True
         devLoss = devTower[0]
+        trainTower = towerName
 
+
+    # attach optimizer to "train" device
+    with tf.variable_scope(trainTower):
         if False:
         # learning rate configuration
           starter_learning_rate = 0.001
@@ -415,13 +424,14 @@ with tf.Session() as sess:
           new_learning_rate = tf.placeholder(tf.float32, [], "new_learning_rate")
           tf.assign(learning_rate, new_learning_rate, name="set_learning_rate")
 
-        # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
+        with tf.device(devName):
+          # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+          optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-        train_dist_op = optimizer.minimize(
-            loss=devLoss,
-            global_step=global_step,
-            name="train_dist_op")
+          train_dist_op = optimizer.minimize(
+              loss=devLoss,
+              global_step=global_step,
+              name="train_dist_op")
 
     # tf.summary.scalar('loss', cpuLoss[0])
 
