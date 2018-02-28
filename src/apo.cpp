@@ -12,18 +12,6 @@ namespace apo {
 
 
 
-static DerivationVec FilterBest(DerivationVec A, DerivationVec B) {
-  DerivationVec res;
-  for (int i = 0; i < A.size(); ++i) {
-    if (A[i].betterThan(B[i])) {
-      res.push_back(A[i]);
-    } else {
-      res.push_back(B[i]);
-    }
-  }
-  return res;
-}
-
 static int CountStops(const DerivationVec &derVec) {
   int a = 0;
   for (const auto &der : derVec)

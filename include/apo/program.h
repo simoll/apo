@@ -576,6 +576,28 @@ Clone(const ProgramVec & progVec) {
   return cloned;
 }
 
+static
+ProgramVec
+ClonePart(const ProgramVec & progVec, int startId, int endId) {
+  ProgramVec cloned;
+  cloned.reserve(progVec.size());
+  for (int i = startId; i < endId; ++i) {
+    const auto & P = progVec[i];
+    cloned.emplace_back(new Program(*P));
+  }
+  return cloned;
+}
+
+static
+void
+ClonePartInto(ProgramVec & destVec, const ProgramVec & progVec, int startId, int endId) {
+  assert(destVec.size() >= progVec.size());
+
+  for (int i = startId; i < endId; ++i) {
+    const auto & P = progVec[i];
+    destVec[i - startId].reset(std::move(new Program(*P)));
+  }
+}
 
 } // namespace apo
 

@@ -12,6 +12,8 @@ struct Device {
   std::string tfDevice; // tensorflow device name
   std::string tower; // tower op suffix
   int rating; // performance rating (used for load distribution)
+  double relRating; // relative rating in this category
+  double relStart; // rating start (for faster distributino)
 };
 
 using DeviceVec = std::vector<Device>;

@@ -47,6 +47,20 @@ struct Derivation {
 };
 using DerivationVec = std::vector<Derivation>;
 
+static DerivationVec
+FilterBest(const DerivationVec & A, const DerivationVec & B) {
+  DerivationVec res;
+  res.reserve(A.size());
+  for (int i = 0; i < A.size(); ++i) {
+    if (A[i].betterThan(B[i])) {
+      res.push_back(A[i]);
+    } else {
+      res.push_back(B[i]);
+    }
+  }
+  return res;
+}
+
 // reasons to sample STOP
 enum StopReason {
   Choice = 0, // STOP-ped by model choice
@@ -131,9 +145,9 @@ struct MonteCarloOptimizer {
   DerivationVec
   searchDerivations(const ProgramVec & progVec, const double pRandom, const IntVec & maxDistVec, const int numOptRounds, bool allowFallback, const DeviceVec & inferDevices, SearchPerfStats * oPerfStats = nullptr);
 
-  // optimized version for model-based seaerch
-  DerivationVec
-  searchDerivations_ModelDriven(const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback, std::string towerName, SearchPerfStats * oPerfStats);
+  // optimized version for model-based seaerch (improves results in @states)
+  void
+  searchDerivations_ModelDriven(DerivationVec & states, int startSlice, int endSlice, const ProgramVec & progVec, const double pRandom, const IntVec & maxDist, const int numOptRounds, const bool useRandomFallback, std::string towerName, SearchPerfStats * oPerfStats);
 
   // search for a best derivation (best-reachable program (1.) through rewrites with minimal derivation sequence (2.))
   DerivationVec

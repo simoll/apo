@@ -254,10 +254,50 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
                                                      SearchPerfStats * oStats)
 {
   if (pRandom < 1.0) {
-    // model-driven search
-    DerivationVec bestDer;
-    std::string inferTower = devices[0].tower;
-    return searchDerivations_ModelDriven(progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, inferTower, oStats);
+    // model driven queries
+
+    // compute STOP derivation
+    std::vector<Derivation> initialStates;
+    for (int i = 0; i < progVec.size(); ++i) {
+      initialStates.emplace_back(*progVec[i]);
+    }
+
+    // run optimization rounds
+    if (devices.size() > 1) {
+      std::vector<DerivationVec> deviceStates;
+      deviceStates.resize(devices.size());
+
+      #pragma omp parallel for
+      for (int i = 0; i < devices.size(); ++i) {
+        const auto & dev = devices[i];
+
+        int startRounds = (int) floor(dev.relStart * numOptRounds);
+        int endRounds = (i + 1 == devices.size()) ? numOptRounds :  (int) floor((dev.relStart + dev.relRating) * numOptRounds);
+        std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
+
+        // model-driven search
+        DerivationVec states = initialStates;
+        for (int j = startRounds; j < endRounds; ++j) {
+          searchDerivations_ModelDriven(states, 0, progVec.size(), progVec, pRandom, maxStepsVec, endRounds - startRounds, allowFallback, dev.tower, oStats);
+        }
+
+        // submit
+        deviceStates[i] = states;
+      }
+
+      // join results
+      DerivationVec bestDer = deviceStates[0];
+      for (int i = 1; i < deviceStates.size(); ++i) {
+        bestDer = FilterBest(bestDer, deviceStates[i]);
+      }
+
+      return bestDer;
+    } else {
+      assert(!devices.empty());
+      searchDerivations_ModelDriven(initialStates, 0, progVec.size(), progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, devices[0].tower, oStats);
+      return initialStates;
+    }
+
   } else {
     // random search
     return searchDerivations_Default(progVec, maxStepsVec, numOptRounds); // does not support profiling
@@ -265,28 +305,29 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
 }
 
 // optimized version for model-based seaerch
-DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
+void
+MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int startSlice, int endSlice,
     const ProgramVec &progVec, const double pRandom, const std::vector<int> & maxDistVec,
     const int numOptRounds, const bool useRandomFallback, std::string inferTower,
     SearchPerfStats * oPerfStats)
 {
   assert(pRandom < 1.0 && "use _Debug implementation instead");
 
+  assert(0 <= startSlice && endSlice <= progVec.size());
+  const int numSamples = endSlice - startSlice;
+
   clock_t searchStart = clock();
-  const int numSamples = progVec.size();
-
-  // start with STOP derivation
-  std::vector<Derivation> states;
-  for (int i = 0; i < progVec.size(); ++i) {
-    states.emplace_back(*progVec[i]);
-  }
-
+  // const int numSamples = progVec.size();
 
 #define IF_DEBUG_DER if (false)
 
+
+  // re-start from initial program
+  ProgramVec roundProgs = ClonePart(progVec, startSlice, endSlice);
+
   // pre-compute initial program distribution
-  ResultDistVec initialProgDist(progVec.size());
-  Task handle = model.infer_dist(initialProgDist, progVec, 0, progVec.size(), inferTower);
+  ResultDistVec initialProgDist(numSamples);
+  Task handle = model.infer_dist(initialProgDist, roundProgs, 0, numSamples, inferTower);
   clock_t joinStart = clock();
   handle.join();
   clock_t joinEnd = clock();
@@ -294,16 +335,15 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
 
   // pre-compute maximal derivation distance
   int commonMaxDist = 0;
-  for (int d : maxDistVec) commonMaxDist = std::max(commonMaxDist, d);
+  for (int j = startSlice ; j < endSlice; ++j) commonMaxDist = std::max(commonMaxDist, maxDistVec[j]);
 
   clock_t inferStallTotal = 0;
 
   // number of derivation walks
-  for (int r = 0; r < numOptRounds; ++r) {
-
-    // re-start from initial program
-    ProgramVec roundProgs = Clone(progVec);
-
+  for (int r = 0;
+      r < numOptRounds;
+      ++r, ClonePartInto(roundProgs, progVec, startSlice, endSlice)
+  ) {
     ResultDistVec modelRewriteDist = initialProgDist;
 
     for (int derStep = 0; derStep < commonMaxDist; ++derStep) {
@@ -458,7 +498,6 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
   }
 
 #undef IF_DEBUG_DER
-  return states;
 }
 
 // search for a best derivation (best-reachable program (1.) through rewrites
