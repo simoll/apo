@@ -44,7 +44,7 @@ Devices::Devices(std::string deviceFile)
   }
 
   // compute relative rating per category
-  for (auto itTask : taskDevices) {
+  for (auto & itTask : taskDevices) {
     size_t totalRating = 0;
     for (const auto & dev : itTask.second) {
       totalRating += dev.rating;
