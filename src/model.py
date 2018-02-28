@@ -60,27 +60,15 @@ global_step = tf.get_variable("global_step", initializer = 0, dtype=tf.int32, tr
 
 
 with tf.Session() as sess:
-    ### OK
-    #     sess.run(tf.global_variables_initializer())
-    #     print(oc_data.eval())
-    #     print(firstOp_data.eval())
-    #     print(sndOp_data.eval())
+    # shared embeddings
+    with tf.device("/cpu:0"):
+      param_init = tf.truncated_normal([num_Params, state_size], dtype=data_type())
+      # param_data = tf.get_variable("param_embed", [num_Params, state_size])
+      param_data = tf.get_variable("param_embed", initializer = param_init, dtype=data_type())
+      oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
+      oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
 
-
-    # one-hot operand encoding
-    # firstOp_inputs = tf.one_hot(firstOp_data, num_Indices,  on_value=0.0, off_value=1, dtype=data_type())
-    # sndOp_inputs = tf.one_hot(smdOp_data, num_Indices,  on_value=0.0, off_value=1, dtype=data_type())
-
-    # parameter input
-    param_data = tf.get_variable("param_embed", [num_Params, state_size])
-
-    # devName="/gpu:0"
     def buildTower():
-      # shared embedding
-      with tf.device("/cpu:0"):
-        oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
-        oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
-
       # number of instructions in the program
       length_data = tf.placeholder(tf.int32, [None], name="length_data")
       batch_size=tf.shape(length_data)[0]
@@ -143,6 +131,8 @@ with tf.Session() as sess:
             out_states=[]
             last_states=[]
 
+            zeros = tf.zeros([batch_size, state_size], dtype=data_type())
+
             next_initial = None
             for l in range(num_hidden_layers + num_decoder_layers):
               if l == 0:
@@ -154,7 +144,7 @@ with tf.Session() as sess:
                 # pass
 
                 # last iteration output states
-                sequence = [tf.zeros([batch_size, state_size], dtype=data_type())] * (1 + num_Params) + outputs
+                sequence = [zeros] * (1 + num_Params) + outputs
                 # print(sequence)
 
                 # next layer inputs to assemble
@@ -383,6 +373,7 @@ with tf.Session() as sess:
         with tf.device(devName):
           with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
             with tf.name_scope(towerName):
+              print("Building tower {} for device {} with task set {}".format(towerName, devName, taskSet))
               devTower = buildTower()
 
         laterDevice=True
@@ -445,7 +436,6 @@ with tf.Session() as sess:
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
-
 
     tf.global_variables_initializer().run()
     init = tf.variables_initializer(tf.global_variables(), name='init_op')
