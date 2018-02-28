@@ -26,6 +26,8 @@
 
 #include <sstream>
 
+#include "apo/devices.h"
+
 #include <time.h>
 #include <vector>
 // #include "tensorflow/cc/client/client_session.h"
@@ -42,6 +44,7 @@ struct APO {
   };
 
   ModelConfig modelConfig;
+  Devices devices;
   RewritePairVec rewritePairs;
   RuleBook ruleBook;
   Model model;
