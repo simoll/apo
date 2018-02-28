@@ -423,25 +423,25 @@ void APO::train(const Job & task) {
       // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
       clock_t startDer = clock();
 
-      // reinforcement ratio
-      double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
-      double pModel = task.reinStartRatio + (task.reinEndRatio - task.reinEndRatio) * reinScale;
 
       // reference derivation search (random / model driven)
       DerivationVec refDerVec;
-      {
-        if (pModel > 0.0) {
-          // model-driven search
-          // SearchPerfStats searchStats;
-          const int modelRounds = task.reinSamples;
-          refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, nullptr); // &searchStats);
-          // searchStats.dump();
+      double pModel = 0.0;
+      if (totalSearchRounds > task.reinStartRound) {
+        // reinforcement ratio
+        double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
+        pModel = task.reinStartRatio + (task.reinEndRatio - task.reinEndRatio) * reinScale;
 
-        } else {
-          // random search
-          std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
-          refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false);
-        }
+        // model-driven search
+        // SearchPerfStats searchStats;
+        const int modelRounds = task.reinSamples;
+        refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, nullptr); // &searchStats);
+        // searchStats.dump();
+
+      } else {
+        // random search
+        std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
+        refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false);
       }
 
 
