@@ -444,10 +444,6 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
   auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx]{
     Mutex_guard guard(modelMutex);
 
-    // TODO make this configurable
-#ifdef APO_INFER_THREADS
-    #pragma omp parallel num_threads(APO_INFER_THREADS)
-#endif
     for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
       int batchStartIdx = startIdx + batchIdx * config.infer_batch_size; // works because only the last bach may not be a complete infer_batch_size package
       auto & batch = (*batchVec)[batchIdx];
