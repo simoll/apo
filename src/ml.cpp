@@ -443,7 +443,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
   }
 
   auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx, towerName]{
-    Mutex_guard guard(modelMutex);
+    // Mutex_guard guard(modelMutex);
 
     for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
       int batchStartIdx = startIdx + batchIdx * config.infer_batch_size; // works because only the last bach may not be a complete infer_batch_size package
