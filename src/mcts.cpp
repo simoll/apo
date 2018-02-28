@@ -273,7 +273,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
 
         int startRounds = (int) floor(dev.relStart * numOptRounds);
         int endRounds = (i + 1 == devices.size()) ? numOptRounds :  (int) floor((dev.relStart + dev.relRating) * numOptRounds);
-        std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
+        // std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
 
         // model-driven search
         DerivationVec states = initialStates;
