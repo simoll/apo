@@ -56,12 +56,13 @@ enum StopReason {
 
 struct
 SearchPerfStats {
+  size_t numProgs; // workload
   double totalDerTime; // total time spent in searchDerivation
   double initialInferStall; // time spent in initial inference
   double totalInferStall; // total time stalled for pending inference
 
   void dump() const {
-    std::cerr << "PerfStats { totalDerTime = " << totalDerTime << ", initialStall = " << initialInferStall << ", totalInferStall = " << totalInferStall << " }\n";
+    std::cerr << "PerfStats { numProgs = " << numProgs << ", totalDerTime = " << totalDerTime << ", initialStall = " << initialInferStall << ", totalInferStall = " << totalInferStall << " }\n";
   }
 };
 

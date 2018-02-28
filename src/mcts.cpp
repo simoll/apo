@@ -445,7 +445,7 @@ DerivationVec MonteCarloOptimizer::searchDerivations_ModelDriven(
     double searchSecs = (searchEnd - searchStart) / (double) CLOCKS_PER_SEC;
     double initialStallSecs = initialJoinTime / (double) CLOCKS_PER_SEC;
     double inferStallSecs = inferStallTotal / (double) CLOCKS_PER_SEC;
-    *oPerfStats = SearchPerfStats{searchSecs, initialStallSecs, inferStallSecs};
+    *oPerfStats = SearchPerfStats{progVec.size(), searchSecs, initialStallSecs, inferStallSecs};
   }
 
 #undef IF_DEBUG_DER
