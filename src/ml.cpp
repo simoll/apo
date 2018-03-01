@@ -56,10 +56,8 @@ Model::init_tflow() {
   // TODO enable XLA (single threaded only)
   // opts.config.mutable_graph_options()->mutable_optimizer_options()->set_global_jit_level(OptimizerOptions_GlobalJitLevel_ON_1);
 
-#if 1
   // enable to debug device mapping
-  opts.config.set_log_device_placement(true);
-#endif
+  if (getenv("APO_OP_MAPPING")) { opts.config.set_log_device_placement(true); }
 
   Status status = NewSession(opts, &session);
 
