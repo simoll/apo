@@ -57,7 +57,7 @@ build/%.o: src/%.cpp Makefile $(HEADERS) make.conf
 	mkdir -p $(dir $@)
 	$(CXX) ${CFLAGS} $< -c -o $@ 
 
-${METAGRAPH}: src/model.py model.conf
+${METAGRAPH}: src/model.py model.conf devices.conf
 	mkdir -p $(dir ${METAGRAPH})
 	$(PYTHON) src/model.py
 
