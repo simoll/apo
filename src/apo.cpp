@@ -1,5 +1,6 @@
 #include "apo/apo.h"
 #include "apo/sampleserver.h"
+#include "apo/timers.h"
 
 #include <random>
 #include <limits>
@@ -261,16 +262,20 @@ APO::train(const Job & task) {
 
     Task trainTask;
     {
-      clock_t roundTotal = 0;
-      size_t numTimedRounds = 0;
-
       std::cerr << "\n-- Training --\n";
       size_t g; // current opt round
+
+      // double startTime = get_wall_time();
       for (g = 0; g < task.numRounds; ++g) {
+
+      // total time passed between l
 
     // evaluation round logic
         bool loggedRound = (g % task.logRate == 0);
         if (loggedRound) {
+          // double currTime = get_wall_time();
+          // TODO report seconds since start
+
           std::unique_lock<std::mutex> lock(cpuMutex); // drop the lock every now and then..
 
         // dump some statistics
@@ -323,14 +328,6 @@ APO::train(const Job & task) {
             std::cerr << ".";
           }
         }
-
-  // actual round logic
-        clock_t startRound = clock();
-
-        auto endRound = clock();
-        // statistics
-        roundTotal += (endRound - startRound);
-        numTimedRounds++;
 
         // fetch a new batch
         server.drawSamples(progVec, refResults, 0, task.numSamples);
@@ -409,7 +406,7 @@ APO::train(const Job & task) {
       nextMaxDistVec.reserve(preAllocSize);
 
     // queue all programs that are reachable by a single move
-      clock_t startGenerateMove = clock();
+      double startGenerateMove = get_wall_time();
       for (int t = 0; t < progVec.size(); ++t) {
         for (int r = 0; r < ruleBook.num_Rules(); ++r) {
           const int progSize = progVec[t]->size();
@@ -436,10 +433,10 @@ APO::train(const Job & task) {
           }
         }
       }
-      clock_t endGenerateMove = clock();
+      double endGenerateMove = get_wall_time();
 
       // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
-      clock_t startDer = clock();
+      double startDer = get_wall_time();
 
 
       // reference derivation search (random / model driven)
@@ -464,7 +461,7 @@ APO::train(const Job & task) {
 
 
       // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
-      clock_t endDer = clock();
+      double endDer = get_wall_time();
 
       // (rewrites, refDerVec) --> refResults
       // decode reference ResultDistVec from detected derivations
@@ -473,7 +470,7 @@ APO::train(const Job & task) {
       // submit results for training (-> trainThread)
       server.submitResults(progVec, refResults);
 
-      clock_t startSample = clock();
+      double startSample = get_wall_time();
     // sample moves from the reference distribution
       // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
       int numNextProgs = 0;
@@ -502,7 +499,7 @@ APO::train(const Job & task) {
           return true;
         }
       );
-      clock_t endSample = clock();
+      double endSample = get_wall_time();
 
       double dropOutRate = 1.0 - numNextProgs / (double) task.numSamples;
 
@@ -511,9 +508,9 @@ APO::train(const Job & task) {
       int numReplayedSamples = (int) floor(numRefill * task.replayRate);
 
       // replay samples
-      clock_t startReplay = clock();
+      double startReplay = get_wall_time();
       int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, task.extraExplorationDepth, task.maxExplorationDepth);
-      clock_t endReplay = clock();
+      double endReplay = get_wall_time();
 
       // fill up with completely new progs
       generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);

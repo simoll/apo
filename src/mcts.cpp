@@ -2,6 +2,7 @@
 
 #include "apo/ruleBook.h"
 #include "apo/ml.h"
+#include "apo/timers.h"
 
 #include <iomanip>
 #include <iostream>
@@ -316,7 +317,7 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
   assert(0 <= startSlice && endSlice <= progVec.size());
   const int numSamples = endSlice - startSlice;
 
-  clock_t searchStart = clock();
+  double searchStart = get_wall_time();
   // const int numSamples = progVec.size();
 
 #define IF_DEBUG_DER if (false)
@@ -328,16 +329,16 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
   // pre-compute initial program distribution
   ResultDistVec initialProgDist(numSamples);
   Task handle = model.infer_dist(initialProgDist, roundProgs, 0, numSamples, inferTower);
-  clock_t joinStart = clock();
+  double joinStart = get_wall_time();
   handle.join();
-  clock_t joinEnd = clock();
-  clock_t initialJoinTime = joinEnd - joinStart;
+  double joinEnd = get_wall_time();
+  double initialJoinTime = joinEnd - joinStart;
 
   // pre-compute maximal derivation distance
   int commonMaxDist = 0;
   for (int j = startSlice ; j < endSlice; ++j) commonMaxDist = std::max(commonMaxDist, maxDistVec[j]);
 
-  clock_t inferStallTotal = 0;
+  double inferStallTotal = 0;
 
   // number of derivation walks
   for (int r = 0;
@@ -364,9 +365,9 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
                 modelRewriteDist, roundProgs, startIdx,
                 endIdx, inferTower); // TODO also pipeline with the derivation loop
           }
-          clock_t joinStart = clock();
+          double joinStart = get_wall_time();
           inferThread.join(); // join with last inference thread
-          clock_t joinEnd = clock();
+          double joinEnd = get_wall_time();
           inferStallTotal += joinEnd - joinStart;
 
           if (endIdx < nextEndIdx) { // there is a batch coming after this one
@@ -488,12 +489,12 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
     }
   }
 
-  clock_t searchEnd = clock();
+  double searchEnd = get_wall_time();
 
   if (oPerfStats) {
-    double searchSecs = (searchEnd - searchStart) / (double) CLOCKS_PER_SEC;
-    double initialStallSecs = initialJoinTime / (double) CLOCKS_PER_SEC;
-    double inferStallSecs = inferStallTotal / (double) CLOCKS_PER_SEC;
+    double searchSecs = (searchEnd - searchStart);
+    double initialStallSecs = initialJoinTime;
+    double inferStallSecs = inferStallTotal;
     *oPerfStats = SearchPerfStats{progVec.size(), searchSecs, initialStallSecs, inferStallSecs};
   }
 

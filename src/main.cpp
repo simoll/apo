@@ -4,9 +4,10 @@
 #include "apo/program.h"
 #include "apo/score.h"
 
+#include "apo/timers.h"
+
 #include <iostream>
 #include <sstream>
-#include <ctime>
 #include <iomanip>
 #include <fstream>
 
@@ -78,14 +79,14 @@ int main(int argc, char ** argv) {
     // optimize
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
-    clock_t startOpt = clock();
+    double startOpt = get_wall_time();
     apo.optimize(progVec, APO::Strategy::Random, stepLimit);
-    clock_t endOpt = clock();
+    double endOpt = get_wall_time();
 
     // optimized prog.
     // P->dump();
     // auto endScore = GetProgramScore(*P);
-    double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
+    double optTime = (endOpt - startOpt);
 
     std::cerr << "Opt time= " << optTime << "s\n";
     //  std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
@@ -122,9 +123,9 @@ int main(int argc, char ** argv) {
     // optimize
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
-    clock_t startOpt = clock();
+    double startOpt = get_wall_time();
     apo.optimize(progVec, APO::Strategy::Greedy, stepLimit);
-    clock_t endOpt = clock();
+    double endOpt = get_wall_time();
 
     // optimized prog.
     P->dump();

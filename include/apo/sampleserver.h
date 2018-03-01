@@ -4,6 +4,8 @@
 #include <condition_variable>
 #include <random>
 
+#include "apo/timers.h"
+
 namespace apo {
 
 struct
@@ -71,35 +73,35 @@ SampleServer {
     int numSeenBeforeDer; // amount of improved results in ::submitDerivation
 
   // search thread statistics
-    clock_t derTotalTime;
-    clock_t sampleTotalTime;
-    clock_t replayTotalTime;
-    clock_t generateMoveTotalTime;
+    double derTotalTime;
+    double sampleTotalTime;
+    double replayTotalTime;
+    double generateMoveTotalTime;
 
-    void addPull(clock_t stallTime) {
+    void addPull(double stallTime) {
       ++numQueuePull;
       numWaitlessPull += (stallTime == 0);
       totalStallPull += stallTime;
     }
 
-    void addPush(clock_t stallTime) {
+    void addPush(double stallTime) {
       ++numQueuePush;
       numWaitlessPush += (stallTime == 0);
       totalStallPush += stallTime;
     }
 
-    double getPushStall() const { return numQueuePush > 0 ? ((totalStallPush / (double) numQueuePush) / CLOCKS_PER_SEC) : 0; }
-    double getPullStall() const { return numQueuePull> 0 ? ((totalStallPull / (double) numQueuePull) / CLOCKS_PER_SEC) : 0; }
+    double getPushStall() const { return numQueuePush > 0 ? (totalStallPush / (double) numQueuePush) : 0; }
+    double getPullStall() const { return numQueuePull> 0 ? (totalStallPull / (double) numQueuePull) : 0; }
 
     double getWaitlessPullRatio() const { return numQueuePull > 0 ? (numWaitlessPull / (double) numQueuePull) : 1.0; }
     double getWaitlessPushRatio() const { return numQueuePush > 0 ? (numWaitlessPush / (double) numQueuePush) : 1.0; }
 
     double getCacheHitRate() const { return numCacheQueries > 0 ?  (numCacheHits / (double) numCacheQueries) : 1; }
 
-    double getAvgGenerateMoveTime() const { return numSearchRounds > 0 ? ((generateMoveTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
-    double getAvgDerTime() const { return numSearchRounds > 0 ? ((derTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
-    double getAvgSampleTime() const { return numSearchRounds > 0 ? ((sampleTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
-    double getAvgReplaySampleTime() const { return numSearchRounds > 0 ? ((replayTotalTime / (double) numSearchRounds) / CLOCKS_PER_SEC) : 0; }
+    double getAvgGenerateMoveTime() const { return numSearchRounds > 0 ? (generateMoveTotalTime / (double) numSearchRounds) : 0; }
+    double getAvgDerTime() const { return numSearchRounds > 0 ? (derTotalTime / (double) numSearchRounds) : 0; }
+    double getAvgSampleTime() const { return numSearchRounds > 0 ? (sampleTotalTime / (double) numSearchRounds) : 0; }
+    double getAvgReplaySampleTime() const { return numSearchRounds > 0 ? (replayTotalTime / (double) numSearchRounds) : 0; }
 
     std::ostream&
     print(std::ostream & out) const {
@@ -142,7 +144,7 @@ SampleServer {
   mutable ServerStats serverStats;
 
   void
-  addSearchRoundStats(clock_t deltaGenerateMove, clock_t deltaDer, clock_t deltaSampleActions, clock_t deltaReplay, size_t numDerivations, double pModel) {
+  addSearchRoundStats(double deltaGenerateMove, double deltaDer, double deltaSampleActions, double deltaReplay, size_t numDerivations, double pModel) {
     std::unique_lock<std::mutex> lock(queueMutex);
     serverStats.numSearchRounds++;
     serverStats.generateMoveTotalTime += deltaGenerateMove;
@@ -185,11 +187,11 @@ SampleServer {
       std::unique_lock<std::mutex> queueLock(queueMutex);
 
       // wait until slots in the training queue become available
-      clock_t stallTime = 0;
+      double stallTime = 0;
       if (trainingQueue.size() > queueLimit) {
-        clock_t startStallPush = clock();
+        double startStallPush = get_wall_time();
         producerCV.wait(queueLock, [this](){ return trainingQueue.size() < queueLimit; });
-        clock_t endStallPush = clock();
+        double endStallPush = get_wall_time();
         stallTime = (endStallPush - startStallPush);
       }
       serverStats.addPush(stallTime);
@@ -301,11 +303,11 @@ SampleServer {
       const int numNeeded = endIdx - startIdx;
       assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
 
-      clock_t stallTime = 0;
+      double stallTime = 0;
       if (trainingQueue.size() < numNeeded) {
-        clock_t startStallPull = clock();
+        double startStallPull = get_wall_time();
         consumerCV.wait(queueLock, [this, numNeeded]() { return trainingQueue.size() >= numNeeded; });
-        clock_t endStallPull = clock();
+        double endStallPull = get_wall_time();
         stallTime = (endStallPull - startStallPull);
       }
       serverStats.addPull(stallTime);
