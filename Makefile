@@ -4,6 +4,10 @@ HEADERS=$(wildcard include/apo/*.h) $(wildcard include/apo/*/*.h)
 
 include make.conf
 
+ifndef PYTHON
+  $(error PYTHON is not set: path to python binary (to match TFLOW site-package))
+endif
+
 ifndef TFLOW
   $(error TFLOW is not set: path to Tensorflow site-package)
 endif
@@ -25,6 +29,7 @@ LIBS=-ltensorflow_cc \
 LIBPATH=-L${TFLOW}
 
 
+$(info apo: Using Python at ${PYTHON})
 $(info apo: Using tensorflow installation at ${TFLOW})
 
 # enable TensorFlow on the GPU
