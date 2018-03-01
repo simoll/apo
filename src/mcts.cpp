@@ -256,44 +256,53 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
 {
   if (pRandom < 1.0) {
     // model driven queries
+    assert(!devices.empty() && "no infer device available!");
 
-    // compute STOP derivation
+    // compute common STOP derivation
     std::vector<Derivation> initialStates;
     for (int i = 0; i < progVec.size(); ++i) {
       initialStates.emplace_back(*progVec[i]);
     }
 
-    // run optimization rounds
-    if (devices.size() > 1) {
-      std::vector<DerivationVec> deviceStates;
-      deviceStates.resize(devices.size());
+    // distribute load onto devices
+    if (devices.size() >= 2) {
+      std::vector<DerivationVec> deviceStates(devices.size(), initialStates);
 
-      #pragma omp parallel for
+      // there is a nested OpenMP loop in _ModelDriven. this is a poor mans parallel (outer) loop
+      std::vector<std::thread> threads;
+      threads.reserve(devices.size());
+
       for (int i = 0; i < devices.size(); ++i) {
-        const auto & dev = devices[i];
+        threads.push_back(std::thread([this, i, &devices, &deviceStates, &progVec, &maxStepsVec, numOptRounds, pRandom, allowFallback, oStats]{ // poor mans OpenMP
+          const auto & dev = devices[i];
 
-        int startRounds = (int) floor(dev.relStart * numOptRounds);
-        int endRounds = (i + 1 == devices.size()) ? numOptRounds :  (int) floor((dev.relStart + dev.relRating) * numOptRounds);
-        // std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
+          int startRounds = (int) floor(dev.relStart * numOptRounds);
+          int endRounds = (i + 1 == devices.size()) ? numOptRounds :  (int) floor((dev.relStart + dev.relRating) * numOptRounds);
+          // std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
+          int numRounds = endRounds - startRounds;
 
-        // model-driven search
-        DerivationVec states = initialStates;
-        for (int j = startRounds; j < endRounds; ++j) {
-          searchDerivations_ModelDriven(states, 0, progVec.size(), progVec, pRandom, maxStepsVec, endRounds - startRounds, allowFallback, dev.tower, oStats);
-        }
-
-        // submit
-        deviceStates[i] = states;
+          // model-driven search
+          searchDerivations_ModelDriven(deviceStates[i], 0, progVec.size(), progVec, pRandom, maxStepsVec, numRounds, allowFallback, dev.tower, oStats);
+        }));
       }
 
-      // join results
-      DerivationVec bestDer = deviceStates[0];
-      for (int i = 1; i < deviceStates.size(); ++i) {
-        bestDer = FilterBest(bestDer, deviceStates[i]);
+      // synchronize and reduce(bestDer:FilterBest)
+      DerivationVec bestDer;
+      for (int i = 0; i < threads.size(); ++i) {
+        auto & thread = threads[i];
+
+        // wait for results
+        thread.join(); 
+
+        if (i == 0) bestDer = deviceStates[0];
+        else bestDer = FilterBest(bestDer, deviceStates[i]);
       }
+      assert(bestDer.size() == progVec.size());
 
       return bestDer;
+
     } else {
+      // single device implementation
       assert(!devices.empty());
       searchDerivations_ModelDriven(initialStates, 0, progVec.size(), progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, devices[0].tower, oStats);
       return initialStates;
@@ -386,7 +395,8 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
 
 #pragma omp parallel for \
             reduction(+ : frozen) \
-            shared(maxDistVec, roundProgs, modelRewriteDist,states)
+            shared(maxDistVec, roundProgs, modelRewriteDist,states) \
+            num_threads(4)
         for (int t = startIdx; t < endIdx; ++t) {
           // self inflicted timeout
           if (derStep >= maxDistVec[t]) {
