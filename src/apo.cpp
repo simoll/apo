@@ -31,7 +31,10 @@ APO::Job::Job(const std::string taskFile, const std::string _cpPrefix)
       "name"); // 3; // minimal progrm stub len (excluding params and return)
 
   numSamples = task.get_or_fail<int>("numSamples"); // number of batch programs
-  assert(numSamples > 0);
+  if (numSamples <= 0) {
+    std::cerr << "Invalid numSamples " << numSamples << "\n";
+    abort();
+  }
   minStubLen = task.get_or_fail<int>("minStubLen"); // minimal stub len
   maxStubLen = task.get_or_fail<int>("maxStubLen"); // maximal stub len (exluding params and return)
   minMutations = task.get_or_fail<int>( "minMutations"); // minimal number of mutations
@@ -115,9 +118,26 @@ void APO::generatePrograms(ProgramVec &progVec, IntVec & maxDerVec, const Job & 
 
 
 
-void APO::train(const Job & task) {
+void
+APO::train(const Job & task) {
 // set-up training server
   SampleServer server("server.conf");
+
+// validate configuration
+  if (task.numSamples % modelConfig.train_batch_size != 0) {
+    std::cerr << "Task sample size " << task.numSamples << " does not match model train_batch_size " << modelConfig.train_batch_size << "!\n";
+    abort();
+  }
+
+  if (devices.getDevices("infer").empty()) {
+    std::cerr << "no infer device specified in (devices.conf\n";
+    abort();
+  }
+
+  if (devices.getDevices("train").empty()) {
+    std::cerr << "no train device specified in devices.conf\n";
+    abort();
+  }
 
 // evaluation dataset
   const int numEvalSamples = 1000; //modelConfig.infer_batch_size; //std::min<int>(1000, modelConfig.train_batch_size * 32);
