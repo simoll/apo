@@ -15,6 +15,9 @@ ModelConfig::ModelConfig(const std::string & configFile) {
   num_Params = confParser.get_or_fail<int>("num_Params");
   max_Rules = confParser.get_or_fail<int>("max_Rules");
   max_OpCodes = confParser.get_or_fail<int>("max_OpCodes");
+
+  // loss configuration
+  self_organizing = confParser.get_or_fail<int>("self_organizing");
 }
 
 std::ostream &
@@ -25,7 +28,8 @@ ModelConfig::print(std::ostream & out) const {
                << ", batch_train_steps=" << batch_train_steps
                << ", prog_length=" << prog_length
                << ", max_Rules=" << max_Rules
-               << ", num_Params=" << num_Params << ").";
+               << ", num_Params=" << num_Params
+               << ", self_organizing+" << self_organizing << ").";
   return out;
 }
 

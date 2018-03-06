@@ -618,7 +618,6 @@ void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const Deri
 
   // activate all positions with best rewrites
   bool noBestDerivation = true;
-#ifdef APO_SYMMETRIC_LOSS
   // learn all equivalent moves (in terms of dist)
   for (int i = startIdx; i < rewrites.size() && (rewrites[i].first == progIdx);
        ++i) {
@@ -633,25 +632,6 @@ void MonteCarloOptimizer::encodeBestDerivation(ResultDist &refResult, const Deri
     IF_DEBUG_MC { std::cerr << "\t found at rewIdx=" << i << ", actionId= " << actionId << " : "; rew.print(std::cerr) << "\n"; }
     // assert(ruleEnumId < refResult.ruleDist.size());
   }
-#else
-  // only learn move with the lowest actionId (symmetry breaking)
-  int minActionId = std::numeric_limits<int>::max();
-  for (int i = startIdx; i < rewrites.size() && (rewrites[i].first == progIdx);
-       ++i) {
-    if (derivations[i] != bestDer) {
-      continue;
-    }
-    noBestDerivation = false;
-    const auto &rew = rewrites[i].second;
-    // assert(rew.pc < refResult.targetDist.size());
-    int actionId = ruleBook.toActionID(rew);
-    minActionId = std::min<int>(minActionId, actionId);
-    IF_DEBUG_MC { std::cerr << "\t found at rewIdx=" << i << ", actionId= " << actionId << " : "; rew.print(std::cerr) << "\n"; }
-    // assert(ruleEnumId < refResult.ruleDist.size());
-  }
-
-  refResult.actionDist[minActionId] = 1.0;
-#endif
 
   assert(!noBestDerivation);
 }

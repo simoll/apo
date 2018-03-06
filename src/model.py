@@ -47,6 +47,8 @@ num_hidden_layers = int(conf["num_hidden_layers"]) #6
 # decoder layers (state wraparound)
 num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
+#
+use_so_loss = bool(conf["self_organizing"])
 # cell_type
 cell_type= conf["cell_type"].strip()
 print("Model (construct). num_OpCodes={}, prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(num_OpCodes, prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
@@ -317,8 +319,8 @@ with tf.Session() as sess:
 
       ## predictions ##
       # distributions
-      tf.nn.sigmoid(action_logits,name="pred_action_dist")
-      tf.nn.sigmoid(target_logits,name="pred_target_dist")
+      pred_action_dist = tf.nn.sigmoid(action_logits,name="pred_action_dist")
+      pred_target_dist = tf.nn.sigmoid(target_logits,name="pred_target_dist")
 
       ### reference input & training ###
       # reference input #
@@ -331,21 +333,74 @@ with tf.Session() as sess:
       stop_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=stop_in, logits=stop_logits) # []
 
       num_action_elems = prog_length * max_Rules
-      per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
-      action_loss = tf.reduce_mean(per_action_loss, axis=1)
+      if not use_so_loss:
+        print("Using avg. sigmoid loss.")
+        # AlphaZero style: difference to reference distribution
+        per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
+        action_loss = tf.reduce_mean(per_action_loss, axis=1)
 
-      target_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=target_in, logits=target_logits), axis=1) # [batch_size]
+        target_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=target_in, logits=target_logits), axis=1) # [batch_size]
 
-      # cummulative action loss
-      move_losses = action_loss + target_loss 
+        # cummulative action loss
+        move_losses = action_loss + target_loss 
 
-      # conditional loss (only penalize rule/target if !stop_in)
-      loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
-      tf.identity(loss, "loss")
+        # conditional loss (only penalize rule/target if !stop_in)
+        loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
+        tf.identity(loss, "loss")
 
-      mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
-      mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss")
-      mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
+        # mean losses (for reporting only)
+        mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
+        mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss")
+        mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
+
+      else:
+        print("Using self-organizing loss.")
+
+        maskWeight = 1.0
+        unmaskedWeight = 1.0
+
+        print("maskW = {}, unmaskedW = {}".format(maskWeight, unmaskedWeight))
+
+        # convert reference distributions to masks (1.0 if > 0.0 else 0.0)
+        action_mask = tf.where(action_in > 0.0001, tf.ones_like(action_in), tf.zeros_like(action_in))
+        target_mask = tf.where(target_in > 0.0001, tf.ones_like(target_in), tf.zeros_like(target_in))
+
+
+        #### target loss ###
+        masked_target_dist = target_mask * pred_target_dist
+        unmasked_target_dist = (1 - target_mask) * pred_target_dist
+
+        masked_target_sum = tf.reduce_sum(masked_target_dist, axis=1) # [batch_size]
+        unmasked_target_sum = tf.reduce_sum(unmasked_target_dist, axis=1) # [batch_size]
+
+        masked_target_loss = (masked_target_sum - 1) # require valid target to add up to 1.0 (distribution)
+        unmasked_target_loss = unmasked_target_sum # drive down invalid targets to 0
+        target_loss = tf.nn.l2_loss((1 - stop_in) * masked_target_loss) * maskWeight \
+                    + tf.nn.l2_loss((1 - stop_in) * unmasked_target_loss) * unmaskedWeight
+        print(target_loss)
+
+
+        ### action loss ###
+        masked_action_dist = action_mask * pred_action_dist
+        unmasked_action_dist = (1 - action_mask) * pred_action_dist
+
+        masked_action_sum = tf.reduce_sum(masked_action_dist, axis=2) # [batch_size x prog_lemgth]
+        unmasked_action_sum = tf.reduce_sum(unmasked_action_dist, axis=2) # [batch_size x prog_length]
+
+        masked_action_loss = (masked_action_sum - 1) # [batch_size x prog_length]
+        unmasked_action_loss = unmasked_action_sum # [batch_size x prog_length]
+        action_loss = tf.nn.l2_loss((1 - stop_in) * masked_action_loss) * maskWeight \
+                    + tf.nn.l2_loss((1 - stop_in) * unmasked_action_loss) * unmaskedWeight
+
+        print(action_loss)
+
+        loss = tf.nn.l2_loss(target_loss + action_loss)
+        tf.identity(loss, "loss")
+
+        # mean losses
+        mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
+        mean_action_loss = tf.identity(action_loss, name="mean_action_loss")
+        mean_target_loss = tf.identity(target_loss, name="mean_target_loss")
 
       # return action handles
       return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
