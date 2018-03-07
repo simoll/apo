@@ -34,6 +34,10 @@ struct ResultDist {
   , actionDist(numTargets * numRules, 0.0)
   {}
 
+  float& pAction(int i) { return actionDist[i]; }
+  float pAction(int i) const { return actionDist[i]; }
+  size_t size() const { return actionDist.size(); }
+
   void normalize();
   void print(std::ostream & out) const;
   void dump() const;
@@ -95,11 +99,13 @@ public:
     std::ostream& print(std::ostream & out) const;
   };
 
+  ATTR_WARN_UNUSED
   Task train_dist(const ProgramVec& progs, const ResultDistVec& results, std::string towerName, Losses * oLoss);
 
   Statistics query_stats();
 
   // distribution over selections
+  ATTR_WARN_UNUSED
   Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName);
 
   // returns a plain STOP result

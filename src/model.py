@@ -333,7 +333,7 @@ with tf.Session() as sess:
       stop_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=stop_in, logits=stop_logits) # []
 
       num_action_elems = prog_length * max_Rules
-      if not use_so_loss:
+      if True: # FIXME handled in apo host code (not use_so_loss):
         print("Using avg. sigmoid loss.")
         # AlphaZero style: difference to reference distribution
         per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]

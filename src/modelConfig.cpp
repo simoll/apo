@@ -29,7 +29,7 @@ ModelConfig::print(std::ostream & out) const {
                << ", prog_length=" << prog_length
                << ", max_Rules=" << max_Rules
                << ", num_Params=" << num_Params
-               << ", self_organizing+" << self_organizing << ").";
+               << ", self_organizing=" << self_organizing << ").";
   return out;
 }
 
