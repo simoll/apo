@@ -20,7 +20,7 @@ struct ModelConfig {
   // loss configuration
   bool self_organizing;
 
-  ModelConfig(const std::string & configFile);
+  ModelConfig(const std::string & configFile, const std::string & trainFile);
   std::ostream & print(std::ostream & out) const;
   void dump() const { print(std::cerr); }
 };

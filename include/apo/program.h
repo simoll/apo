@@ -480,6 +480,32 @@ struct Program {
     }
   }
 
+  // eliminate dead code
+  void dce() {
+    if (size() < 2) return; // nothing to to here
+
+    int minUnusedPc = size();
+
+    std::vector<bool> used(size(), false); // return statement is intrinsically used
+    used[size() - 1] = true;
+    for (int pc = size() - 1; pc >= 0; --pc) {
+      const auto & stat = code[pc];
+      if (!used[pc]) {
+        code[pc].oc = OpCode::Nop; // erase operation
+        minUnusedPc = std::min<int>(pc, minUnusedPc);
+        continue;
+      }
+
+      for (int o = 0; o < stat.num_Operands(); ++o) {
+        int op = stat.getOperand(o);
+        if (!IsStatement(op)) continue; // arg use
+        used[pc] = true;
+      }
+    }
+
+    compact();
+  }
+
   Statement & operator()(int pc) { return code[pc]; }
   const Statement & operator()(int pc) const { return code[pc]; }
 

@@ -69,7 +69,7 @@ APO::Job::Job(const std::string taskFile, const std::string _cpPrefix)
 }
 // number of simulation batches
 APO::APO()
-    : modelConfig("model.conf")
+    : modelConfig("model.conf", "train.conf")
     , devices("devices.conf")
     , rewritePairs(BuildRewritePairs())
     , ruleBook(modelConfig, rewritePairs)

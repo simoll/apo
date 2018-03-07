@@ -17,6 +17,7 @@ CreateRandomOpCodeDist() {
 
   CatDist dist((int) OpCode::End_OpCode + 1, 0.0);
 #ifdef APO_ONLY_ADD
+#warning "only emitting ADDS!!!"
   dist[(int) OpCode::Add] = 1.0;
 #else
 
