@@ -16,6 +16,9 @@ CreateRandomOpCodeDist() {
   const double exponent = 6; // increase to get closer to hard on/off behavior
 
   CatDist dist((int) OpCode::End_OpCode + 1, 0.0);
+#ifdef APO_ONLY_ADD
+  dist[(int) OpCode::Add] = 1.0;
+#else
 
   for (int i = 0; i < dist.size(); ++i) {
     dist[i] = smoothing + pow(drawUnitRand(), exponent);
@@ -26,8 +29,10 @@ CreateRandomOpCodeDist() {
   dist[(int) OpCode::Pipe] = 0.0;
   dist[(int) OpCode::Return] = 0.0;
   dist[(int) OpCode::Constant] = 0.0;
+#endif
 
   Normalize(dist);
+
   return dist;
 }
 
