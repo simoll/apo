@@ -202,6 +202,9 @@ struct RPG {
       }
     }
 
+    // don't emit dead code right away
+    P.dce();
+
     // DEBUG
     if (getenv("DUMP_PROGS")) P.dump();
 
@@ -254,6 +257,9 @@ struct RPG {
         abort();
       }
     }
+
+    // don't emit dead code right away
+    P.dce();
 
     // DEBUG
     if (getenv("DUMP_PROGS")) P.dump();
