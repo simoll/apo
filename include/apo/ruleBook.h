@@ -42,8 +42,8 @@ enum class BuiltinRules : int {
   Clone = 2, // clone operation for all pipe-users
   Fuse = 3, // fuse with other instructions (erases all pipe annotated operations that yield the same result)
   Evaluate = 4, // evaluate instruction and replace with constant
-  Erase = 5, // remove instruction if unused
-  Num = 6, // number of extra rules
+  Num = 5, // number of extra rules
+  Erase = 5, // (DISENGAGED SINCE DCE runs automatically) remove instruction if unused
   Invalid = -1, // error token
 };
 
@@ -380,9 +380,11 @@ struct RuleBook {
             }
           }
 
+          // run cleanup
+          P.dce();
 
           // erase nops
-          P.compact(minPc + 1);
+          // P.compact(minPc + 1);
         } return;
 
         case BuiltinRules::Evaluate: {

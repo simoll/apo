@@ -481,7 +481,7 @@ struct Program {
   }
 
   // eliminate dead code
-  void dce() {
+  void dce(int startPc=0) {
     if (size() < 2) return; // nothing to to here
 
     // std::cerr << "DCE\n";
@@ -509,7 +509,7 @@ struct Program {
       }
     }
 
-    compact();
+    compact(minUnusedPc);
   }
 
   Statement & operator()(int pc) { return code[pc]; }
