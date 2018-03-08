@@ -443,6 +443,9 @@ APO::train(const Job & task) {
       DerivationVec refDerVec;
       double pModel = 0.0;
       if (totalSearchRounds > task.reinStartRound) {
+#warning "auto consistency reinforcement"
+        // reinforcement learning
+#if 0
         // reinforcement ratio
         double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
         pModel = task.reinStartRatio + (task.reinEndRatio - task.reinStartRatio) * reinScale;
@@ -451,7 +454,23 @@ APO::train(const Job & task) {
         // SearchPerfStats searchStats;
         const int modelRounds = task.reinSamples;
         refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, inferDevices, nullptr); // &searchStats);
+#endif
+
         // searchStats.dump();
+        // greedy results
+        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices[0].tower);
+        refDerVec = greedyRes.bestVec; // aggressive auto-consistency
+
+#if 0
+        // random search
+        {
+          std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
+          refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, inferDevices);
+        }
+
+        // assume best solution
+        refDerVec = FilterBest(refDerVec, greedyRes.bestVec);
+#endif
 
       } else {
         // random search
