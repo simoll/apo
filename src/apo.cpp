@@ -556,10 +556,16 @@ APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
   const auto & inferDevices = devices.getDevices("infer");
 
   switch (optStrat) {
-  case Strategy::Greedy: {
-    assert(optStrat == Strategy::Greedy);
+  case Strategy::BestGreedy: // best program along greedy derivation trace
+  case Strategy::Greedy: { // program for which the net signalled STOP
     IntVec maxDistVec(progVec.size(), stepLimit);
-    montOpt.greedyOptimization(progVec, maxDistVec, inferDevices[0].tower);
+    ProgramVec bestVec(1), stopVec(1);
+    montOpt.greedyOptimization(bestVec, stopVec, progVec, maxDistVec, inferDevices[0].tower);
+    if (optStrat == Strategy::BestGreedy) {
+      progVec = bestVec;
+    } else {
+      progVec = stopVec;
+    }
   } return;
   case Strategy::Random: {
     // TODO provide actual implementation

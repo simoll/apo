@@ -139,7 +139,7 @@ struct MonteCarloOptimizer {
   greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, std::string towerName);
 
   // optimize the progarms in @progVec greedily
-  void greedyOptimization(ProgramVec & progVec, const IntVec & maxDistVec, std::string towerName);
+  void greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, std::string towerName);
 
   // random trajectory based model (or uniform dist) sampling
   DerivationVec

@@ -120,9 +120,16 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 }
 
 void
-MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & maxStepsVec, std::string inferTower) {
+MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxStepsVec, std::string inferTower) {
   int frozen = 0; // amount of programs that have stopped derivation
   std::vector<char> alreadyStopped(progVec.size(), false);
+
+  // compute initial score
+  std::vector<int> bestScore;
+  for (int i = 0; i < progVec.size(); ++i) {
+    bestScore.push_back(GetProgramScore(*progVec[i]));
+    oBestVec[i].reset(new Program(*progVec[i]));
+  }
 
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
   for (int derStep = 0; frozen < progVec.size(); ++derStep) {
@@ -135,7 +142,6 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & max
         reduction(+ : frozen) \
         shared(actionDistVec,alreadyStopped,progVec,maxStepsVec)
     for (int t = 0; t < progVec.size(); ++t) { // for all programs
-      if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
 
     // act (transform or STOP)
       Action rew;
@@ -151,9 +157,21 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & progVec, const IntVec & max
           derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
       );
 
-    // stop derivating this program
+    // update best seen program on this derivation
+      int curScore = GetProgramScore(*progVec[t]);
+      if (curScore < bestScore[t]) {
+        oBestVec[t].reset(new Program(*progVec[t]));
+        bestScore[t] = curScore;
+      }
+
+    // signalled STOP (or last reached program)
       if (stopDerivation || signalsStop) {
+        oStopVec[t].reset(new Program(*progVec[t])); // remember stopped program
         alreadyStopped[t] = true;
+      }
+
+   // last derivation (freeze state)
+      if (stopDerivation) {
         ++frozen; continue;
       }
     }

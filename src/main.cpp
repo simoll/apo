@@ -124,11 +124,15 @@ int main(int argc, char ** argv) {
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
     double startOpt = get_wall_time();
-    apo.optimize(progVec, APO::Strategy::Greedy, stepLimit);
+    apo.optimize(progVec, APO::Strategy::BestGreedy, stepLimit);
     double endOpt = get_wall_time();
 
     // optimized prog.
     P->dump();
+    P->dce();
+    std::cerr << "after DCE:\n";
+    P->dump();
+
     auto endScore = GetProgramScore(*P);
     double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
 
