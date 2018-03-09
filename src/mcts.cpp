@@ -210,7 +210,7 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
   const int numJobs = endId - startId;
 
   for (int i = startId; i < endId; ++i) {
-    auto startDer = Derivation(*progVec[startId + i]);
+    auto startDer = Derivation(*progVec[i]);
     bestStates[i] = startDer; // do't-move-baseline (in case derivation are awful)
     stopStates[i] = startDer; // baseline (if maxStepsVec[t] is zero, will be overritten once by first @signalsStop
   }
@@ -218,7 +218,6 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
   int frozen = 0; // amount of programs that have stopped derivation
   std::vector<char> alreadyStopped(numJobs, false);
   assert(bestStates.size() == stopStates.size());
-  assert(bestStates.size() == alreadyStopped.size());
 
 
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
