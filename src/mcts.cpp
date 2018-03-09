@@ -120,53 +120,61 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 }
 
 void
-MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxStepsVec, std::string inferTower) {
+MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
+  const int numJobs = endId - startId;
+
+  if (endId <= startId) return;
+
   int frozen = 0; // amount of programs that have stopped derivation
-  std::vector<char> alreadyStopped(progVec.size(), false);
+  std::vector<char> alreadyStopped(numJobs, false);
 
   // compute initial score
   std::vector<int> bestScore;
-  for (int i = 0; i < progVec.size(); ++i) {
+  for (int i = startId; i < endId; ++i) {
     bestScore.push_back(GetProgramScore(*progVec[i]));
     oBestVec[i].reset(new Program(*progVec[i]));
   }
 
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
-  for (int derStep = 0; frozen < progVec.size(); ++derStep) {
+  for (int derStep = 0; frozen < numJobs; ++derStep) {
 
     // query action distribution
-    ResultDistVec actionDistVec(progVec.size());
-    model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
+    ResultDistVec actionDistVec(numJobs);
+    model.infer_dist(actionDistVec, progVec, startId, endId, inferTower).join();
 
+    // TODO (fetch CPU lock?)
 #pragma omp parallel for \
         reduction(+ : frozen) \
         shared(actionDistVec,alreadyStopped,progVec,maxStepsVec)
-    for (int t = 0; t < progVec.size(); ++t) { // for all programs
+    for (int t = 0; t < numJobs; ++t) { // for all programs
+
+      const int progId = startId + t;
 
     // act (transform or STOP)
       Action rew;
       bool signalsStop = false;
-      greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
+      greedyApplyModel(*progVec[progId], rew, actionDistVec[progId], signalsStop);
 
       // shall we stop after this action?
-      bool stopDerivation = (derStep + 1) >= maxStepsVec[t] || // last derivation round (time out)
-                            (progVec[t]->size() > model.config.prog_length); // in excess of maximal supported program length
+      bool stopDerivation = (derStep + 1) >= maxStepsVec[progId] || // last derivation round (time out)
+                            (progVec[progId]->size() > model.config.prog_length); // in excess of maximal supported program length
+
+      int curScore = GetProgramScore(*progVec[progId]);
 
       Derivation currState(
-          GetProgramScore(*progVec[t]), // program after greedy action/STOP
+          curScore, // program after greedy action/STOP
           derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
       );
 
     // update best seen program on this derivation
-      int curScore = GetProgramScore(*progVec[t]);
-      if (curScore < bestScore[t]) {
-        oBestVec[t].reset(new Program(*progVec[t]));
-        bestScore[t] = curScore;
+      if (curScore < bestScore[progId]) {
+        oBestVec[progId].reset(new Program(*progVec[progId]));
+        bestScore[progId] = curScore;
       }
 
     // signalled STOP (or last reached program)
       if (stopDerivation || signalsStop) {
-        oStopVec[t].reset(new Program(*progVec[t])); // remember stopped program
+        oStopVec[progId].reset(new Program(*progVec[progId])); // remember stopped program
         alreadyStopped[t] = true;
       }
 
@@ -182,55 +190,68 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
 // bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const IntVec & maxStepsVec, std::string inferTower) {
+                                      const IntVec & maxStepsVec, const DeviceVec & devices) {
   ProgramVec progVec = Clone(origProgVec);
+  GreedyResult res(progVec.size());
 
-  DerivationVec stopStates;
-  stopStates.reserve(progVec.size());
+  Distribute(devices, progVec.size(),
+      [this, &res, &progVec, &devices, &maxStepsVec](int devId, int startId, int endId) {
+        greedyDerivation(res.bestVec, res.greedyVec, progVec, maxStepsVec, startId, endId, devices[devId].tower);
+      }
+  );
 
-  DerivationVec bestStates;
-  bestStates.reserve(progVec.size());
-  for (int t = 0; t < progVec.size(); ++t) {
-    auto startDer = Derivation(*progVec[t]);
-    bestStates.push_back(startDer); // do't-move-baseline (in case derivation are awful)
-    stopStates.push_back(startDer); // baseline (if maxStepsVec[t] is zero, will be overritten once by first @signalsStop
+  return res;
+}
+
+void
+MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec & stopStates, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
+  if (endId <= startId) return;
+
+  const int numJobs = endId - startId;
+
+  for (int i = startId; i < endId; ++i) {
+    auto startDer = Derivation(*progVec[startId + i]);
+    bestStates[i] = startDer; // do't-move-baseline (in case derivation are awful)
+    stopStates[i] = startDer; // baseline (if maxStepsVec[t] is zero, will be overritten once by first @signalsStop
   }
 
   int frozen = 0; // amount of programs that have stopped derivation
-  std::vector<char> alreadyStopped(progVec.size(), false);
+  std::vector<char> alreadyStopped(numJobs, false);
   assert(bestStates.size() == stopStates.size());
   assert(bestStates.size() == alreadyStopped.size());
 
+
   // this loop keeps spinning until all threads have stopped the derivation (++frozen)
-  for (int derStep = 0; frozen < progVec.size(); ++derStep) {
+  for (int derStep = 0; frozen < numJobs; ++derStep) {
 
     // query action distribution
-    ResultDistVec actionDistVec(progVec.size());
+    ResultDistVec actionDistVec(progVec.size()); // FIXME pass iterator to infer_dist instead
     model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
 
 #pragma omp parallel for \
         reduction(+ : frozen) \
         shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
-    for (int t = 0; t < progVec.size(); ++t) { // for all programs
+    for (int t = 0; t < numJobs; ++t) { // for all programs
       if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
+      int progId = startId + t;
 
     // act (transform or STOP)
       Action rew;
       bool signalsStop = false;
-      greedyApplyModel(*progVec[t], rew, actionDistVec[t], signalsStop);
+      greedyApplyModel(*progVec[progId], rew, actionDistVec[progId], signalsStop);
 
       // shall we stop after this action?
-      bool stopDerivation = (derStep + 1) >= maxStepsVec[t] || // last derivation round (time out)
-                            (progVec[t]->size() > model.config.prog_length); // in excess of maximal supported program length
+      bool stopDerivation = (derStep + 1) >= maxStepsVec[progId] || // last derivation round (time out)
+                            (progVec[progId]->size() > model.config.prog_length); // in excess of maximal supported program length
 
       Derivation currState(
-          GetProgramScore(*progVec[t]), // program after greedy action/STOP
+          GetProgramScore(*progVec[progId]), // program after greedy action/STOP
           derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
       );
 
     // update best seen solution
       if (currState.betterThan(bestStates[t])) {
-        bestStates[t] = currState;
+        bestStates[progId] = currState;
       }
 
     // first STOP signal -> record greedyDer final state
@@ -238,7 +259,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
           (signalsStop ||  // proper STOP signal
            stopDerivation) // last round (excess of max supported program length or last derivation round)
       ) {
-        stopStates[t] = currState;
+        stopStates[progId] = currState;
       }
 
     // stop derivating this program
@@ -259,8 +280,6 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
     }
   }
 #endif
-
-  return GreedyResult{stopStates, bestStates};
 }
 
 // random trajectory based model (or uniform dist) sampling
@@ -278,52 +297,37 @@ DerivationVec MonteCarloOptimizer::searchDerivations(const ProgramVec &progVec,
 
     // compute common STOP derivation
     std::vector<Derivation> initialStates;
+    initialStates.reserve(progVec.size());
     for (int i = 0; i < progVec.size(); ++i) {
       initialStates.emplace_back(*progVec[i]);
     }
 
     // distribute load onto devices
-    if (devices.size() >= 2) {
-      std::vector<DerivationVec> deviceStates(devices.size(), initialStates);
+    std::vector<DerivationVec> deviceStates(devices.size(), initialStates);
 
-      // there is a nested OpenMP loop in _ModelDriven. this is a poor mans parallel (outer) loop
-      std::vector<std::thread> threads;
-      threads.reserve(devices.size());
+    Distribute(devices, numOptRounds,
+         [this, &devices, &deviceStates, &progVec, &maxStepsVec, numOptRounds, pRandom, allowFallback, oStats](int deviceId, int startRounds, int endRounds)
+      {
+        const auto & dev = devices[deviceId];
+        // std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
+        int numRounds = endRounds - startRounds;
 
-      for (int i = 0; i < devices.size(); ++i) {
-        threads.push_back(std::thread([this, i, &devices, &deviceStates, &progVec, &maxStepsVec, numOptRounds, pRandom, allowFallback, oStats]{ // poor mans OpenMP
-          const auto & dev = devices[i];
-
-          int startRounds = (int) floor(dev.relStart * numOptRounds);
-          int endRounds = (i + 1 == devices.size()) ? numOptRounds :  (int) floor((dev.relStart + dev.relRating) * numOptRounds);
-          // std::cerr << "Scheduling " << startRounds << " to " << endRounds << " on " << dev.tower << "\n";
-          int numRounds = endRounds - startRounds;
-
-          // model-driven search
-          searchDerivations_ModelDriven(deviceStates[i], 0, progVec.size(), progVec, pRandom, maxStepsVec, numRounds, allowFallback, dev.tower, oStats);
-        }));
+        // model-driven search
+        searchDerivations_ModelDriven(deviceStates[deviceId], 0, progVec.size(), progVec, pRandom, maxStepsVec, numRounds, allowFallback, dev.tower, oStats);
       }
+    );
 
-      // synchronize and reduce(bestDer:FilterBest)
+    if (devices.size() > 1) {
+      // reduce(bestDer:FilterBest)
       DerivationVec bestDer;
-      for (int i = 0; i < threads.size(); ++i) {
-        auto & thread = threads[i];
-
-        // wait for results
-        thread.join();
-
+      for (int i = 0; i < devices.size(); ++i) {
         if (i == 0) bestDer = deviceStates[0];
         else bestDer = FilterBest(bestDer, deviceStates[i]);
       }
       assert(bestDer.size() == progVec.size());
-
       return bestDer;
-
     } else {
-      // single device implementation
-      assert(!devices.empty());
-      searchDerivations_ModelDriven(initialStates, 0, progVec.size(), progVec, pRandom, maxStepsVec, numOptRounds, allowFallback, devices[0].tower, oStats);
-      return initialStates;
+      return deviceStates[0];
     }
 
   } else {

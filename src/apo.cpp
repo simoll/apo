@@ -288,7 +288,7 @@ APO::train(const Job & task) {
           serverStats.print(std::cerr);
 
           // evaluation statistics
-          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices[0].tower);
+          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices);
 
           std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
@@ -458,7 +458,7 @@ APO::train(const Job & task) {
 
         // searchStats.dump();
         // greedy results
-        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices[0].tower);
+        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices);
         refDerVec = greedyRes.bestVec; // aggressive auto-consistency
 
 #if 0
@@ -560,7 +560,7 @@ APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
   case Strategy::Greedy: { // program for which the net signalled STOP
     IntVec maxDistVec(progVec.size(), stepLimit);
     ProgramVec bestVec(1), stopVec(1);
-    montOpt.greedyOptimization(bestVec, stopVec, progVec, maxDistVec, inferDevices[0].tower);
+    montOpt.greedyOptimization(bestVec, stopVec, progVec, maxDistVec, 0, progVec.size(), inferDevices[0].tower);
     if (optStrat == Strategy::BestGreedy) {
       progVec = bestVec;
     } else {
