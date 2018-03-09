@@ -265,7 +265,9 @@ APO::train(const Job & task) {
       std::cerr << "\n-- Training --\n";
       size_t g; // current opt round
 
-      // double startTime = get_wall_time();
+      double startTime = get_wall_time();
+      double roundStartTime = startTime;
+
       for (g = 0; g < task.numRounds; ++g) {
 
       // total time passed between l
@@ -273,10 +275,10 @@ APO::train(const Job & task) {
     // evaluation round logic
         bool loggedRound = (g % task.logRate == 0);
         if (loggedRound) {
-          // double currTime = get_wall_time();
-          // TODO report seconds since start
+          double roundEndTime = get_wall_time();
+          double totalRoundTime = roundEndTime - roundStartTime;
 
-          std::unique_lock<std::mutex> lock(cpuMutex); // drop the lock every now and then..
+          // std::unique_lock<std::mutex> lock(cpuMutex); // drop the lock every now and then..
 
         // dump some statistics
           auto mlStats = model.query_stats();
@@ -285,10 +287,11 @@ APO::train(const Job & task) {
 
           std::cerr << ") -\n";
           auto serverStats = server.resetServerStats();
+          serverStats.avgTrainTime = totalRoundTime / task.logRate;
           serverStats.print(std::cerr);
 
           // evaluation statistics
-          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices);
+          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices, cpuMutex);
 
           std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
@@ -323,6 +326,7 @@ APO::train(const Job & task) {
             model.saveCheckpoint(ss.str());
           }
 
+          roundStartTime = get_wall_time();
         } else {
           if (g % dotStep == 0) {
             std::cerr << ".";
@@ -386,6 +390,7 @@ APO::train(const Job & task) {
 #endif
     int totalSearchRounds = 0;
 
+    double startRound = get_wall_time();
     while (keepRunning.load()) {
       totalSearchRounds++; // stats
 
@@ -458,7 +463,7 @@ APO::train(const Job & task) {
 
         // searchStats.dump();
         // greedy results
-        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices);
+        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices, cpuMutex);
         refDerVec = greedyRes.bestVec; // aggressive auto-consistency
 
 #if 0
@@ -486,8 +491,12 @@ APO::train(const Job & task) {
       // decode reference ResultDistVec from detected derivations
       ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
 
+      double endRound = get_wall_time();
+      double totalRoundTime = endRound - startRound;
+
       // submit results for training (-> trainThread)
       server.submitResults(progVec, refResults);
+      startRound = get_wall_time();
 
       double startSample = get_wall_time();
     // sample moves from the reference distribution
@@ -535,11 +544,11 @@ APO::train(const Job & task) {
       generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);
 
       // report timing stats
-      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, endReplay - startReplay, nextProgs.size(), pModel);
+      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, totalRoundTime, nextProgs.size(), pModel);
     }
   });
 
-  searchThread.detach();
+  searchThread.join();
   trainThread.join();
 
   keepRunning.store(false); // shutdown all workers

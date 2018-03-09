@@ -16,6 +16,8 @@
 #include "apo/devices.h"
 #include "apo/score.h"
 
+#include <thread>
+
 namespace apo {
 
 using IntVec = std::vector<int>;
@@ -142,11 +144,11 @@ struct MonteCarloOptimizer {
 
   // actual greedyDerivation func
   GreedyResult
-  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, const DeviceVec & devices);
+  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, const DeviceVec & devices, std::mutex & cpuMutex);
 
   // helper func to distribute onto devices (mutates progs in progVec)
   void
-  greedyDerivation(DerivationVec & oBestVec, DerivationVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName);
+  greedyDerivation(DerivationVec & oBestVec, DerivationVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName, std::mutex & cpuMutex);
 
   // optimize the progarms in @progVec greedily
   void greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName);

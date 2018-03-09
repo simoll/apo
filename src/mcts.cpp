@@ -190,13 +190,13 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
 // bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const IntVec & maxStepsVec, const DeviceVec & devices) {
+                                      const IntVec & maxStepsVec, const DeviceVec & devices, std::mutex & cpuMutex) {
   ProgramVec progVec = Clone(origProgVec);
   GreedyResult res(progVec.size());
 
   Distribute(devices, progVec.size(),
-      [this, &res, &progVec, &devices, &maxStepsVec](int devId, int startId, int endId) {
-        greedyDerivation(res.bestVec, res.greedyVec, progVec, maxStepsVec, startId, endId, devices[devId].tower);
+      [this, &res, &progVec, &devices, &maxStepsVec, &cpuMutex](int devId, int startId, int endId) {
+        greedyDerivation(res.bestVec, res.greedyVec, progVec, maxStepsVec, startId, endId, devices[devId].tower, cpuMutex);
       }
   );
 
@@ -204,7 +204,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 }
 
 void
-MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec & stopStates, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
+MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec & stopStates, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower, std::mutex & cpuMutex) {
   if (endId <= startId) return;
 
   const int numJobs = endId - startId;
@@ -227,6 +227,7 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
     ResultDistVec actionDistVec(progVec.size()); // FIXME pass iterator to infer_dist instead
     model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
 
+    std::unique_lock cpuLock(cpuMutex);
 #pragma omp parallel for \
         reduction(+ : frozen) \
         shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)

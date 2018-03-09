@@ -75,8 +75,11 @@ SampleServer {
   // search thread statistics
     double derTotalTime;
     double sampleTotalTime;
-    double replayTotalTime;
+    double searchTotalTime;
     double generateMoveTotalTime;
+
+  // average training time (per batch)
+    double avgTrainTime;
 
     void addPull(double stallTime) {
       ++numQueuePull;
@@ -101,14 +104,16 @@ SampleServer {
     double getAvgGenerateMoveTime() const { return numSearchRounds > 0 ? (generateMoveTotalTime / (double) numSearchRounds) : 0; }
     double getAvgDerTime() const { return numSearchRounds > 0 ? (derTotalTime / (double) numSearchRounds) : 0; }
     double getAvgSampleTime() const { return numSearchRounds > 0 ? (sampleTotalTime / (double) numSearchRounds) : 0; }
-    double getAvgReplaySampleTime() const { return numSearchRounds > 0 ? (replayTotalTime / (double) numSearchRounds) : 0; }
+    double getAvgSearchTime() const { return numSearchRounds > 0 ? (searchTotalTime / (double) numSearchRounds) : 0; }
 
     std::ostream&
     print(std::ostream & out) const {
       out << "Server: "
           << "Queue  (avgPushStall=" << getPushStall() << "s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
           // << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n" // (deprecated)
-          << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << "s , avgReplaySampleTime=" << getAvgReplaySampleTime() << ", numSearchRounds=" << numSearchRounds << ", numDer=" << numDerivations << ", pModel=" << pModel << ")\n";
+          << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << ", avgSearchTime=" << getAvgSearchTime() << "s, numSearchRounds=" << numSearchRounds << ", numDer=" << numDerivations << ", avgTrainTime=" << avgTrainTime  << "s)\n";
+
+      // TODO pModel, avgReplaySampleTime
       return out;
     }
 
@@ -137,20 +142,20 @@ SampleServer {
     , generateMoveTotalTime(0)
     , derTotalTime(0)
     , sampleTotalTime(0)
-    , replayTotalTime(0)
+    , searchTotalTime(0)
     {}
   };
 
   mutable ServerStats serverStats;
 
   void
-  addSearchRoundStats(double deltaGenerateMove, double deltaDer, double deltaSampleActions, double deltaReplay, size_t numDerivations, double pModel) {
+  addSearchRoundStats(double deltaGenerateMove, double deltaDer, double deltaSampleActions, double deltaSearch, size_t numDerivations, double pModel) {
     std::unique_lock<std::mutex> lock(queueMutex);
     serverStats.numSearchRounds++;
     serverStats.generateMoveTotalTime += deltaGenerateMove;
     serverStats.derTotalTime += deltaDer;
     serverStats.sampleTotalTime += deltaSampleActions;
-    serverStats.replayTotalTime += deltaReplay;
+    serverStats.searchTotalTime += deltaSearch;
     serverStats.numDerivations += numDerivations;
     serverStats.pModel = pModel; // reinforcement stats
   }
