@@ -341,6 +341,7 @@ struct Batch {
 
 #define IF_DEBUG_TRAIN if (false)
 // train model on a batch of programs (returns loss)
+// TODO use a FIFOQueue to submit samples
 Task
 Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::string towerName, Losses * oLosses) {
   IF_DEBUG_TRAIN std::cerr << "ml::train_dist\n";
@@ -479,7 +480,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
   }
 
   auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx, towerName]{
-    // Mutex_guard guard(modelMutex);
+    // Mutex_guard guard(modelMutex); // TODO use a staging area for concurrent device transfers
 
     for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
       int batchStartIdx = startIdx + batchIdx * config.infer_batch_size; // works because only the last bach may not be a complete infer_batch_size package

@@ -370,185 +370,189 @@ APO::train(const Job & task) {
 
 
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
-  std::thread
-  searchThread([this, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
+  std::vector<std::thread> searchThreads;
 
-
-    // compute all one-step derivations
-    using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
-
-    // generate initial programs
-    ProgramVec progVec(task.numSamples, nullptr);
-    IntVec maxDistVec(progVec.size(), 0);
-    generatePrograms(progVec, maxDistVec, task, 0, task.numSamples);
-
-#ifdef APO_ENABLE_DER_CACHE
-    // warm up the cache
-    const int warmUpRounds = 100;
-#else
-    const int warmUpRounds = 0;
-#endif
-    int totalSearchRounds = 0;
-
-    double startRound = get_wall_time();
-    while (keepRunning.load()) {
-      totalSearchRounds++; // stats
-
-      // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
-      // #pragma omp parallel for ordered
-
-      assert(progVec.size() == task.numSamples);
-      assert(maxDistVec.size() == task.numSamples);
-
-      const int preAllocSize = task.numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
-
-      // results to find by mcts search
-      RewriteVec rewrites;
-      ProgramVec nextProgs;
-      IntVec nextMaxDistVec;
-      rewrites.reserve(preAllocSize);
-      nextProgs.reserve(preAllocSize);
-      nextMaxDistVec.reserve(preAllocSize);
-
-    // queue all programs that are reachable by a single move
-      double startGenerateMove = get_wall_time();
-      for (int t = 0; t < progVec.size(); ++t) {
-        for (int r = 0; r < ruleBook.num_Rules(); ++r) {
-          const int progSize = progVec[t]->size();
-          for (int pc = 0; pc + 1 < progSize ; ++pc) {
-            Action act{pc, r};
-
-            auto *clonedProg = new Program(*progVec[t]);
-            if (!expMut.tryApply(*clonedProg, act)) {
-              // TODO clone after match (or render into copy)
-              delete clonedProg;
-              continue;
+  const int numSearchThreads = 2;
+  for (int i = 0; i < numSearchThreads; ++i) {
+    searchThreads.push_back(
+    std::thread([this, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
+  
+      // compute all one-step derivations
+      using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
+  
+      // generate initial programs
+      ProgramVec progVec(task.numSamples, nullptr);
+      IntVec maxDistVec(progVec.size(), 0);
+      generatePrograms(progVec, maxDistVec, task, 0, task.numSamples);
+  
+  #ifdef APO_ENABLE_DER_CACHE
+      // warm up the cache
+      const int warmUpRounds = 100;
+  #else
+      const int warmUpRounds = 0;
+  #endif
+      int totalSearchRounds = 0;
+  
+      double startRound = get_wall_time();
+      while (keepRunning.load()) {
+        totalSearchRounds++; // stats
+  
+        // (progVec, maxDistVec) -> (nextProgs, rewrites, nextMaxDistVec)
+        // #pragma omp parallel for ordered
+  
+        assert(progVec.size() == task.numSamples);
+        assert(maxDistVec.size() == task.numSamples);
+  
+        const int preAllocSize = task.numSamples * ruleBook.num_Rules() *  (modelConfig.prog_length / 2);
+  
+        // results to find by mcts search
+        RewriteVec rewrites;
+        ProgramVec nextProgs;
+        IntVec nextMaxDistVec;
+        rewrites.reserve(preAllocSize);
+        nextProgs.reserve(preAllocSize);
+        nextMaxDistVec.reserve(preAllocSize);
+  
+      // queue all programs that are reachable by a single move
+        double startGenerateMove = get_wall_time();
+        for (int t = 0; t < progVec.size(); ++t) {
+          for (int r = 0; r < ruleBook.num_Rules(); ++r) {
+            const int progSize = progVec[t]->size();
+            for (int pc = 0; pc + 1 < progSize ; ++pc) {
+              Action act{pc, r};
+  
+              auto *clonedProg = new Program(*progVec[t]);
+              if (!expMut.tryApply(*clonedProg, act)) {
+                // TODO clone after match (or render into copy)
+                delete clonedProg;
+                continue;
+              }
+  
+              int remainingSteps = std::max(1, maxDistVec[t] - 1);
+  
+              ProgramPtr actionProg(clonedProg); // must not use @clonedProg after this point
+  
+              // full MCTS derivation path for unseen programs
+              // montOpt.searchDerivations will fill in derivations for us
+              nextMaxDistVec.push_back(remainingSteps);
+              assert(actionProg);
+              nextProgs.push_back(actionProg);
+              rewrites.emplace_back(t, act);
             }
-
-            int remainingSteps = std::max(1, maxDistVec[t] - 1);
-
-            ProgramPtr actionProg(clonedProg); // must not use @clonedProg after this point
-
-            // full MCTS derivation path for unseen programs
-            // montOpt.searchDerivations will fill in derivations for us
-            nextMaxDistVec.push_back(remainingSteps);
-            assert(actionProg);
-            nextProgs.push_back(actionProg);
-            rewrites.emplace_back(t, act);
           }
         }
-      }
-      double endGenerateMove = get_wall_time();
-
-      // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
-      double startDer = get_wall_time();
-
-
-      // reference derivation search (random / model driven)
-      DerivationVec refDerVec;
-      double pModel = 0.0;
-      if (totalSearchRounds > task.reinStartRound) {
-#warning "auto consistency reinforcement"
-        // reinforcement learning
-#if 0
-        // reinforcement ratio
-        double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
-        pModel = task.reinStartRatio + (task.reinEndRatio - task.reinStartRatio) * reinScale;
-
-        // model-driven search
-        // SearchPerfStats searchStats;
-        const int modelRounds = task.reinSamples;
-        refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, inferDevices, nullptr); // &searchStats);
-#endif
-
-        // searchStats.dump();
-        // greedy results
-        auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices, cpuMutex);
-        refDerVec = greedyRes.bestVec; // aggressive auto-consistency
-
-#if 0
-        // random search
-        {
+        double endGenerateMove = get_wall_time();
+  
+        // DEBUG: std::cerr << "nextProgs = " << nextProgs.size() << "\n";
+        double startDer = get_wall_time();
+  
+  
+        // reference derivation search (random / model driven)
+        DerivationVec refDerVec;
+        double pModel = 0.0;
+        if (totalSearchRounds > task.reinStartRound) {
+  #warning "auto consistency reinforcement"
+          // reinforcement learning
+  #if 0
+          // reinforcement ratio
+          double reinScale = std::max(0.0, std::min(1.0, (totalSearchRounds - task.reinStartRound) / (double) (task.reinEndRound - task.reinStartRound)));
+          pModel = task.reinStartRatio + (task.reinEndRatio - task.reinStartRatio) * reinScale;
+  
+          // model-driven search
+          // SearchPerfStats searchStats;
+          const int modelRounds = task.reinSamples;
+          refDerVec = montOpt.searchDerivations(nextProgs, pModel, nextMaxDistVec, modelRounds, true, inferDevices, nullptr); // &searchStats);
+  #endif
+  
+          // searchStats.dump();
+          // greedy results
+          auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices, cpuMutex);
+          refDerVec = greedyRes.bestVec; // aggressive auto-consistency
+  
+  #if 0
+          // random search
+          {
+            std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
+            refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, inferDevices);
+          }
+  
+          // assume best solution
+          refDerVec = FilterBest(refDerVec, greedyRes.bestVec);
+  #endif
+  
+        } else {
+          // random search
           std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
           refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, inferDevices);
         }
-
-        // assume best solution
-        refDerVec = FilterBest(refDerVec, greedyRes.bestVec);
-#endif
-
-      } else {
-        // random search
-        std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
-        refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, inferDevices);
-      }
-
-
-      // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
-      double endDer = get_wall_time();
-
-      // (rewrites, refDerVec) --> refResults
-      // decode reference ResultDistVec from detected derivations
-      ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
-
-      double endRound = get_wall_time();
-      double totalRoundTime = endRound - startRound;
-
-      // submit results for training (-> trainThread)
-      server.submitResults(progVec, refResults);
-      startRound = get_wall_time();
-
-      double startSample = get_wall_time();
-    // sample moves from the reference distribution
-      // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
-      int numNextProgs = 0;
-      montOpt.sampleActions(refResults, rewrites, nextProgs,
-
-      // actionHandler
-        // 1. keep programs with applicable action in batch (progVec)
-        // 2. tell the server about the detected derivations
-        [&numNextProgs, &nextProgs, &progVec, &maxDistVec, &nextMaxDistVec, &refDerVec, &server](int sampleIdx, int rewriteIdx) {
-            assert(sampleIdx >= numNextProgs);
-
-            // insert program after action into queue
-            int progIdx = numNextProgs++;
-            progVec[progIdx] = nextProgs[rewriteIdx];
-            maxDistVec[progIdx] = std::max(1, nextMaxDistVec[rewriteIdx] - 1); // carry on unless there is an explicit STOP
-
+  
+  
+        // NOTE all derivations in @refDerVec are from programs in @nextProgs which are one step closer to the optimum than their source programs in @progVec
+        double endDer = get_wall_time();
+  
+        // (rewrites, refDerVec) --> refResults
+        // decode reference ResultDistVec from detected derivations
+        ResultDistVec refResults = montOpt.populateRefResults(refDerVec, rewrites, progVec);
+  
+        double endRound = get_wall_time();
+        double totalRoundTime = endRound - startRound;
+  
+        // submit results for training (-> trainThread)
+        server.submitResults(progVec, refResults);
+        startRound = get_wall_time();
+  
+        double startSample = get_wall_time();
+      // sample moves from the reference distribution
+        // (refResults, rewrites, nextProgs, nextMaxDistVec) -> progVec, maxDistVec
+        int numNextProgs = 0;
+        montOpt.sampleActions(refResults, rewrites, nextProgs,
+  
+        // actionHandler
+          // 1. keep programs with applicable action in batch (progVec)
+          // 2. tell the server about the detected derivations
+          [&numNextProgs, &nextProgs, &progVec, &maxDistVec, &nextMaxDistVec, &refDerVec, &server](int sampleIdx, int rewriteIdx) {
+              assert(sampleIdx >= numNextProgs);
+  
+              // insert program after action into queue
+              int progIdx = numNextProgs++;
+              progVec[progIdx] = nextProgs[rewriteIdx];
+              maxDistVec[progIdx] = std::max(1, nextMaxDistVec[rewriteIdx] - 1); // carry on unless there is an explicit STOP
+  
+              return true;
+          },
+  
+        // stopHandler
+          // 1. tell the server about the detected stop derivation
+          // 2. drop STOP-ped program from batch in any way (implicit)
+          [&server, &progVec](int sampleIdx, StopReason reason) {
+            assert((reason != StopReason::DerivationFailure) && "sampling can not fail on reference distribution!");
+            assert((reason != StopReason::InvalidDist) && "sampling can not fail on reference distribution!");
             return true;
-        },
+          }
+        );
+        double endSample = get_wall_time();
+  
+        double dropOutRate = 1.0 - numNextProgs / (double) task.numSamples;
+  
+        // fill up dropped slots with new programs
+        int numRefill = task.numSamples - numNextProgs;
+        int numReplayedSamples = (int) floor(numRefill * task.replayRate);
+  
+        // replay samples
+        double startReplay = get_wall_time();
+        int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, task.extraExplorationDepth, task.maxExplorationDepth);
+        double endReplay = get_wall_time();
+  
+        // fill up with completely new progs
+        generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);
+  
+        // report timing stats
+        server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, totalRoundTime, nextProgs.size(), pModel);
+      }
+    }));
+  }
 
-      // stopHandler
-        // 1. tell the server about the detected stop derivation
-        // 2. drop STOP-ped program from batch in any way (implicit)
-        [&server, &progVec](int sampleIdx, StopReason reason) {
-          assert((reason != StopReason::DerivationFailure) && "sampling can not fail on reference distribution!");
-          assert((reason != StopReason::InvalidDist) && "sampling can not fail on reference distribution!");
-          return true;
-        }
-      );
-      double endSample = get_wall_time();
-
-      double dropOutRate = 1.0 - numNextProgs / (double) task.numSamples;
-
-      // fill up dropped slots with new programs
-      int numRefill = task.numSamples - numNextProgs;
-      int numReplayedSamples = (int) floor(numRefill * task.replayRate);
-
-      // replay samples
-      double startReplay = get_wall_time();
-      int actualEndIdx = server.drawReplays(progVec, maxDistVec, numNextProgs, numNextProgs + numReplayedSamples, task.extraExplorationDepth, task.maxExplorationDepth);
-      double endReplay = get_wall_time();
-
-      // fill up with completely new progs
-      generatePrograms(progVec, maxDistVec, task, actualEndIdx, task.numSamples);
-
-      // report timing stats
-      server.addSearchRoundStats(endGenerateMove - startGenerateMove, endDer - startDer, endSample - startSample, totalRoundTime, nextProgs.size(), pModel);
-    }
-  });
-
-  searchThread.join();
+  for (auto & t : searchThreads) t.join();
   trainThread.join();
 
   keepRunning.store(false); // shutdown all workers

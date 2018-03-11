@@ -227,7 +227,7 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
     ResultDistVec actionDistVec(progVec.size()); // FIXME pass iterator to infer_dist instead
     model.infer_dist(actionDistVec, progVec, 0, progVec.size(), inferTower).join();
 
-    std::unique_lock cpuLock(cpuMutex);
+    // std::unique_lock cpuLock(cpuMutex);
 #pragma omp parallel for \
         reduction(+ : frozen) \
         shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
