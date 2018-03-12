@@ -818,14 +818,16 @@ void MonteCarloOptimizer::sampleActions(const ResultDistVec &refResults,
 
 
 
-void DerStats::print(std::ostream &out) const {
+std::ostream&
+DerStats::print(std::ostream &out) const {
   std::streamsize ss = out.precision();
   const int fpPrec = 4;
   out << std::fixed << std::setprecision(fpPrec) << " " << getClearedScore()
       << "  (matched " << matched << ", longerDer " << longerDer
       << ", shorterDer: " << shorterDer << ", betterScore: " << betterScore
-      << ")\n"
+      << ")"
       << std::setprecision(ss) << std::defaultfloat; // restore
+  return out;
 }
 
 DerStats ScoreDerivations(const DerivationVec &refDer,

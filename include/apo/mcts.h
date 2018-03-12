@@ -192,7 +192,7 @@ struct DerStats {
   double getClearedScore() const { return matched + longerDer + betterScore + shorterDer; }
   double getMisses() const { return 1.0 - getClearedScore(); }
 
-  void print(std::ostream&out) const;
+  std::ostream& print(std::ostream&out) const;
 };
 
 DerStats

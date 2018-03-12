@@ -295,29 +295,17 @@ APO::train(const Job & task) {
 
           std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
-          std::cerr << "Greedy (STOP) "; greedyStats.print(std::cerr); // apply most-likely action, respect STOP
+          std::cerr << "Greedy (STOP) "; greedyStats.print(std::cerr) << "\n"; // apply most-likely action, respect STOP
 
           DerStats bestGreedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.bestVec);
-          std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr); // same as greedy but report best program along trajectory to STOP
-
-#if 0
-          // TODO too expensive
-          // model-guided sampling (best of randomly sampled trajectory)
-          const int guidedSamples = 4; // number of random trajectories to sample
-          auto guidedEvalDerVec = montOpt.searchDerivations(evalProgs, 0.0, evalDistVec, guidedSamples, false);
-
-          DerStats guidedStats = ScoreDerivations(refEvalDerVec, guidedEvalDerVec);
-          std::cerr << "\tSampled       "; guidedStats.print(std::cerr); // best of 4 random trajectories, ignore STOP
-          bestEvalDerVec = FilterBest(bestEvalDerVec, guidedEvalDerVec);
-#endif
+          std::cerr << "\tGreedy (best) "; bestGreedyStats.print(std::cerr) << "\n"; // same as greedy but report best program along trajectory to STOP
 
           // improve best-known solution on the go
           bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.greedyVec);
           bestEvalDerVec = FilterBest(bestEvalDerVec, greedyDerVecs.bestVec);
           DerStats bestStats = ScoreDerivations(refEvalDerVec, bestEvalDerVec);
           std::cerr << "\tIncumbent     ";
-          bestStats.print(
-              std::cerr); // best of all sampling strategies (improving over time)
+          bestStats.print(std::cerr) << "\n"; // best of all sampling strategies (improving over time)
 
           // store model
           if (task.saveCheckpoints) {
@@ -337,7 +325,6 @@ APO::train(const Job & task) {
         server.drawSamples(progVec, refResults, 0, task.numSamples);
 
         // train model (progVec, refResults)
-        // Model::Losses L;
         if (trainTask.joinable()) trainTask.join(); // TODO move this into the ml.cpp
         trainTask = model.train_dist(progVec, refResults, trainTower); //, loggedRound ? &L : nullptr);
 
@@ -350,8 +337,10 @@ APO::train(const Job & task) {
           float dropOutRate = numStops / (double) refResults.size();
 
           trainTask.join();
-          // std::cerr << "Loss:   "; L.print(std::cerr);
-          std::cerr << ". Stop drop out=" << dropOutRate << "\n";
+
+          Model::Losses L;
+          model.infer_losses(refResults, progVec, 0, progVec.size(), trainTower, L).join();
+          std::cerr << "Loss:   "; L.print(std::cerr); std::cerr << ". Stop drop out=" << dropOutRate << "\n";
         }
 
       } // rounds
