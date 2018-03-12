@@ -13,7 +13,7 @@ numRounds 50000
 saveModel 1
 numSamples 32
 numOptRounds 2000
-reinStartRound 200
+reinStartRound 0
 reinEndRound 100000
 reinStartRatio 0.95
 reinEndRatio 0.95
