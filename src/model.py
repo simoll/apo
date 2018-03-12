@@ -115,33 +115,33 @@ with tf.Session() as sess:
     # feeding queue
     class QueuedTrainingInputs:
       def __init__(self, IR, Ref, capacity=2, batch_size=None):
-        # from IRInputs
+        # shapes (Queue::dequeue is shape oblivious)
         self.length_shape = tf.TensorShape([batch_size])
-        self.length_queue = tf.FIFOQueue(capacity, int_type(), [self.length_shape] if batch_size else None)
-        self.length_queue.enqueue(IR.length_data, "q_length_data")
-
         self.oc_shape = tf.TensorShape([batch_size, prog_length])
-        self.oc_queue = tf.FIFOQueue(capacity, int_type(), [self.oc_shape] if batch_size else None)
-        self.oc_queue.enqueue(IR.oc_data, "q_oc_data")
-
         self.ops_shape = tf.TensorShape([batch_size, prog_length])
-        self.firstOp_queue = tf.FIFOQueue(capacity, int_type(), [self.ops_shape] if batch_size else None)
-        self.firstOp_queue.enqueue(IR.firstOp_data, "q_firstOp_data")
+        self.stop_shape = tf.TensorShape([batch_size])
+        self.target_shape = tf.TensorShape([batch_size, prog_length])
+        self.action_shape = tf.TensorShape([batch_size, prog_length, max_Rules])
 
+        self.length_queue = tf.FIFOQueue(capacity, int_type(), [self.length_shape] if batch_size else None)
+        self.oc_queue = tf.FIFOQueue(capacity, int_type(), [self.oc_shape] if batch_size else None)
+        self.firstOp_queue = tf.FIFOQueue(capacity, int_type(), [self.ops_shape] if batch_size else None)
         self.sndOp_queue = tf.FIFOQueue(capacity, int_type(), [self.ops_shape] if batch_size else None)
-        self.sndOp_queue.enqueue(IR.sndOp_data, "q_sndOp_data")
+        self.stop_queue = tf.FIFOQueue(capacity, data_type(), [self.stop_shape] if batch_size else None)
+        self.target_queue = tf.FIFOQueue(capacity, data_type(), [self.target_shape] if batch_size else None) 
+        self.action_queue = tf.FIFOQueue(capacity, data_type(), [self.action_shape] if batch_size else None) 
+
+        with tf.device("/cpu:0"):
+          self.length_queue.enqueue(IR.length_data, "q_length_data")
+          self.oc_queue.enqueue(IR.oc_data, "q_oc_data")
+          self.firstOp_queue.enqueue(IR.firstOp_data, "q_firstOp_data")
+          self.sndOp_queue.enqueue(IR.sndOp_data, "q_sndOp_data")
 
         # from ReferenceInputs
-        self.stop_shape = tf.TensorShape([batch_size])
-        self.stop_queue = tf.FIFOQueue(capacity, data_type(), [self.stop_shape] if batch_size else None)
         self.stop_queue.enqueue(Ref.stop_in, "q_stop_in")
 
-        self.target_shape = tf.TensorShape([batch_size, prog_length])
-        self.target_queue = tf.FIFOQueue(capacity, data_type(), [self.target_shape] if batch_size else None) 
         self.target_queue.enqueue(Ref.target_in, "q_target_in")
 
-        self.action_shape = tf.TensorShape([batch_size, prog_length, max_Rules])
-        self.action_queue = tf.FIFOQueue(capacity, data_type(), [self.action_shape] if batch_size else None) 
         self.action_queue.enqueue(Ref.action_in, "q_action_in")
 
         # staging area
@@ -154,28 +154,30 @@ with tf.Session() as sess:
         IR = IRInputs()
         Ref = ReferenceInputs()
 
-        #IR (temporary)
-        IR.length_data = self.length_queue.dequeue()
-        IR.length_data.set_shape(self.length_shape)
+        # dequeue *MUST* happen on CPU
+        with tf.device("/cpu:0"):
+          #IR (temporary)
+          IR.length_data = self.length_queue.dequeue()
+          IR.length_data.set_shape(self.length_shape)
 
-        IR.oc_data = self.oc_queue.dequeue()
-        IR.oc_data.set_shape(self.oc_shape)
+          IR.oc_data = self.oc_queue.dequeue()
+          IR.oc_data.set_shape(self.oc_shape)
 
-        IR.firstOp_data = self.firstOp_queue.dequeue()
-        IR.firstOp_data.set_shape(self.ops_shape)
+          IR.firstOp_data = self.firstOp_queue.dequeue()
+          IR.firstOp_data.set_shape(self.ops_shape)
 
-        IR.sndOp_data = self.sndOp_queue.dequeue()
-        IR.sndOp_data.set_shape(self.ops_shape)
+          IR.sndOp_data = self.sndOp_queue.dequeue()
+          IR.sndOp_data.set_shape(self.ops_shape)
 
-        # Ref (temporary)_
-        Ref.stop_in = self.stop_queue.dequeue()
-        Ref.stop_in.set_shape(self.stop_shape)
+          # Ref (temporary)_
+          Ref.stop_in = self.stop_queue.dequeue()
+          Ref.stop_in.set_shape(self.stop_shape)
 
-        Ref.action_in = self.action_queue.dequeue()
-        Ref.action_in.set_shape(self.action_shape)
+          Ref.action_in = self.action_queue.dequeue()
+          Ref.action_in.set_shape(self.action_shape)
 
-        Ref.target_in = self.target_queue.dequeue()
-        Ref.target_in.set_shape(self.target_shape)
+          Ref.target_in = self.target_queue.dequeue()
+          Ref.target_in.set_shape(self.target_shape)
 
         # transfer to stage
         self.stage.put((IR.length_data, IR.oc_data, IR.firstOp_data, IR.sndOp_data, Ref.stop_in, Ref.target_in, Ref.action_in), name="forward_stage")
@@ -570,8 +572,8 @@ with tf.Session() as sess:
                 IR = buildIRPlaceholders(batch_size=train_batch_size)
                 Ref = buildReferencePlaceholders(batch_size=train_batch_size)
 
-                # attach queues
-                Q = QueuedTrainingInputs(IR, Ref, batch_size=train_batch_size)
+                # attach queues 
+                Q = QueuedTrainingInputs(IR, Ref, batch_size=train_batch_size) # must be placed on train device
                 QIR, QRef = Q.dequeue()
 
                 towerOut = buildTower(QIR, batch_size=train_batch_size)
