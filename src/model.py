@@ -198,6 +198,31 @@ with tf.Session() as sess:
       Ref.target_in = tf.placeholder(data_type(), [batch_size, prog_length], name="target_in") # target distribution (over instructions (per program))
       return Ref
 
+    # build an unit capacity inference stage for bulk buffer transfers to the device
+    # @return the staged tensors (stage::get)
+    def buildInferStage(IR, batch_size=None):
+      # shapes (Queue::dequeue is shape oblivious)
+      length_shape = tf.TensorShape([batch_size])
+      oc_shape = tf.TensorShape([batch_size, prog_length])
+      ops_shape = tf.TensorShape([batch_size, prog_length])
+
+      # staging area (device scope)
+      stage = tf.contrib.staging.StagingArea( \
+          [int_type(), int_type(), int_type(), int_type()], \
+          [length_shape, oc_shape, ops_shape, ops_shape] if batch_size else None)
+
+      # transfer to stage
+      put_op = stage.put((IR.length_data, IR.oc_data, IR.firstOp_data, IR.sndOp_data), name="put_stage")
+      StagedIR = IRInputs()
+      StagedIR.length_data, StagedIR.oc_data, StagedIR.firstOp_data, StagedIR.sndOp_data = stage.get(name="get_stage")
+      # provide elided shape info
+      StagedIR.length_data.set_shape(length_shape)
+      StagedIR.oc_data.set_shape(oc_shape)
+      StagedIR.firstOp_data.set_shape(ops_shape)
+      StagedIR.sndOp_data.set_shape(ops_shape)
+
+      return StagedIR
+
     # generate and assign placeholder based inputs
     def buildIRPlaceholders(batch_size=None):
       IR = IRInputs()
@@ -552,13 +577,15 @@ with tf.Session() as sess:
             with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
               with tf.name_scope(towerName):
                 IR = buildIRPlaceholders()
-                towerOut = buildTower(IR)
+                StagedIR = buildInferStage(IR) # under test - no benefit in using an inference stage
+                towerOut = buildTower(StagedIR)
+
                 # make loss inference available
                 Ref = buildReferencePlaceholders()
                 buildLosses(towerOut, Ref)
 
         elif isTrainTower:
-          # build an training tower (TODO asynchronuous)
+          # build an training tower
           if hasTrainDevice:
             print("multiple training devices not supported yet!!!\n")
             raise SystemExit

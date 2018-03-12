@@ -372,10 +372,16 @@ APO::train(const Job & task) {
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::vector<std::thread> searchThreads;
 
-  const int numSearchThreads = 3;
+#ifdef APO_ASYNC_TASKS
+  const int numSearchThreads = 4;
+#else
+  const int numSearchThreads = 1;
+#endif
+
+  std::atomic<int> totalSearchRounds = 0;
   for (int i = 0; i < numSearchThreads; ++i) {
     searchThreads.push_back(
-    std::thread([this, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
+    std::thread([this, &totalSearchRounds, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
 
       // compute all one-step derivations
       using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
@@ -384,14 +390,6 @@ APO::train(const Job & task) {
       ProgramVec progVec(task.numSamples, nullptr);
       IntVec maxDistVec(progVec.size(), 0);
       generatePrograms(progVec, maxDistVec, task, 0, task.numSamples);
-
-  #ifdef APO_ENABLE_DER_CACHE
-      // warm up the cache
-      const int warmUpRounds = 100;
-  #else
-      const int warmUpRounds = 0;
-  #endif
-      int totalSearchRounds = 0;
 
       double startRound = get_wall_time();
       while (keepRunning.load()) {

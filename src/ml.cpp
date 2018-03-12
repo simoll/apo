@@ -520,8 +520,15 @@ Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & prog
 
       IF_DEBUG_LOSSES batch.print(std::cerr);
       // The session will initialize the outputs
+      // upload tensors to device 
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
+
+      // run inference
       std::vector<tensorflow::Tensor> outputs;
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
+      {
+        // Mutex_guard guard(inferMutex);  // FIXME reference inputs are un-staged (so need to refeed everything)
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
+      }
 
       // writer.add_summary(summary, i)
       float actionLoss = outputs[0].scalar<float>()();
@@ -546,6 +553,7 @@ Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & prog
 #undef IF_DEBUG_LOSSES
 
 #define IF_DEBUG_INFER if (false)
+// FIXME this implementation is designed for the case that the whole batch will be infered at once (wasteful op-synchronization otherwise)
 Task
 Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName) {
   IF_DEBUG_INFER { std::cerr << "ml::infer_dist start=" << startIdx << ", end=" << endIdx << ", towerName = " << towerName << "\n"; }
@@ -574,8 +582,6 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
   }
 
   auto workerThread = Task([this, batchVec, &oResultDistVec, startIdx, endIdx, towerName]{
-    // Mutex_guard guard(modelMutex); // TODO use a staging area for concurrent device transfers
-
     for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
       int batchStartIdx = startIdx + batchIdx * config.infer_batch_size; // works because only the last bach may not be a complete infer_batch_size package
       auto & batch = (*batchVec)[batchIdx];
@@ -583,8 +589,16 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
 
       IF_DEBUG_INFER batch.print(std::cerr);
       // The session will initialize the outputs
+
+      // upload tensors to device
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) ); 
+
+      // wait for the device to become available and run inference
       std::vector<tensorflow::Tensor> outputs;
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
+      {
+        // Mutex_guard guard(inferMutex); 
+        TF_CHECK_OK( session->Run({}, {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
+      }
 
       // writer.add_summary(summary, i)
       auto stopDistTensor = outputs[0];

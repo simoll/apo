@@ -230,7 +230,8 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
     // std::unique_lock cpuLock(cpuMutex);
 #pragma omp parallel for \
         reduction(+ : frozen) \
-        shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates)
+        shared(actionDistVec,alreadyStopped,progVec,maxStepsVec,bestStates,stopStates) \
+        num_threads(6)
     for (int t = 0; t < numJobs; ++t) { // for all programs
       if (alreadyStopped[t]) continue; // do not proceed on STOP-ped programs
       int progId = startId + t;
@@ -417,8 +418,7 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
 
 #pragma omp parallel for \
             reduction(+ : frozen) \
-            shared(maxDistVec, roundProgs, modelRewriteDist,states) \
-            num_threads(4)
+            shared(maxDistVec, roundProgs, modelRewriteDist,states) 
         for (int t = startIdx; t < endIdx; ++t) {
           // self inflicted timeout
           if (derStep >= maxDistVec[t]) {

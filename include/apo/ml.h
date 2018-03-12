@@ -60,6 +60,8 @@ class Model {
   std::thread trainThread;
   TaskMutex queueMutex; // mutex on the training queue
 
+  TaskMutex inferMutex; // mutex on the compute part of inference (FIXME this lock is *shared* across all inference devices)
+
   // asynchronous training support
 
 // graph definition
