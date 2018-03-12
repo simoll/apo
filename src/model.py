@@ -63,35 +63,64 @@ with tf.Session() as sess:
     # shared embeddings
     with tf.device("/cpu:0"):
       param_init = tf.truncated_normal([num_Params, state_size], dtype=data_type())
-      # param_data = tf.get_variable("param_embed", [num_Params, state_size])
-      param_data = tf.get_variable("param_embed", initializer = param_init, dtype=data_type())
+      param_embed = tf.get_variable("param_embed", initializer = param_init, dtype=data_type())
       oc_init = tf.truncated_normal([num_OpCodes, embed_size], dtype=data_type())
       oc_embedding = tf.get_variable("oc_embed", initializer = oc_init, dtype=data_type())
 
-    def buildTower():
+    # handle to encoded inputs
+    class IRInputs:
+      def __init__(self):
+        # number of instructions in the program
+        self.length_data = None # tf.placeholder(tf.int32, [None], name="length_data")
+        
+        # opCode per instruction
+        self.oc_data = None #tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
+        
+        # first operand index per instruction
+        self.firstOp_data = None #tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
+        
+        # second operand index per instruction
+        self.sndOp_data = None #tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
+
+    # the output operations of the tower
+    class TowerOutputs:
+      def __init__(self, loss, mean_stop_loss, mean_action_loss, mean_target_loss):
+        self.loss = loss
+        self.mean_stop_loss = mean_stop_loss
+        self.mean_action_loss = mean_action_loss
+        self.mean_target_loss = mean_target_loss #return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
+
+    # generate and assign placeholder based inputs
+    def buildIRPlaceholders():
+      IR = IRInputs()
+
       # number of instructions in the program
-      length_data = tf.placeholder(tf.int32, [None], name="length_data")
-      batch_size=tf.shape(length_data)[0]
+      IR.length_data = tf.placeholder(tf.int32, [None], name="length_data")
+      IR.batch_size=tf.shape(IR.length_data)[0]
       
       # opCode per instruction
-      oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
+      IR.oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
       
       # first operand index per instruction
-      firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
+      IR.firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
       
       # second operand index per instruction
-      sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
+      IR.sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
+      return IR
 
-      oc_inputs = tf.nn.embedding_lookup(oc_embedding, oc_data) # [batch_size x idx x embed_size]
+    # returns @TowerOutputs with the tower's output operations
+    def buildTower(IR):
+      batch_size=tf.shape(IR.length_data)[0]
+      oc_inputs = tf.nn.embedding_lookup(oc_embedding, IR.oc_data) # [batch_size x idx x embed_size]
       print("oc_inputs : {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
 
       # build the network
       zero_batch = tf.zeros([batch_size, state_size], dtype=data_type())
-      # param_batch = tf.split(tf.tile(param_data, [1, batch_size]), 1, batch_size)
-      # print(param_data.get_shape()) # [numParams x state_size]
+      # param_batch = tf.split(tf.tile(param_embed, [1, batch_size]), 1, batch_size)
+      # print(param_embed.get_shape()) # [numParams x state_size]
       # print(param_batch.get_shape()) # [batch_size x numParams x state_size]
 
-      param_batch = tf.reshape(tf.tile(param_data, [batch_size, 1]), [batch_size, num_Params, -1])
+      param_batch = tf.reshape(tf.tile(param_embed, [batch_size, 1]), [batch_size, num_Params, -1])
 
       if Debug:
           print("param_batch: {}".format(param_batch.get_shape()))
@@ -101,7 +130,7 @@ with tf.Session() as sess:
       for i in range(num_Params):
           outputs.append(param_batch[:, i, :])
 
-      # outputs = [zero_batch] + param_data # [batch_size x time x state_size]
+      # outputs = [zero_batch] + param_embed # [batch_size x time x state_size]
       if Debug:
           print(outputs)
 
@@ -160,13 +189,13 @@ with tf.Session() as sess:
                       with tf.variable_scope("firstOp"):
                         # sequence [prog_len x batch_size x state_size]
                         # indices [batch_size x 1]
-                        indices = tf.expand_dims(firstOp_data[:, time_step], axis=1)
+                        indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1)
                         idx = tf.concat([indices, batch_range], axis=1)
                         flat_first = tf.gather_nd(sequence, idx)
 
                       # gather second operand outputs
                       with tf.variable_scope("sndOp"):
-                        indices = tf.expand_dims(sndOp_data[:, time_step], axis=1)
+                        indices = tf.expand_dims(IR.sndOp_data[:, time_step], axis=1)
                         idx = tf.concat([indices, batch_range], axis=1)
                         flat_snd = tf.gather_nd(sequence, idx)
 
@@ -189,7 +218,7 @@ with tf.Session() as sess:
                   state_idx = (l - num_decoder_layers)
                   next_initial = last_states[state_idx]
 
-                outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=length_data)
+                outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=IR.length_data)
                 # next_initial = state # LSTM wrap around for decoder layers
 
                 if tupleState:
@@ -218,7 +247,7 @@ with tf.Session() as sess:
 
           # use a plain LSTM
           inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
-          outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=length_data)# swap_memory=True)
+          outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=IR.length_data)# swap_memory=True)
           last_output = outputs[-1]
           if num_hidden_layers > 1:
             net_out = tf.reshape(state[-1].c, [batch_size, -1])
@@ -351,50 +380,10 @@ with tf.Session() as sess:
       mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
 
       # return action handles
-      return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
+      return TowerOutputs(loss, mean_stop_loss, mean_action_loss, mean_target_loss)
     # END buildTower
 
-    hasTrainDevice = False
-    hasInferDevice = False
-    laterDevice = None # same as False from Tensorflow 1.1
-    trainTower = None # tower used for training
-
-    # create one tower for each device
-    with tf.variable_scope(tf.get_variable_scope()) as scope:
-      for line in open("devices.conf", 'r'):
-        if len(line) == 0 or line[0] == "#":
-          continue
-
-        # actual device entry 
-        parts = line.split(" ")
-        devName = parts[0]     # tensorflow device name, eg "/gpu:0"
-        towerName = parts[1]   # tower name to be used in apo, eg "g0"
-        taskSet = parts[2]     # task set this device shall be associated with, eg "infer,train"
-        rating = int(parts[3]) # device performance rating, eg CPU has 1 , GPU has 10
-
-        # build tower
-        with tf.device(devName):
-          with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
-            with tf.name_scope(towerName):
-              print("Building tower {} for device {} with task set {}".format(towerName, devName, taskSet))
-              devTower = buildTower()
-
-        laterDevice=True
-        hasInferDevice = hasInferDevice or ("infer" in taskSet)
-
-        if not "train" in taskSet:
-          continue
-
-        # configure training device
-        if hasTrainDevice:
-          print("Already defined a training device!!!\n")
-          raise SystemExit
-
-        hasTrainDevice = True
-        devLoss = devTower[0]
-        trainTower = towerName
-
-
+    # learning_rate
     # attach optimizer to "train" device (defining the unique "train_dist_op")
     if False:
     # learning rate configuration
@@ -417,26 +406,66 @@ with tf.Session() as sess:
       new_learning_rate = tf.placeholder(tf.float32, [], "new_learning_rate")
       tf.assign(learning_rate, new_learning_rate, name="set_learning_rate")
 
-    with tf.device(devName):
-      # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-      optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-      train_dist_op = optimizer.minimize(
-          loss=devLoss,
-          global_step=global_step,
-          name="train_dist_op")
+    # start buildling the towers
+    hasTrainDevice = False
+    hasInferDevice = False
+    laterDevice = None # same as False from Tensorflow 1.1
+    trainTower = None # tower used for training
 
-    # tf.summary.scalar('loss', cpuLoss[0])
+    # create one tower for each device
+    with tf.variable_scope(tf.get_variable_scope()) as scope:
+      for line in open("devices.conf", 'r'):
+        if len(line) == 0 or line[0] == "#":
+          continue
 
-    ### prob of getting the cout right (pCorrect_op)  ###
+        # actual device entry 
+        parts = line.split(" ")
+        devName = parts[0]     # tensorflow device name, eg "/gpu:0"
+        towerName = parts[1]   # tower name to be used in apo, eg "g0"
+        taskSet = parts[2]     # task set this device shall be associated with, eg "infer,train"
+        rating = int(parts[3]) # device performance rating, eg CPU has 1 , GPU has 10
 
-    # def equals_fn(x,y):
-    #   return 1 if x == y else 0
+        print("Building tower {} for device {} with task set {}".format(towerName, devName, taskSet))
 
-    # matched_rule = tf.cast(tf.equal(pred_rule, rule_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
-    # matched_target = tf.cast(tf.equal(pred_target, target_in), tf.float32) #tf.map_fn(equals_fn, zip(predicted, rule_in), dtype=tf.int32, back_prop=false)
-    # pCorrect = tf.reduce_mean([matched_rule, matched_target], name="pCorrect_op")
+        isTrainTower = "train" in taskSet
+        isInferenceTower = "infer" in taskSet
 
+        if isInferenceTower:
+          hasInferDevice = True
+          # build an inference tower
+          with tf.device(devName):
+            with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
+              with tf.name_scope(towerName):
+                IR = buildIRPlaceholders()
+                towerOut = buildTower(IR)
+
+        elif isTrainTower:
+          # build an training tower (TODO asynchronuous)
+          if hasTrainDevice:
+            print("multiple training devices not supported yet!!!\n")
+            raise SystemExit
+
+          hasTrainDevice = True
+
+          with tf.device(devName):
+            with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
+              with tf.name_scope(towerName):
+                IR = buildIRPlaceholders()
+                towerOut = buildTower(IR)
+
+                # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+                optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
+
+              # place this in global scope (there is only a single training device atm)
+              train_dist_op = optimizer.minimize(
+                  loss=devLoss,
+                  global_step=global_step,
+                  name="train_dist_op")
+
+        laterDevice=True # for tf's reuse flag
+
+    # save the MetaGraph
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter("build/tf_logs", sess.graph)
 
