@@ -190,13 +190,13 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
 // bestDer - best een derivation along the path with highest action probability per program (ignores stopDist)
 MonteCarloOptimizer::GreedyResult
 MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
-                                      const IntVec & maxStepsVec, const DeviceVec & devices, std::mutex & cpuMutex) {
+                                      const IntVec & maxStepsVec, const DeviceVec & devices) {
   ProgramVec progVec = Clone(origProgVec);
   GreedyResult res(progVec.size());
 
   Distribute(devices, progVec.size(),
-      [this, &res, &progVec, &devices, &maxStepsVec, &cpuMutex](int devId, int startId, int endId) {
-        greedyDerivation(res.bestVec, res.greedyVec, progVec, maxStepsVec, startId, endId, devices[devId].tower, cpuMutex);
+      [this, &res, &progVec, &devices, &maxStepsVec](int devId, int startId, int endId) {
+        greedyDerivation(res.bestVec, res.greedyVec, progVec, maxStepsVec, startId, endId, devices[devId].tower);
       }
   );
 
@@ -204,7 +204,7 @@ MonteCarloOptimizer::greedyDerivation(const ProgramVec &origProgVec,
 }
 
 void
-MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec & stopStates, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower, std::mutex & cpuMutex) {
+MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec & stopStates, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
   if (endId <= startId) return;
 
   const int numJobs = endId - startId;

@@ -144,11 +144,11 @@ struct MonteCarloOptimizer {
 
   // actual greedyDerivation func
   GreedyResult
-  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, const DeviceVec & devices, std::mutex & cpuMutex);
+  greedyDerivation(const ProgramVec & origProgVec, const IntVec & maxDistVec, const DeviceVec & devices);
 
   // helper func to distribute onto devices (mutates progs in progVec)
   void
-  greedyDerivation(DerivationVec & oBestVec, DerivationVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName, std::mutex & cpuMutex);
+  greedyDerivation(DerivationVec & oBestVec, DerivationVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName);
 
   // optimize the progarms in @progVec greedily
   void greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxDistVec, int startId, int endId, std::string towerName);

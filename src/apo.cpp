@@ -291,7 +291,7 @@ APO::train(const Job & task) {
           serverStats.print(std::cerr);
 
           // evaluation statistics
-          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices, cpuMutex);
+          auto greedyDerVecs = montOpt.greedyDerivation(evalProgs, evalDistVec, inferDevices);
 
           std::cerr << "Eval:   ";
           DerStats greedyStats = ScoreDerivations(refEvalDerVec, greedyDerVecs.greedyVec);
@@ -372,7 +372,7 @@ APO::train(const Job & task) {
   // MCTS search thread - find shortest derivations to best programs, register findings with SampleServer
   std::vector<std::thread> searchThreads;
 
-  const int numSearchThreads = 2;
+  const int numSearchThreads = 3;
   for (int i = 0; i < numSearchThreads; ++i) {
     searchThreads.push_back(
     std::thread([this, &keepRunning, &server, &cpuMutex, &inferDevices, &task]{
@@ -450,7 +450,7 @@ APO::train(const Job & task) {
         // reference derivation search (random / model driven)
         DerivationVec refDerVec;
         double pModel = 0.0;
-        if (totalSearchRounds > task.reinStartRound) {
+        if (totalSearchRounds >= task.reinStartRound) {
   // #warning "auto consistency reinforcement"
           // reinforcement learning
   #if 0
@@ -466,7 +466,7 @@ APO::train(const Job & task) {
 
           // searchStats.dump();
           // greedy results
-          auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices, cpuMutex);
+          auto greedyRes = montOpt.greedyDerivation(nextProgs, nextMaxDistVec, inferDevices);
           refDerVec = greedyRes.bestVec; // aggressive auto-consistency
 
   #if 0
