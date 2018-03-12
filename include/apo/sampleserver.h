@@ -306,7 +306,7 @@ SampleServer {
 
     // wait until samples become available
       const int numNeeded = endIdx - startIdx;
-      assert((numNeeded < queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
+      assert((numNeeded <= queueLimit) && "deadlock waiting to happen. number of required samples is below queue limit (TODO)");
 
       double stallTime = 0;
       if (trainingQueue.size() < numNeeded) {

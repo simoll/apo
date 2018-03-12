@@ -567,8 +567,12 @@ with tf.Session() as sess:
 
         print("Building tower {} for device {} with task set {}".format(towerName, devName, taskSet))
 
+        # completely asynchronous training tower (apo host maintains looper thread)
         isTrainTower = "train" in taskSet
+        # tower with staged inference input
         isInferenceTower = "infer" in taskSet
+        # constitutes an un-buffered loss tower
+        isLossTower = "loss" in taskSet
 
         if isInferenceTower:
           hasInferDevice = True
@@ -580,9 +584,19 @@ with tf.Session() as sess:
                 StagedIR = buildInferStage(IR) # under test - no benefit in using an inference stage
                 towerOut = buildTower(StagedIR)
 
-                # make loss inference available
+        elif isLossTower:
+          hasLossDevice = True
+          # build an inference tower
+          with tf.device(devName):
+            with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
+              with tf.name_scope(towerName):
+                IR = buildIRPlaceholders()
                 Ref = buildReferencePlaceholders()
+                towerOut = buildTower(IR)
+
+                # make loss inference available
                 buildLosses(towerOut, Ref)
+
 
         elif isTrainTower:
           # build an training tower

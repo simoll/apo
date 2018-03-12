@@ -521,7 +521,7 @@ Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & prog
       IF_DEBUG_LOSSES batch.print(std::cerr);
       // The session will initialize the outputs
       // upload tensors to device 
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
+      // TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
 
       // run inference
       std::vector<tensorflow::Tensor> outputs;
@@ -529,6 +529,8 @@ Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & prog
         // Mutex_guard guard(inferMutex);  // FIXME reference inputs are un-staged (so need to refeed everything)
         TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
       }
+
+      assert(outputs.size() == 3);
 
       // writer.add_summary(summary, i)
       float actionLoss = outputs[0].scalar<float>()();
@@ -601,6 +603,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       }
 
       // writer.add_summary(summary, i)
+      assert(outputs.size() == 3);
       auto stopDistTensor = outputs[0];
       auto targetDistTensor = outputs[1];
       auto actionDistTensor = outputs[2];
@@ -666,6 +669,8 @@ Model::query_stats() {
 
   std::vector<tensorflow::Tensor> outputs;
   TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );
+  assert(outputs.size() == 2);
+
   double learning_rate = outputs[0].scalar<float>()();
   size_t global_step = outputs[1].scalar<int>()();
   return Model::Statistics{global_step, learning_rate};

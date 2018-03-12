@@ -245,16 +245,21 @@ APO::train(const Job & task) {
   // model training - repeatedly draw samples from SampleServer and submit to device for training
 #if 1
   std::thread
-  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex, &inferDevices] {
+  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
     const int dotStep = task.logRate / 10;
 
     const auto & trainDevices = devices.getDevices("train");
+    const auto & inferDevices = devices.getDevices("infer");
+    const auto & lossDevices = devices.getDevices("loss");
+
     if (trainDevices.size() != 1) {
     std::cerr << "trainThread: Expected exactly one train device, was " << trainDevices.size() << ".\n";
       keepRunning.store(false);
       exit(-1);
     }
     std::string trainTower = trainDevices[0].tower;
+    std::string inferTower = inferDevices[0].tower;
+    std::string lossTower = lossDevices[0].tower;
 
     // Fetch initial programs
     ProgramVec progVec(task.numSamples, nullptr);
@@ -338,8 +343,8 @@ APO::train(const Job & task) {
 
           trainTask.join();
 
-          Model::Losses L;
-          model.infer_losses(refResults, progVec, 0, progVec.size(), trainTower, L).join();
+          Model::Losses L{0.0, 0.0, 0.0};
+          model.infer_losses(refResults, progVec, 0, progVec.size(), lossTower, L).join(); 
           std::cerr << "Loss:   "; L.print(std::cerr); std::cerr << ". Stop drop out=" << dropOutRate << "\n";
         }
 
