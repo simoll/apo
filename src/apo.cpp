@@ -451,7 +451,7 @@ APO::train(const Job & task) {
         DerivationVec refDerVec;
         double pModel = 0.0;
         if (totalSearchRounds > task.reinStartRound) {
-  #warning "auto consistency reinforcement"
+  // #warning "auto consistency reinforcement"
           // reinforcement learning
   #if 0
           // reinforcement ratio
