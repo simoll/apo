@@ -442,26 +442,29 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
       // std::vector<tensorflow::Tensor> outputs;
 
       // std::cout << " Training on batch " << s << "\n";
-      for (int i = 0; i < config.batch_train_steps; ++i) {
+      // for (int i = 0; i < config.batch_train_steps; ++i) {
         // outputs.clear();
 
         TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {},
             {
+              // append all inputs to queue
               towerName + "/q_length_data",
               towerName + "/q_oc_data",
               towerName + "/q_firstOp_data",
               towerName + "/q_sndOp_data",
-
               towerName + "/q_stop_in",
               towerName + "/q_target_in",
-              towerName + "/q_action_in"
+              towerName + "/q_action_in",
+
+              // finally forward to device (staging area)
+              towerName + "/forward_stage"
             },
             nullptr)
         );
 
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
         // writer.add_summary(summary, i)
-      }
+      // }
     }
     delete batchVec;
   });

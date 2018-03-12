@@ -1,6 +1,8 @@
+import tensorflow.contrib.staging
+from tensorflow.python.util import nest
+
 import tensorflow as tf
 import numpy as np
-from tensorflow.python.util import nest
 
 # dtype used for the model and for reference inputs (distribs)
 def data_type():
@@ -142,11 +144,17 @@ with tf.Session() as sess:
         self.action_queue = tf.FIFOQueue(capacity, data_type(), [self.action_shape] if batch_size else None) 
         self.action_queue.enqueue(Ref.action_in, "q_action_in")
 
-      # dequeue inputs to bs used for training
-      def dequeue(self):
+        # staging area
+        self.stage = tf.contrib.staging.StagingArea( \
+            [int_type(), int_type(), int_type(), int_type(), data_type(), data_type(), data_type()], \
+            [self.length_shape, self.oc_shape, self.ops_shape, self.ops_shape, self.stop_shape, self.target_shape, self.action_shape] if batch_size else None, \
+            capacity = capacity)
+
+        # link Queue::dequeue -> StagingArea::put
         IR = IRInputs()
         Ref = ReferenceInputs()
-        #IR
+
+        #IR (temporary)
         IR.length_data = self.length_queue.dequeue()
         IR.length_data.set_shape(self.length_shape)
 
@@ -159,7 +167,7 @@ with tf.Session() as sess:
         IR.sndOp_data = self.sndOp_queue.dequeue()
         IR.sndOp_data.set_shape(self.ops_shape)
 
-        # Ref
+        # Ref (temporary)_
         Ref.stop_in = self.stop_queue.dequeue()
         Ref.stop_in.set_shape(self.stop_shape)
 
@@ -168,6 +176,16 @@ with tf.Session() as sess:
 
         Ref.target_in = self.target_queue.dequeue()
         Ref.target_in.set_shape(self.target_shape)
+
+        # transfer to stage
+        self.stage.put((IR.length_data, IR.oc_data, IR.firstOp_data, IR.sndOp_data, Ref.stop_in, Ref.target_in, Ref.action_in), name="forward_stage")
+
+      # dequeue inputs to bs used for training
+      def dequeue(self):
+        IR = IRInputs()
+        Ref = ReferenceInputs()
+
+        (IR.length_data, IR.oc_data, IR.firstOp_data, IR.sndOp_data, Ref.stop_in, Ref.target_in, Ref.action_in) = self.stage.get()
 
         return IR, Ref
 
@@ -533,6 +551,9 @@ with tf.Session() as sess:
               with tf.name_scope(towerName):
                 IR = buildIRPlaceholders()
                 towerOut = buildTower(IR)
+                # make loss inference available
+                Ref = buildReferencePlaceholders()
+                buildLosses(towerOut, Ref)
 
         elif isTrainTower:
           # build an training tower (TODO asynchronuous)
