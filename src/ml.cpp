@@ -80,7 +80,13 @@ Model::shutdown() {
 
 Model::~Model() {
   // wait until workerThread frees lock
-  Mutex_guard guard(modelMutex);
+  // Mutex_guard guard(modelMutex);
+
+  // shutdown training loopers
+  keepTraining.store(false);
+  if (trainThread.joinable()) {
+    trainThread.join();
+  }
 }
 
 Model::Model(const std::string & saverPrefix, const ModelConfig & modelConfig, const RuleBook & _ruleBook)
@@ -155,7 +161,7 @@ Model::loadCheckpoint(const std::string & checkPointFile) {
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
 
-  Mutex_guard guard(modelMutex);
+  // Mutex_guard guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -174,7 +180,7 @@ Model::saveCheckpoint(const std::string & checkPointFile) {
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkPointFile;
 
-  Mutex_guard guard(modelMutex);
+  // Mutex_guard guard(modelMutex);
   Status status = session->Run(
           {{ graph_def.saver_def().filename_tensor_name(), checkpointPathTensor },},
           {},
@@ -324,18 +330,27 @@ struct Batch {
   }
 
   FeedDict
-  buildFeed(std::string towerName) {
-    // bool hasRefData - pass reference inputs for training and loss computations
-    FeedDict dict = {
-      {towerName + "/oc_data", oc_feed},
-      {towerName + "/firstOp_data", firstOp_feed},
-      {towerName + "/sndOp_data", sndOp_feed},
-      {towerName + "/length_data", length_feed},
-      {towerName + "/stop_in", stop_feed},
-      {towerName + "/target_in", target_feed},
-      {towerName + "/action_in", action_feed}
-    };
-    return dict;
+  buildFeed(std::string towerName, bool withRefInputs) {
+    if (withRefInputs) {
+      // bool hasRefData - pass reference inputs for training and loss computations
+      return FeedDict{
+        {towerName + "/oc_data", oc_feed},
+        {towerName + "/firstOp_data", firstOp_feed},
+        {towerName + "/sndOp_data", sndOp_feed},
+        {towerName + "/length_data", length_feed},
+        {towerName + "/stop_in", stop_feed},
+        {towerName + "/target_in", target_feed},
+        {towerName + "/action_in", action_feed}
+      };
+    } else {
+      // bool hasRefData - pass reference inputs for training and loss computations
+      return FeedDict{
+        {towerName + "/oc_data", oc_feed},
+        {towerName + "/firstOp_data", firstOp_feed},
+        {towerName + "/sndOp_data", sndOp_feed},
+        {towerName + "/length_data", length_feed}
+      };
+    }
   }
 };
 
@@ -343,7 +358,23 @@ struct Batch {
 // train model on a batch of programs (returns loss)
 // TODO use a FIFOQueue to submit samples
 Task
-Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::string towerName, Losses * oLosses) {
+Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::string towerName) {
+  // lazily spawn a training thread
+  keepTraining.store(true);
+
+  // spawn training thread
+  if (!trainThread.joinable()) {
+    IF_DEBUG_TRAIN std::cerr << "ml::train_dist - initialized training thread\n";
+    trainThread = std::thread(
+        [this, towerName](){
+      while (keepTraining.load()) {
+        // train_dist_op is served from queue
+        TF_CHECK_OK( session->Run({}, {}, {"train_dist_op"}, nullptr) );
+      }
+    });
+  }
+
+  // feed samples to queue
   IF_DEBUG_TRAIN std::cerr << "ml::train_dist\n";
   int num_Samples = progs.size();
   assert(results.size() == num_Samples);
@@ -402,25 +433,39 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
   }
 
   // synchronize with pending training session
-  Task workerThread([this, batchVec, oLosses, towerName, num_Samples]{
-    Mutex_guard guard(modelMutex);
-    Losses L{0.0, 0.0, 0.0};
+  Task workerThread([this, batchVec, towerName, num_Samples]{
+    Mutex_guard guardQueue(queueMutex);
 
     for (Batch & batch : *batchVec) {
       IF_DEBUG_TRAIN batch.print(std::cerr);
       // The session will initialize the outputs
-      std::vector<tensorflow::Tensor> outputs;
+      // std::vector<tensorflow::Tensor> outputs;
 
       // std::cout << " Training on batch " << s << "\n";
       for (int i = 0; i < config.batch_train_steps; ++i) {
-        outputs.clear();
-        TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {}, {"train_dist_op"}, &outputs) );
+        // outputs.clear();
+
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {},
+            {
+              towerName + "/q_length_data",
+              towerName + "/q_oc_data",
+              towerName + "/q_firstOp_data",
+              towerName + "/q_sndOp_data",
+
+              towerName + "/q_stop_in",
+              towerName + "/q_target_in",
+              towerName + "/q_action_in"
+            },
+            nullptr)
+        );
+
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
         // writer.add_summary(summary, i)
       }
 
+#if 0
       if (oLosses) {
-        TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {towerName + "/mean_stop_loss", towerName + "/mean_target_loss", towerName + "/mean_action_loss"}, {}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_stop_loss", towerName + "/mean_target_loss", towerName + "/mean_action_loss"}, {}, &outputs) );
         float pStopLoss = outputs[0].scalar<float>()(0);
         float pTargetLoss = outputs[1].scalar<float>()(0);
         float pActionLoss = outputs[2].scalar<float>()(0);
@@ -430,14 +475,17 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
         L.targetLoss += (double) pTargetLoss;
         L.actionLoss += (double) pActionLoss;
       }
+#endif
     }
 
+#if 0
     if (oLosses) {
       double numBatches = num_Samples / (double) config.train_batch_size;
       oLosses->stopLoss = L.stopLoss / numBatches;
       oLosses->targetLoss = L.targetLoss / numBatches;
       oLosses->actionLoss = L.actionLoss / numBatches;
     }
+#endif
 
     delete batchVec;
   });
@@ -448,7 +496,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
 
 void
 Model::flush() {
-  Mutex_guard guard(modelMutex);
+  // Mutex_guard guard(modelMutex);
 }
 
 #define IF_DEBUG_INFER if (false)
@@ -490,7 +538,7 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       IF_DEBUG_INFER batch.print(std::cerr);
       // The session will initialize the outputs
       std::vector<tensorflow::Tensor> outputs;
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName), {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
 
       // writer.add_summary(summary, i)
       auto stopDistTensor = outputs[0];
@@ -547,14 +595,14 @@ Model::setLearningRate(float v) {
   };
 
   {
-    Mutex_guard guard(modelMutex);
+    // Mutex_guard guard(modelMutex);
     TF_CHECK_OK( session->Run(dict, {"set_learning_rate"}, {}, nullptr) );
   }
 }
 
 Model::Statistics
 Model::query_stats() {
-  Mutex_guard guard(modelMutex);
+  // Mutex_guard guard(modelMutex);
 
   std::vector<tensorflow::Tensor> outputs;
   TF_CHECK_OK( session->Run({}, {"learning_rate", "global_step"}, {}, &outputs) );

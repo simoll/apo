@@ -10,6 +10,7 @@
 #include "apo/ruleBook.h"
 
 #include "apo/task.h"
+#include <atomic>
 
 // MetaGraph
 #include <tensorflow/core/protobuf/meta_graph.pb.h>
@@ -54,8 +55,12 @@ class Model {
 
   tf::MetaGraphDef graph_def;
 
+  // train looper thread
+  std::atomic<bool> keepTraining;
+  std::thread trainThread;
+  TaskMutex queueMutex; // mutex on the training queue
+
   // asynchronous training support
-  TaskMutex modelMutex;
 
 // graph definition
 
@@ -100,7 +105,7 @@ public:
   };
 
   ATTR_WARN_UNUSED
-  Task train_dist(const ProgramVec& progs, const ResultDistVec& results, std::string towerName, Losses * oLoss);
+  Task train_dist(const ProgramVec& progs, const ResultDistVec& results, std::string towerName);
 
   Statistics query_stats();
 

@@ -2,9 +2,13 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.python.util import nest
 
+# dtype used for the model and for reference inputs (distribs)
 def data_type():
     return tf.float32
 
+# dtype used for the program encoding (prog_length, firstOp_data, ...)
+def int_type():
+    return tf.int32
 
 
 
@@ -82,29 +86,113 @@ with tf.Session() as sess:
         # second operand index per instruction
         self.sndOp_data = None #tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
 
+    class ReferenceInputs:
+      def __init__(self):
+        self.stop_in = None
+        self.target_in = None
+        self.action_in = None
+          
     # the output operations of the tower
     class TowerOutputs:
-      def __init__(self, loss, mean_stop_loss, mean_action_loss, mean_target_loss):
+      def __init__(self, action_logits, pred_action_dist, stop_logits, pred_stop_dist, target_logits, pred_target_dist):
+        self.action_logits=action_logits
+        self.target_logits=target_logits
+        self.stop_logits=stop_logits
+        self.pred_action_dist=pred_action_dist
+        self.pred_stop_dist=pred_stop_dist
+        self.pred_target_dist=pred_target_dist
+
+    # loss collection (from a tower)
+    class Losses:
+      def __init__(self, loss, mean_action_loss, mean_stop_loss, mean_target_loss):
         self.loss = loss
-        self.mean_stop_loss = mean_stop_loss
         self.mean_action_loss = mean_action_loss
-        self.mean_target_loss = mean_target_loss #return (loss, mean_stop_loss, mean_action_loss, mean_target_loss)
+        self.mean_stop_loss = mean_stop_loss
+        self.mean_target_loss = mean_target_loss
+
+    # feeding queue
+    class QueuedTrainingInputs:
+      def __init__(self, IR, Ref, capacity=2, batch_size=None):
+        # from IRInputs
+        self.length_shape = tf.TensorShape([batch_size])
+        self.length_queue = tf.FIFOQueue(capacity, int_type(), [self.length_shape] if batch_size else None)
+        self.length_queue.enqueue(IR.length_data, "q_length_data")
+
+        self.oc_shape = tf.TensorShape([batch_size, prog_length])
+        self.oc_queue = tf.FIFOQueue(capacity, int_type(), [self.oc_shape] if batch_size else None)
+        self.oc_queue.enqueue(IR.oc_data, "q_oc_data")
+
+        self.ops_shape = tf.TensorShape([batch_size, prog_length])
+        self.firstOp_queue = tf.FIFOQueue(capacity, int_type(), [self.ops_shape] if batch_size else None)
+        self.firstOp_queue.enqueue(IR.firstOp_data, "q_firstOp_data")
+
+        self.sndOp_queue = tf.FIFOQueue(capacity, int_type(), [self.ops_shape] if batch_size else None)
+        self.sndOp_queue.enqueue(IR.sndOp_data, "q_sndOp_data")
+
+        # from ReferenceInputs
+        self.stop_shape = tf.TensorShape([batch_size])
+        self.stop_queue = tf.FIFOQueue(capacity, data_type(), [self.stop_shape] if batch_size else None)
+        self.stop_queue.enqueue(Ref.stop_in, "q_stop_in")
+
+        self.target_shape = tf.TensorShape([batch_size, prog_length])
+        self.target_queue = tf.FIFOQueue(capacity, data_type(), [self.target_shape] if batch_size else None) 
+        self.target_queue.enqueue(Ref.target_in, "q_target_in")
+
+        self.action_shape = tf.TensorShape([batch_size, prog_length, max_Rules])
+        self.action_queue = tf.FIFOQueue(capacity, data_type(), [self.action_shape] if batch_size else None) 
+        self.action_queue.enqueue(Ref.action_in, "q_action_in")
+
+      # dequeue inputs to bs used for training
+      def dequeue(self):
+        IR = IRInputs()
+        Ref = ReferenceInputs()
+        #IR
+        IR.length_data = self.length_queue.dequeue()
+        IR.length_data.set_shape(self.length_shape)
+
+        IR.oc_data = self.oc_queue.dequeue()
+        IR.oc_data.set_shape(self.oc_shape)
+
+        IR.firstOp_data = self.firstOp_queue.dequeue()
+        IR.firstOp_data.set_shape(self.ops_shape)
+
+        IR.sndOp_data = self.sndOp_queue.dequeue()
+        IR.sndOp_data.set_shape(self.ops_shape)
+
+        # Ref
+        Ref.stop_in = self.stop_queue.dequeue()
+        Ref.stop_in.set_shape(self.stop_shape)
+
+        Ref.action_in = self.action_queue.dequeue()
+        Ref.action_in.set_shape(self.action_shape)
+
+        Ref.target_in = self.target_queue.dequeue()
+        Ref.target_in.set_shape(self.target_shape)
+
+        return IR, Ref
+
+    def buildReferencePlaceholders(batch_size=None):
+      Ref = ReferenceInputs()
+      Ref.stop_in = tf.placeholder(data_type(), [batch_size], name="stop_in") # stop indicator
+      Ref.action_in = tf.placeholder(data_type(), [batch_size, prog_length, max_Rules], name="action_in") # action distribution (over rules per instruction)
+      Ref.target_in = tf.placeholder(data_type(), [batch_size, prog_length], name="target_in") # target distribution (over instructions (per program))
+      return Ref
 
     # generate and assign placeholder based inputs
-    def buildIRPlaceholders():
+    def buildIRPlaceholders(batch_size=None):
       IR = IRInputs()
 
       # number of instructions in the program
-      IR.length_data = tf.placeholder(tf.int32, [None], name="length_data")
+      IR.length_data = tf.placeholder(int_type(), [batch_size], name="length_data")
       
       # opCode per instruction
-      IR.oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
+      IR.oc_data = tf.placeholder(int_type(), [batch_size, prog_length], name="oc_data")
       
       # first operand index per instruction
-      IR.firstOp_data = tf.placeholder(tf.int32, [None, prog_length], name="firstOp_data")
+      IR.firstOp_data = tf.placeholder(int_type(), [batch_size, prog_length], name="firstOp_data")
       
       # second operand index per instruction
-      IR.sndOp_data = tf.placeholder(tf.int32, [None, prog_length], name="sndOp_data")
+      IR.sndOp_data = tf.placeholder(int_type(), [batch_size, prog_length], name="sndOp_data")
       return IR
 
     # returns @TowerOutputs with the tower's output operations
@@ -351,39 +439,39 @@ with tf.Session() as sess:
       pred_action_dist = tf.nn.sigmoid(action_logits,name="pred_action_dist")
       pred_target_dist = tf.nn.sigmoid(target_logits,name="pred_target_dist")
 
+      # return action handles
+      return TowerOutputs(action_logits, pred_action_dist, stop_logits, pred_stop_dist, target_logits, pred_target_dist)
+    # END buildTower
+
+
+    def buildLosses(towerOut, Ref):
       ### reference input & training ###
       # reference input #
-      stop_in = tf.placeholder(data_type(), [None], name="stop_in") # stop indicator
-      action_in = tf.placeholder(data_type(), [None, prog_length, max_Rules], name="action_in") # action distribution (over rules per instruction)
-      target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in") # target distribution (over instructions (per program))
-
       # training #
       # stop_loss = tf.losses.absolute_difference(stop_in, pred_stop_dist) # []
-      stop_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=stop_in, logits=stop_logits) # []
+      stop_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=Ref.stop_in, logits=towerOut.stop_logits) # []
 
       num_action_elems = prog_length * max_Rules
 
       # AlphaZero style: difference to reference distribution
-      per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(action_in, [-1, num_action_elems]), logits=tf.reshape(action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
+      per_action_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(Ref.action_in, [-1, num_action_elems]), logits=tf.reshape(towerOut.action_logits, [-1, num_action_elems])) #, dim=-1) # [batch_size]
       action_loss = tf.reduce_mean(per_action_loss, axis=1)
 
-      target_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=target_in, logits=target_logits), axis=1) # [batch_size]
+      target_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=Ref.target_in, logits=towerOut.target_logits), axis=1) # [batch_size]
 
       # cummulative action loss
       move_losses = action_loss + target_loss 
 
       # conditional loss (only penalize rule/target if !stop_in)
-      loss = tf.reduce_mean((1.0 - stop_in) * move_losses) + stop_loss
+      loss = tf.reduce_mean((1.0 - Ref.stop_in) * move_losses) + stop_loss
       tf.identity(loss, "loss")
 
       # mean losses (for reporting only)
       mean_stop_loss = tf.reduce_mean(stop_loss, name="mean_stop_loss")
-      mean_action_loss = tf.reduce_mean((1.0 - stop_in) * action_loss, name="mean_action_loss")
-      mean_target_loss = tf.reduce_mean((1.0 - stop_in) * target_loss, name="mean_target_loss")
+      mean_action_loss = tf.reduce_mean((1.0 - Ref.stop_in) * action_loss, name="mean_action_loss")
+      mean_target_loss = tf.reduce_mean((1.0 - Ref.stop_in) * target_loss, name="mean_target_loss")
 
-      # return action handles
-      return TowerOutputs(loss, mean_stop_loss, mean_action_loss, mean_target_loss)
-    # END buildTower
+      return Losses(loss, mean_action_loss, mean_stop_loss, mean_target_loss)
 
 
     # configure global variables (global_step, learning_rate)
@@ -457,15 +545,23 @@ with tf.Session() as sess:
           with tf.device(devName):
             with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
               with tf.name_scope(towerName):
-                IR = buildIRPlaceholders()
-                towerOut = buildTower(IR, batch_size=train_batch_size)
+                # build placeholders
+                IR = buildIRPlaceholders(batch_size=train_batch_size)
+                Ref = buildReferencePlaceholders(batch_size=train_batch_size)
+
+                # attach queues
+                Q = QueuedTrainingInputs(IR, Ref, batch_size=train_batch_size)
+                QIR, QRef = Q.dequeue()
+
+                towerOut = buildTower(QIR, batch_size=train_batch_size)
+                towerLoss = buildLosses(towerOut, QRef)
 
                 # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
                 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
-              # place this in global scope (there is only a single training device atm)
+              # place this in global name scope (there is only a single training device atm)
               train_dist_op = optimizer.minimize(
-                  loss=towerOut.loss,
+                  loss=towerLoss.loss,
                   global_step=global_step,
                   name="train_dist_op")
 
