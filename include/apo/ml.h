@@ -113,6 +113,10 @@ public:
   ATTR_WARN_UNUSED
   Task infer_dist(ResultDistVec & oResultDist, const ProgramVec& progs, size_t startIdx, size_t endIdx, std::string towerName);
 
+  // infer loss
+  ATTR_WARN_UNUSED
+  Task infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & progs, size_t startIdx, size_t endIdx, std::string towerName, Losses & oLosses);
+
   // returns a plain STOP result
   ResultDist createStopResult() const;
 

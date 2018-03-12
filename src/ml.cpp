@@ -462,31 +462,7 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
         // summary, _ = sess.run([merged, train_op], feed_dict=feed_dict())
         // writer.add_summary(summary, i)
       }
-
-#if 0
-      if (oLosses) {
-        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_stop_loss", towerName + "/mean_target_loss", towerName + "/mean_action_loss"}, {}, &outputs) );
-        float pStopLoss = outputs[0].scalar<float>()(0);
-        float pTargetLoss = outputs[1].scalar<float>()(0);
-        float pActionLoss = outputs[2].scalar<float>()(0);
-
-        // std::cout << loss_out << "\n";
-        L.stopLoss += (double) pStopLoss;
-        L.targetLoss += (double) pTargetLoss;
-        L.actionLoss += (double) pActionLoss;
-      }
-#endif
     }
-
-#if 0
-    if (oLosses) {
-      double numBatches = num_Samples / (double) config.train_batch_size;
-      oLosses->stopLoss = L.stopLoss / numBatches;
-      oLosses->targetLoss = L.targetLoss / numBatches;
-      oLosses->actionLoss = L.actionLoss / numBatches;
-    }
-#endif
-
     delete batchVec;
   });
 
@@ -498,6 +474,73 @@ void
 Model::flush() {
   // Mutex_guard guard(modelMutex);
 }
+
+#define IF_DEBUG_LOSSES if (false)
+Task
+Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & progs, size_t startIdx, size_t endIdx, std::string towerName, Losses & oLosses) {
+  IF_DEBUG_LOSSES { std::cerr << "ml::infer_dist start=" << startIdx << ", end=" << endIdx << ", towerName = " << towerName << "\n"; }
+  Program emptyP(config.num_Params, {}); // the empty program
+
+  auto batchVec = new std::vector<Batch>();
+  for (int s = startIdx; s < endIdx; s += config.infer_batch_size) {
+
+    // detect remainder batch
+    int batch_size = std::min<int>(config.infer_batch_size, endIdx - s);
+    Batch batch(*this, batch_size);
+
+    int emptyBatchElements = 0;
+
+    #pragma omp parallel for shared(batch)
+    for (int i = 0; i < batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      if (P.size() > config.prog_length) {
+        batch.encode_Program(i, emptyP);
+      } else {
+        batch.encode_Program(i, P);
+      }
+      batch.encode_Result(i, resultDistVec[s + i]);
+    }
+
+    batchVec->push_back(batch);
+  }
+
+
+  size_t numLossSamples = progs.size();
+  auto workerThread = Task([this, &oLosses, batchVec, startIdx, endIdx, numLossSamples, towerName]{
+    // Mutex_guard guard(modelMutex); // TODO use a staging area for concurrent device transfers
+    oLosses = {0,0,0};
+
+    for (int batchIdx = 0; batchIdx < batchVec->size(); ++batchIdx) {
+      int batchStartIdx = startIdx + batchIdx * config.infer_batch_size; // works because only the last bach may not be a complete infer_batch_size package
+      auto & batch = (*batchVec)[batchIdx];
+      // for (auto & batch : *batchVec) {
+
+      IF_DEBUG_LOSSES batch.print(std::cerr);
+      // The session will initialize the outputs
+      std::vector<tensorflow::Tensor> outputs;
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
+
+      // writer.add_summary(summary, i)
+      float actionLoss = outputs[0].scalar<float>()();
+      float targetLoss = outputs[1].scalar<float>()();
+      float stopLoss = outputs[2].scalar<float>()();
+
+      oLosses.actionLoss += actionLoss * batch.size();
+      oLosses.targetLoss += targetLoss * batch.size();
+      oLosses.stopLoss += stopLoss * batch.size();
+    }
+
+    oLosses.actionLoss /= (double) numLossSamples;
+    oLosses.targetLoss /= (double) numLossSamples;
+    oLosses.stopLoss /= (double) numLossSamples;
+    //assert(batchStartIdx == endIdx);
+
+    delete batchVec;
+  });
+
+  return workerThread;
+}
+#undef IF_DEBUG_LOSSES
 
 #define IF_DEBUG_INFER if (false)
 Task
