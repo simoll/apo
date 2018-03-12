@@ -47,13 +47,13 @@ num_hidden_layers = int(conf["num_hidden_layers"]) #6
 # decoder layers (state wraparound)
 num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
+train_batch_size = int(conf["train_batch_size"])
+
 # cell_type
 cell_type= conf["cell_type"].strip()
 print("Model (construct). num_OpCodes={}, prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(num_OpCodes, prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
 # input feed
 
-# training control parameter (has auto increment)
-global_step = tf.get_variable("global_step", initializer = 0, dtype=tf.int32, trainable=False)
 
 
 
@@ -96,7 +96,6 @@ with tf.Session() as sess:
 
       # number of instructions in the program
       IR.length_data = tf.placeholder(tf.int32, [None], name="length_data")
-      IR.batch_size=tf.shape(IR.length_data)[0]
       
       # opCode per instruction
       IR.oc_data = tf.placeholder(tf.int32, [None, prog_length], name="oc_data")
@@ -109,8 +108,11 @@ with tf.Session() as sess:
       return IR
 
     # returns @TowerOutputs with the tower's output operations
-    def buildTower(IR):
-      batch_size=tf.shape(IR.length_data)[0]
+    def buildTower(IR, batch_size=None):
+      if batch_size is None:
+        # configure for a dynamic batch_size
+        batch_size=tf.shape(IR.length_data)[0]
+       
       oc_inputs = tf.nn.embedding_lookup(oc_embedding, IR.oc_data) # [batch_size x idx x embed_size]
       print("oc_inputs : {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
 
@@ -383,8 +385,12 @@ with tf.Session() as sess:
       return TowerOutputs(loss, mean_stop_loss, mean_action_loss, mean_target_loss)
     # END buildTower
 
+
+    # configure global variables (global_step, learning_rate)
+    # training control parameter (has auto increment)
+    global_step = tf.get_variable("global_step", initializer = 0, dtype=tf.int32, trainable=False)
+
     # learning_rate
-    # attach optimizer to "train" device (defining the unique "train_dist_op")
     if False:
     # learning rate configuration
       starter_learning_rate = 0.001
@@ -452,14 +458,14 @@ with tf.Session() as sess:
             with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
               with tf.name_scope(towerName):
                 IR = buildIRPlaceholders()
-                towerOut = buildTower(IR)
+                towerOut = buildTower(IR, batch_size=train_batch_size)
 
                 # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
                 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate) # seems to perform better on the "count-oc_Add-task"
 
               # place this in global scope (there is only a single training device atm)
               train_dist_op = optimizer.minimize(
-                  loss=devLoss,
+                  loss=towerOut.loss,
                   global_step=global_step,
                   name="train_dist_op")
 
