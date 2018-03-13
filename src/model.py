@@ -249,33 +249,26 @@ with tf.Session() as sess:
       oc_inputs = tf.nn.embedding_lookup(oc_embedding, IR.oc_data) # [batch_size x idx x embed_size]
       print("oc_inputs : {}".format(oc_inputs.get_shape())) # [ batch_size x max_len x embed_size ]
 
-      # build the network
-      zero_batch = tf.zeros([batch_size, state_size], dtype=data_type())
+
       # param_batch = tf.split(tf.tile(param_embed, [1, batch_size]), 1, batch_size)
       # print(param_embed.get_shape()) # [numParams x state_size]
       # print(param_batch.get_shape()) # [batch_size x numParams x state_size]
 
-      param_batch = tf.reshape(tf.tile(param_embed, [batch_size, 1]), [batch_size, num_Params, -1])
-
-      if Debug:
-          print("param_batch: {}".format(param_batch.get_shape()))
- 
       # attach neutral and param matrices
-      outputs = [zero_batch]
-      for i in range(num_Params):
-          outputs.append(param_batch[:, i, :])
-
-      # outputs = [zero_batch] + param_embed # [batch_size x time x state_size]
-      if Debug:
-          print(outputs)
+      # outputs = [zero_state] + param_embed # [batch_size x time x state_size]
 
       ### recurrent cell setup ###
       tupleState=False
+      isFusedCell=False
       if cell_type == "gru":
           make_cell = lambda: tf.nn.rnn_cell.GRUCell(state_size)
       elif cell_type == "lstm_block":
           tupleState = True
           make_cell = lambda: tf.contrib.rnn.LSTMBlockCell(state_size)
+      elif cell_type == "lstm_fused":
+          tupleState = True
+          isFusedCell = True
+          make_cell = lambda: tf.contrib.rnn.LSTMBlockFusedCell(state_size)
       elif cell_type == "lstm":
           tupleState = True
           make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
@@ -284,8 +277,23 @@ with tf.Session() as sess:
           print("Failed to build model! Choose an RNN cell type.")
           raise SystemExit
 
+      zero_state = tf.zeros([batch_size, state_size], dtype=data_type())
 
-      initial_outputs = outputs
+      ### assemble the common (input) prefix (params, zeros)
+      # layout the param embeddings in ascending order
+      param_batch = tf.reshape(tf.tile(param_embed, [batch_size, 1]), [batch_size, num_Params, -1])
+
+      # pre-pend zeros for neutral operand (n/a operand position)
+      if Debug:
+          print("param_batch: {}".format(param_batch.get_shape()))
+ 
+      seq_prefix = [zero_state]
+      for i in range(num_Params):
+          seq_prefix.append(param_batch[:, i, :])
+      if Debug:
+          print(seq_prefix)
+
+      seq_prefix = tf.stack(seq_prefix)
       
       ### network setup ###
       UseRDN=True 
@@ -295,21 +303,14 @@ with tf.Session() as sess:
             out_states=[]
             last_states=[]
 
-            zeros = tf.zeros([batch_size, state_size], dtype=data_type())
-
             next_initial = None
             for l in range(num_hidden_layers + num_decoder_layers):
               if l == 0:
                 # apply LSTM to opCodes
                 inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
               else:
-                # DEBUG
-                # inputs = outputs
-                # pass
-
-                # last iteration output states
-                sequence = [zeros] * (1 + num_Params) + outputs
-                # print(sequence)
+                # pre-pend common input prefix
+                sequence = tf.concat([seq_prefix, outputs], 0)
 
                 # next layer inputs to assemble
                 inputs=[]
@@ -340,21 +341,24 @@ with tf.Session() as sess:
 
 
               with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
-                # print("Input at layer {}".format(l))
-                # print(inputs)
                 cell = make_cell()
+
+                zero_cell_state = cell.zero_state(batch_size=batch_size, dtype = data_type()) if not isFusedCell else (zero_state, zero_state) 
 
                 # hidden layers have zero initial states
                 if l < num_hidden_layers:
                   # hidden - initial
-                  next_initial = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+                  next_initial = zero_cell_state
                 else:
                   # decoder - initial state
                   state_idx = (l - num_decoder_layers)
                   next_initial = last_states[state_idx]
 
-                outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=IR.length_data)
-                # next_initial = state # LSTM wrap around for decoder layers
+                if isFusedCell:
+                   # [batch_size x time x input_size]
+                   outputs, state = cell(tf.stack(inputs), initial_state=next_initial, sequence_length=IR.length_data)
+                else:
+                   outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=IR.length_data)
 
                 if tupleState:
                   # e.g. LSTM
@@ -378,7 +382,7 @@ with tf.Session() as sess:
           else:
             cell = make_cell()
 
-          initial_state = cell.zero_state(dtype=data_type(), batch_size=batch_size)
+          initial_state = zero_state #(dtype=data_type(), batch_size=batch_size)
 
           # use a plain LSTM
           inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
@@ -449,7 +453,9 @@ with tf.Session() as sess:
       with tf.variable_scope("target"):
         cell = make_relu(state_size * 2)
         accu=[]
-        for batch in outputs:
+        for i in range(prog_length):
+          batch = outputs[i]
+        #for batch in outputs:
           J = tf.concat([batch, pool], axis=1) # TODO factor out pool transformation (redundant)
           with tf.variable_scope("instance", reuse=len(accu) > 0):
             pc_target_logit = tf.layers.dense(inputs=net_out, activation=tf.identity, units=1)[:, 0]
@@ -472,7 +478,9 @@ with tf.Session() as sess:
       ### rule logits ###
       with tf.variable_scope("rules"):
         accu=[]
-        for batch in outputs:
+        for i in range(prog_length):
+          batch = outputs[i]
+        # for batch in outputs:
           J = tf.concat([batch, pool], axis=1)
           with tf.variable_scope("", reuse=len(accu) > 0):
             rule_bit = tf.layers.dense(inputs=J, activation=tf.identity, units=max_Rules, name="layer")
