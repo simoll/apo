@@ -21,21 +21,30 @@ def parseEvalLine(l):
 def parseLog(logPath):
   X = []
   bestY = []
+  stopY = []
   trainRound=None
   for l in open(logPath, 'r'):
     if l.startswith("- Round "):
       trainRound = parseRoundHeader(l)
+      X.append(trainRound)
     elif "(best)" in l:
       if trainRound is None:
         print("Missed round header!!!")
         raise SystemExit
-      X.append(trainRound)
       # total, match, longerDer, shortedDer, betterScore = parseEvalLine(l)
-      total = parseEvalLine(l)
-      bestY.append(total)
-  return X, bestY
+      bestTotal = parseEvalLine(l)
+      bestY.append(bestTotal)
+    elif "(STOP)" in l:
+      if trainRound is None:
+        print("Missed round header!!!")
+        raise SystemExit
+      # total, match, longerDer, shortedDer, betterScore = parseEvalLine(l)
+      stopTotal = parseEvalLine(l)
+      stopY.append(stopTotal)
+  return X, bestY, stopY
 
 
-X, Y = parseLog(sys.argv[1])
-pl.plot(X, Y)
+X, bestY, stopY = parseLog(sys.argv[1])
+pl.plot(X, bestY, 'b')
+pl.plot(X, stopY, 'g')
 pl.show()
