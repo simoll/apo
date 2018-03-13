@@ -105,13 +105,14 @@ SampleServer {
     double getAvgDerTime() const { return numSearchRounds > 0 ? (derTotalTime / (double) numSearchRounds) : 0; }
     double getAvgSampleTime() const { return numSearchRounds > 0 ? (sampleTotalTime / (double) numSearchRounds) : 0; }
     double getAvgSearchTime() const { return numSearchRounds > 0 ? (searchTotalTime / (double) numSearchRounds) : 0; }
+    double getAvgNumDerivations() const { return numSearchRounds > 0 ? (numDerivations / (double) numSearchRounds) : 0; }
 
     std::ostream&
     print(std::ostream & out) const {
       out << "Server: "
           << "Queue  (avgPushStall=" << getPushStall() << "s, fastPushRatio=" <<  getWaitlessPushRatio() << ", avgPullStall=" << getPullStall() << "s, fastPullRatio=" << getWaitlessPullRatio() << ")\n"
           // << "\tCache  (derCacheSize=" << derCacheSize << ", hitRate=" << getCacheHitRate() << ", numImproved=" << numImprovedDer << ", numAdded=" << numAddedDer << ", seenBefore=" << numSeenBeforeDer << ")\n" // (deprecated)
-          << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << ", avgSearchTime=" << getAvgSearchTime() << "s, numSearchRounds=" << numSearchRounds << ", numDer=" << numDerivations << ", avgTrainTime=" << avgTrainTime  << "s)\n";
+          << "\tSearch (avgGenerateMoveTime=" << getAvgGenerateMoveTime() << "s , avgDerTime=" << getAvgDerTime() << "s , avgSampleTime=" << getAvgSampleTime() << ", avgSearchTime=" << getAvgSearchTime() << "s, numSearchRounds=" << numSearchRounds << ", avgNumDer=" << getAvgNumDerivations() << ", avgTrainTime=" << avgTrainTime  << "s)\n";
 
       // TODO pModel, avgReplaySampleTime
       return out;
