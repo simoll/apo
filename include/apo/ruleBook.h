@@ -398,6 +398,8 @@ struct RuleBook {
           // evaluate and encode as constant
           data_t result = Evaluate(P(pc).oc, dataVec);
           P(pc) = build_const(result);
+
+          P.dce(); // clear out disconnected constants
         } return;
 
         case BuiltinRules::Erase: {
