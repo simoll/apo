@@ -251,7 +251,7 @@ MonteCarloOptimizer::greedyDerivation(DerivationVec & bestStates, DerivationVec 
       );
 
     // update best seen solution
-      if (currState.betterThan(bestStates[t])) {
+      if (currState.betterThan(bestStates[progId])) {
         bestStates[progId] = currState;
       }
 

@@ -383,8 +383,12 @@ APO::train(const Job & task) {
       [this, &totalSearchRounds, &keepRunning, &server, &cpuMutex, &inferDevices, &task]
   (int devId, int startWork, int endWork)
   {
+    Device threadDevice = inferDevices[devId]; // FIXME this is a hacky way to select a subrange of devices (namely just one device)
+    threadDevice.relStart = 0.0;
+    threadDevice.relRating = 1.0;
+
     // only use a single inference device for this thread
-    DeviceVec threadInferDevices(1, inferDevices[devId]);
+    DeviceVec threadInferDevices(1, threadDevice);
 
     // compute all one-step derivations
     using RewriteVec = std::vector<std::pair<int, Action>>; // progIndex X (pc, ruleId)
