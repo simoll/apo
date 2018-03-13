@@ -51,11 +51,13 @@ Distribute(const DeviceVec & devices, int numElements, std::function<void(int de
       const auto & dev = devices[i];
       int startSlice = (int) floor(dev.relStart * numElements);
       int endSlice = (i + 1 == devices.size()) ? numElements :  (int) floor((dev.relStart + dev.relRating) * numElements);
-      threads.push_back(std::thread(
-          [i, startSlice, endSlice, &userFunc](){
-            userFunc(i, startSlice, endSlice);
-          }
-      ));
+      if (endSlice > startSlice) {
+        threads.push_back(std::thread(
+            [i, startSlice, endSlice, &userFunc](){
+              userFunc(i, startSlice, endSlice);
+            }
+        ));
+      }
     }
 
     for (int i = 0; i < threads.size(); ++i) {
