@@ -18,18 +18,21 @@ def parseEvalLine(l):
 
   detailParts = parts[1][:-1].split(' ')
   betterText = detailParts[-1][:-1]
-  print(betterText)
 
   return float(totalText), float(betterText)
 
 def parseLog(logPath):
+  taskName=None
   X = []
   bestY = []
   bestBetterY = []
   stopY = []
   stopBetterY = []
+
+  incBetterX = [] # only track improvements for incumbent
   incBetterY = []
 
+  lastIncumbent=0.0
   trainRound=None
   for l in open(logPath, 'r'):
     if l.startswith("- Round "):
@@ -56,17 +59,49 @@ def parseLog(logPath):
         print("Missed round header!!!")
         raise SystemExit
       # total, match, longerDer, shortedDer, betterScore = parseEvalLine(l)
+
       incTotal, incBetter = parseEvalLine(l)
-      # stopY.append(stopTotal)
+      if incBetter <= lastIncumbent:
+        continue
+        
+      lastIncumbent=incBetter
+      incBetterX.append(trainRound)
       incBetterY.append(incBetter)
-  return X, bestY, bestBetterY, stopY, stopBetterY, incBetterY
+    elif l.startswith("name ="):
+      taskName = l.split(" ")[2].strip()
+
+  return taskName, X, bestY, bestBetterY, stopY, stopBetterY, incBetterX, incBetterY
+
+# parse data
+taskName, X, bestY, bestBetterY, stopY, stopBetterY, incBetterX, incBetterY = parseLog(sys.argv[1])
+
+# build an artificial performance score
+def buildPerfIndex(bestY, bestBetterY):
+  return [best + better for best, better in zip(bestY, bestBetterY)]
+
+indexY = buildPerfIndex(bestY, bestBetterY)
 
 
-X, bestY, bestBetterY, stopY, stopBetterY, incBetterY = parseLog(sys.argv[1])
+# plot data
 pl.plot(X, bestY, 'b', label="best")
 pl.plot(X, bestBetterY, 'c', label="improved (best)")
 pl.plot(X, stopY, 'g',label="stop")
 pl.plot(X, stopBetterY, 'm',label="improved (stop)")
-pl.step(X, incBetterY, 'r',label="improved (ceil)")
+pl.plot(incBetterX, incBetterY, 'k.:',label="improved (ceil)")
+if len(incBetterY) > 0:
+  # append line w/o dot
+  lastValue = incBetterY[-1]
+  lastUpdateRound = incBetterX[-1]
+  lastRound = X[-1]
+  if lastUpdateRound != lastRound:
+    pl.plot([lastUpdateRound, lastRound], [lastValue] * 2, 'k:')
+
+pl.plot(X, indexY, 'k:',label="perf index")
+
+pl.title("training on {} task".format(taskName))
+
+# axis
+pl.xlabel("global step")
+pl.ylabel("% of hold-out samples")
 pl.legend()
 pl.show()
