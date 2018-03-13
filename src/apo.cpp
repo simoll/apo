@@ -368,7 +368,11 @@ APO::train(const Job & task) {
 
 #ifdef APO_ASYNC_TASKS
   const int numInferDevices = inferDevices.size();
-  const int numSearchThreads = 4 * numInferDevices; // made up number of searchThreads per device
+  int totalInferRating = 0;
+  for (const auto inferDev : inferDevices) {
+    totalInferRating += inferDev.rating;
+  }
+  const int numSearchThreads = totalInferRating; // made up number of searchThreads per device
 #else
   const int numSearchThreads = 1;
 #endif
