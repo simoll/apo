@@ -63,9 +63,10 @@ def parseLog(logPath):
 
 
 X, bestY, bestBetterY, stopY, stopBetterY, incBetterY = parseLog(sys.argv[1])
-pl.plot(X, bestY, 'b')
-pl.plot(X, bestBetterY, 'c')
-pl.plot(X, stopY, 'g')
-pl.plot(X, stopBetterY, 'm')
-pl.plot(X, incBetterY, 'r')
+pl.plot(X, bestY, 'b', label="best")
+pl.plot(X, bestBetterY, 'c', label="improved (best)")
+pl.plot(X, stopY, 'g',label="stop")
+pl.plot(X, stopBetterY, 'm',label="improved (stop)")
+pl.step(X, incBetterY, 'r',label="improved (ceil)")
+pl.legend()
 pl.show()
