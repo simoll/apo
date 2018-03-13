@@ -83,11 +83,11 @@ indexY = buildPerfIndex(bestY, bestBetterY)
 
 
 # plot data
-pl.plot(X, bestY, 'b', label="best")
-pl.plot(X, bestBetterY, 'c', label="improved (best)")
-pl.plot(X, stopY, 'g',label="stop")
-pl.plot(X, stopBetterY, 'm',label="improved (stop)")
-pl.plot(incBetterX, incBetterY, 'k.:',label="improved (ceil)")
+pl.plot(X[:len(bestY)], bestY, 'b', label="best")
+pl.plot(X[:len(bestBetterY)], bestBetterY, 'c', label="improved (best)")
+pl.plot(X[:len(stopY)], stopY, 'g',label="stop")
+pl.plot(X[:len(stopBetterY)], stopBetterY, 'm',label="improved (stop)")
+pl.plot(incBetterX[:len(incBetterY)], incBetterY, 'k.:',label="improved (ceil)")
 if len(incBetterY) > 0:
   # append line w/o dot
   lastValue = incBetterY[-1]
@@ -96,7 +96,7 @@ if len(incBetterY) > 0:
   if lastUpdateRound != lastRound:
     pl.plot([lastUpdateRound, lastRound], [lastValue] * 2, 'k:')
 
-pl.plot(X, indexY, 'k:',label="perf index")
+pl.plot(X[:len(indexY)], indexY, 'k:',label="perf index")
 
 pl.title("training on {} task".format(taskName))
 
