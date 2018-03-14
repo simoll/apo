@@ -103,7 +103,7 @@ int main(int argc, char ** argv) {
     std::ifstream in(progFile);
     ProgramPtr P(Program::Parse(in));
     if (!P) {
-      std::cerr << "Could not load program!\n";
+      std::cerr << "Could not load program at path " << progFile << "\n";
       return -1;
     }
 

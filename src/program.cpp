@@ -93,6 +93,9 @@ Program::Parse(std::istream & in) {
     statVec.emplace_back(oc, operandVec);
   }
 
+  // empty program
+  if (statVec.empty()) return nullptr;
+
   // all good, instantiate
   return new Program(3, statVec); // TODO read num params from prologue
 }
