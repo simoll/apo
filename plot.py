@@ -79,11 +79,27 @@ taskName, X, bestY, bestBetterY, stopY, stopBetterY, incBetterX, incBetterY = pa
 def buildPerfIndex(bestY, bestBetterY):
   return [best + better for best, better in zip(bestY, bestBetterY)]
 
+def filterImprovements(X,Y):
+  outX = [X[0]]
+  outY = [Y[0]]
+  bestY= outY[0]
+  for x,y in zip(X,Y):
+    if y > bestY:
+      outX.append(x)
+      outY.append(y)
+      bestY = y
+  return outX, outY
+
+
 indexY = buildPerfIndex(bestY, bestBetterY)
 
+bestX=X[:len(bestY)]
+
+# filter new incumbents
+topX, topY = filterImprovements(bestX, bestY)
 
 # plot data
-pl.plot(X[:len(bestY)], bestY, 'b', label="best")
+pl.plot(bestX, bestY, 'b', label="best")
 pl.plot(X[:len(bestBetterY)], bestBetterY, 'c', label="improved (best)")
 pl.plot(X[:len(stopY)], stopY, 'g',label="stop")
 pl.plot(X[:len(stopBetterY)], stopBetterY, 'm',label="improved (stop)")
@@ -95,6 +111,9 @@ if len(incBetterY) > 0:
   lastRound = X[-1]
   if lastUpdateRound != lastRound:
     pl.plot([lastUpdateRound, lastRound], [lastValue] * 2, 'k:')
+
+# plot incumbent solution
+pl.plot(topX, topY, 'bx',label="incumbent (best)")
 
 pl.plot(X[:len(indexY)], indexY, 'k:',label="perf index")
 
