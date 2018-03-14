@@ -17,9 +17,6 @@ struct ModelConfig {
   int max_Rules;
   int max_OpCodes;
 
-  // loss configuration
-  bool self_organizing;
-
   ModelConfig(const std::string & configFile, const std::string & trainFile);
   std::ostream & print(std::ostream & out) const;
   void dump() const { print(std::cerr); }

@@ -10,7 +10,6 @@ ModelConfig::ModelConfig(const std::string & configFile, const std::string & tra
   // soft configuration
   infer_batch_size = trainParser.get_or_fail<int>("infer_batch_size"); // inference mini batch size
   batch_train_steps = trainParser.get_or_fail<int>("batch_train_steps");
-  self_organizing = trainParser.get_or_fail<int>("self_organizing");
 
   // hard configuration (requires model rebuilding)
   train_batch_size = confParser.get_or_fail<int>("train_batch_size"); // training mini batch size
@@ -28,8 +27,7 @@ ModelConfig::print(std::ostream & out) const {
                << ", batch_train_steps=" << batch_train_steps
                << ", prog_length=" << prog_length
                << ", max_Rules=" << max_Rules
-               << ", num_Params=" << num_Params
-               << ", self_organizing=" << self_organizing << ").";
+               << ", num_Params=" << num_Params << ").";
   return out;
 }
 

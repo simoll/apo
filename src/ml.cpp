@@ -382,52 +382,14 @@ Model::train_dist(const ProgramVec& progs, const ResultDistVec& results,std::str
 
   std::vector<Batch> * batchVec = new std::vector<Batch>();
 
-  // infer current distribution
-  ResultDistVec modelDists;
-  if (config.self_organizing) {
-    modelDists.resize(progs.size(), createEmptyResult());
-    infer_dist(modelDists, progs, 0, progs.size(), "cpu").join(); // FIXME no hard-coded devices
-  }
-
   // encode programs in current thread
   for (int s = 0; s + config.train_batch_size - 1 < num_Samples; s += config.train_batch_size) {
     Batch batch(*this, config.train_batch_size);
     // #pragma omp parallel for shared(batch,progs)
-    if (config.self_organizing) {
-
-      for (int i = 0; i < config.train_batch_size; ++i) {
-        const Program & P = *progs[s + i];
-        batch.encode_Program(i, P);
-
-        int progIdx = s + i;
-
-        // interpolate between reference distribution and current model distribution
-        // TODO move this to tensorflow if it pans out
-        const double pKeep = 0.8; // keep probability
-
-        ResultDist learnDist = createEmptyResult();
-        for (int a = 0; a < learnDist.size(); ++a) {
-          float refValue = results[progIdx].pAction(a);
-          if (refValue > 0.0001) {
-            // interpolate allowed moves
-            learnDist.pAction(a) = pKeep * modelDists[progIdx].pAction(a) + (1 - pKeep) * results[progIdx].pAction(a);
-          } else {
-            // ban invalid moves
-            learnDist.pAction(a) = 0.0; // redundant
-          }
-        }
-        learnDist.stopDist = results[progIdx].stopDist; // pKeep * modelDists[progIdx].stopDist + (1 - pKeep) * results[progIdx].stopDist;
-
-        learnDist.normalize();
-
-        batch.encode_Result(i, learnDist);
-      }
-    } else {
-      for (int i = 0; i < config.train_batch_size; ++i) {
-        const Program & P = *progs[s + i];
-        batch.encode_Program(i, P);
-        batch.encode_Result(i, results[s + i]);
-      }
+    for (int i = 0; i < config.train_batch_size; ++i) {
+      const Program & P = *progs[s + i];
+      batch.encode_Program(i, P);
+      batch.encode_Result(i, results[s + i]);
     }
     batchVec->push_back(batch);
   }
