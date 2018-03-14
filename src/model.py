@@ -295,103 +295,85 @@ with tf.Session() as sess:
 
       seq_prefix = tf.stack(seq_prefix)
       
+
       ### network setup ###
-      UseRDN=True 
-      if UseRDN:   # Recursive Dag Network
-          # TODO document
-          with tf.variable_scope("DAG"): 
-            out_states=[]
-            last_states=[]
+      with tf.variable_scope("DAG"): 
+        out_states=[]
+        last_states=[]
 
-            next_initial = None
-            for l in range(num_hidden_layers + num_decoder_layers):
-              if l == 0:
-                # apply LSTM to opCodes
-                inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
-              else:
-                # pre-pend common input prefix
-                sequence = tf.concat([seq_prefix, outputs], 0)
-
-                # next layer inputs to assemble
-                inputs=[]
-                batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [batch_size x 1]
-                # [prog_length x batch_size]
-                for time_step in range(prog_length):
-                  # if time_step > 0: tf.get_variable_scope().reuse_variables()
-
-                    # fetch current inputs
-                    with tf.variable_scope("inputs"):
-                      # gather first operand outputs
-                      with tf.variable_scope("firstOp"):
-                        # sequence [prog_len x batch_size x state_size]
-                        # indices [batch_size x 1]
-                        indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1)
-                        idx = tf.concat([indices, batch_range], axis=1)
-                        flat_first = tf.gather_nd(sequence, idx)
-
-                      # gather second operand outputs
-                      with tf.variable_scope("sndOp"):
-                        indices = tf.expand_dims(IR.sndOp_data[:, time_step], axis=1)
-                        idx = tf.concat([indices, batch_range], axis=1)
-                        flat_snd = tf.gather_nd(sequence, idx)
-
-                      # merge into joined input 
-                      time_input = tf.concat([outputs[time_step], flat_first, flat_snd], axis=1, name="seq_input")
-                      inputs.append(time_input)
-
-
-              with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
-                cell = make_cell()
-
-                zero_cell_state = cell.zero_state(batch_size=batch_size, dtype = data_type()) if not isFusedCell else (zero_state, zero_state) 
-
-                # hidden layers have zero initial states
-                if l < num_hidden_layers:
-                  # hidden - initial
-                  next_initial = zero_cell_state
-                else:
-                  # decoder - initial state
-                  state_idx = (l - num_decoder_layers)
-                  next_initial = last_states[state_idx]
-
-                if isFusedCell:
-                   # [batch_size x time x input_size]
-                   outputs, state = cell(tf.stack(inputs), initial_state=next_initial, sequence_length=IR.length_data)
-                else:
-                   outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=IR.length_data)
-
-                if tupleState:
-                  # e.g. LSTM
-                  out_states.append(state[0])
-                  out_states.append(state[1])
-                  last_states.append(state)
-                else:
-                  # e.g. GRU
-                  out_states.append(state)
-                  last_states.append(state)
-
-              # last_output_size = tf.dim_size(outputs[0], 0)
-
-          # last layer output state
-          net_out = tf.concat(out_states, axis=1)
-
-      else:
-          # multi layer cell
-          if num_hidden_layers > 1:
-            cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(num_hidden_layers)], state_is_tuple=True)
+        next_initial = None
+        for l in range(num_hidden_layers + num_decoder_layers):
+          if l == 0:
+            # apply LSTM to opCodes
+            inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
           else:
+            # pre-pend common input prefix
+            sequence = tf.concat([seq_prefix, outputs], 0)
+
+            # next layer inputs to assemble
+            inputs=[]
+            batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [batch_size x 1]
+            # [prog_length x batch_size]
+            for time_step in range(prog_length):
+              # if time_step > 0: tf.get_variable_scope().reuse_variables()
+
+                # fetch current inputs
+                with tf.variable_scope("inputs"):
+                  # gather first operand outputs
+                  with tf.variable_scope("firstOp"):
+                    # sequence [prog_len x batch_size x state_size]
+                    # indices [batch_size x 1]
+                    indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1)
+                    idx = tf.concat([indices, batch_range], axis=1)
+                    flat_first = tf.gather_nd(sequence, idx)
+
+                  # gather second operand outputs
+                  with tf.variable_scope("sndOp"):
+                    indices = tf.expand_dims(IR.sndOp_data[:, time_step], axis=1)
+                    idx = tf.concat([indices, batch_range], axis=1)
+                    flat_snd = tf.gather_nd(sequence, idx)
+
+                  # merge into joined input 
+                  time_input = tf.concat([outputs[time_step], flat_first, flat_snd], axis=1, name="seq_input")
+                  inputs.append(time_input)
+
+
+          with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
             cell = make_cell()
 
-          initial_state = zero_state #(dtype=data_type(), batch_size=batch_size)
+            zero_cell_state = cell.zero_state(batch_size=batch_size, dtype = data_type()) if not isFusedCell else (zero_state, zero_state) 
 
-          # use a plain LSTM
-          inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
-          outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=initial_state, sequence_length=IR.length_data)# swap_memory=True)
-          last_output = outputs[-1]
-          if num_hidden_layers > 1:
-            net_out = tf.reshape(state[-1].c, [batch_size, -1])
-          else:
-            net_out = state.c
+            # hidden layers have zero initial states
+            if l < num_hidden_layers:
+              # hidden - initial
+              next_initial = zero_cell_state
+            else:
+              # decoder - initial state
+              state_idx = (l - num_decoder_layers)
+              next_initial = last_states[state_idx]
+
+            if isFusedCell:
+               # [batch_size x time x input_size]
+               outputs, state = cell(tf.stack(inputs), initial_state=next_initial, sequence_length=IR.length_data)
+            else:
+               outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=next_initial, sequence_length=IR.length_data)
+
+            if tupleState:
+              # e.g. LSTM
+              out_states.append(state[0])
+              out_states.append(state[1])
+              last_states.append(state)
+            else:
+              # e.g. GRU
+              out_states.append(state)
+              last_states.append(state)
+
+          # last_output_size = tf.dim_size(outputs[0], 0)
+
+      # last layer output state
+      net_out = tf.concat(out_states, axis=1)
+
+
 
       ### per-node objective ###
       # target_in = tf.placeholder(data_type(), [None, prog_length], name="target_in")        # dist over pcs
