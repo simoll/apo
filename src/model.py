@@ -314,8 +314,8 @@ with tf.Session() as sess:
             # apply LSTM to opCodes
             inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
           else:
-            # transOut = tf.transpose(outputs, perm=[1, 0, 2]) # [batch_size x prog_length x state]
-            bspOut = tf.transpose(outputs, perm=[1, 2, 0]) # [B x S x P]
+            transOut = tf.transpose(outputs, perm=[1, 0, 2]) # [batch_size x prog_length x state]
+            # bspOut = tf.transpose(outputs, perm=[1, 2, 0]) # [B x S x P]
 
             # pre-pend common input prefix
             sequence = tf.concat([seq_prefix, outputs], 0) # [P x B x S]
@@ -324,6 +324,8 @@ with tf.Session() as sess:
             inputs=[]
             batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [B x 1] -> batch_range[i][0] == i
             # [prog_length x batch_size]
+
+            # TODO remove loop entirely (rely on tensor operations intead)
             for time_step in range(prog_length):
               # fetch current inputs
               # gather first operand outputs
@@ -348,8 +350,8 @@ with tf.Session() as sess:
                 def reduceUsers(time_step, userIndices):
                   # filter out all users of the current pc (time_step + num_Params)
                   userMask = tf.equal(userIndices, 1 + num_Params + time_step) # [batch_size x prog_length]
-                  if False:
-                    # works but slow
+                  if True:
+                    # faster variant (2.4s)
                     expUserMask = tf.tile(tf.expand_dims(userMask, axis=2), [1, 1, state_size])
 
                     # mask user states
@@ -358,7 +360,7 @@ with tf.Session() as sess:
 
                     userInput = tf.reduce_sum(userStates, axis=1) # [batch_size x state]
                   else:
-                    # untested, potentially leaner # TODO test
+                    # slower variant (3.3s)
                     userMat = tf.expand_dims(tf.where(userMask, tf.ones_like(userMask, dtype=data_type()), tf.zeros_like(userMask, dtype=data_type())), axis=2) # [B x P x 1]
                     userSum = tf.matmul(bspOut, userMat) # [B x S x P] * [B x P x 1] -> [B x S x 1]
                     userInput = userSum[:, :, 0] # [B x S]
