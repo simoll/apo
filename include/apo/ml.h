@@ -99,9 +99,10 @@ public:
 
   // train model on a batch of programs (returns loss)
   struct Losses {
-    double stopLoss;
-    double targetLoss;
-    double actionLoss;
+    double totalLoss; // total loss (used for training)
+    double stopLoss; // loss due to wrong STOP signal
+    double targetLoss; // loss in target distribution
+    double actionLoss; // loss in action distribution
 
     std::ostream& print(std::ostream & out) const;
   };

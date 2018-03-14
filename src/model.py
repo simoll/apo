@@ -516,7 +516,7 @@ with tf.Session() as sess:
       move_losses = action_loss + target_loss 
 
       # conditional loss (only penalize rule/target if !stop_in)
-      loss = tf.reduce_mean((1.0 - Ref.stop_in) * move_losses) + stop_loss
+      loss = tf.reduce_mean((1.0 - Ref.stop_in) * move_losses + stop_loss)
       tf.identity(loss, "loss")
 
       # mean losses (for reporting only)

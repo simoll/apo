@@ -520,28 +520,31 @@ Model::infer_losses(const ResultDistVec & resultDistVec, const ProgramVec & prog
 
       IF_DEBUG_LOSSES batch.print(std::cerr);
       // The session will initialize the outputs
-      // upload tensors to device 
+      // upload tensors to device
       // TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
 
       // run inference
       std::vector<tensorflow::Tensor> outputs;
       {
         // Mutex_guard guard(inferMutex);  // FIXME reference inputs are un-staged (so need to refeed everything)
-        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, true), {towerName + "/loss", towerName + "/mean_action_loss", towerName + "/mean_target_loss", towerName + "/mean_stop_loss"}, {}, &outputs) );
       }
 
-      assert(outputs.size() == 3);
+      assert(outputs.size() == 4);
 
       // writer.add_summary(summary, i)
-      float actionLoss = outputs[0].scalar<float>()();
-      float targetLoss = outputs[1].scalar<float>()();
-      float stopLoss = outputs[2].scalar<float>()();
+      float totalLoss = outputs[0].scalar<float>()();
+      float actionLoss = outputs[1].scalar<float>()();
+      float targetLoss = outputs[2].scalar<float>()();
+      float stopLoss = outputs[3].scalar<float>()();
 
+      oLosses.totalLoss += totalLoss * batch.size();
       oLosses.actionLoss += actionLoss * batch.size();
       oLosses.targetLoss += targetLoss * batch.size();
       oLosses.stopLoss += stopLoss * batch.size();
     }
 
+    oLosses.totalLoss /= (double) numLossSamples;
     oLosses.actionLoss /= (double) numLossSamples;
     oLosses.targetLoss /= (double) numLossSamples;
     oLosses.stopLoss /= (double) numLossSamples;
@@ -593,12 +596,12 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       // The session will initialize the outputs
 
       // upload tensors to device
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) ); 
+      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
 
       // wait for the device to become available and run inference
       std::vector<tensorflow::Tensor> outputs;
       {
-        // Mutex_guard guard(inferMutex); 
+        // Mutex_guard guard(inferMutex);
         TF_CHECK_OK( session->Run({}, {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
       }
 
@@ -710,7 +713,7 @@ ResultDist::normalize() {
 
 std::ostream&
 Model::Losses::print(std::ostream & out) const {
-  out << "actionLoss=" << actionLoss << ", targetLoss=" << targetLoss << ", stopLoss=" << stopLoss;
+  out << "totalL=" << totalLoss << ", actionL=" << actionLoss << ", targetL=" << targetLoss << ", stopL=" << stopLoss;
   return out;
 }
 
