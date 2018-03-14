@@ -196,9 +196,9 @@ Model::saveCheckpoint(const std::string & checkPointFile) {
 int
 Model::translateOperand(node_t idx) const {
   if (idx < 0) {
-    return -idx;
+    return -idx; // parameter [1: numParams]
   } else {
-    return config.num_Params + idx;
+    return 1 + config.num_Params + idx; // proper operands [numParams+1: ...]
   }
 }
 
@@ -596,13 +596,13 @@ Model::infer_dist(ResultDistVec & oResultDistVec, const ProgramVec& progs, size_
       // The session will initialize the outputs
 
       // upload tensors to device
-      TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
+      // TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {}, {towerName + "/put_stage"}, nullptr) );
 
       // wait for the device to become available and run inference
       std::vector<tensorflow::Tensor> outputs;
       {
         // Mutex_guard guard(inferMutex);
-        TF_CHECK_OK( session->Run({}, {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
+        TF_CHECK_OK( session->Run(batch.buildFeed(towerName, false), {towerName + "/pred_stop_dist", towerName + "/pred_target_dist", towerName + "/pred_action_dist"}, {}, &outputs) );
       }
 
       // writer.add_summary(summary, i)

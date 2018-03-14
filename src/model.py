@@ -55,6 +55,9 @@ num_decoder_layers = int(conf["num_decoder_layers"]) #2
 
 train_batch_size = int(conf["train_batch_size"])
 
+modelOperands=int(conf["model_operands"]) != 0
+modelUsers=int(conf["model_users"]) != 0
+
 # cell_type
 cell_type= conf["cell_type"].strip()
 print("Model (construct). num_OpCodes={}, prog_length={}, num_Params={}, max_Rules={}, embed_size={}, state_size={}, num_hidden_layers={}, num_decoder_layers={}, cell_type={}".format(num_OpCodes, prog_length, num_Params, max_Rules, embed_size, state_size, num_hidden_layers, num_decoder_layers, cell_type))
@@ -295,10 +298,6 @@ with tf.Session() as sess:
 
     seq_prefix = tf.stack(seq_prefix)
     
-    # TODO move to model.conf
-    modelOperands=True
-    modelUsers=True
-
     ### network setup ###
     with tf.variable_scope("DAG"): 
       out_states=[]
@@ -315,29 +314,32 @@ with tf.Session() as sess:
             # apply LSTM to opCodes
             inputs = tf.unstack(oc_inputs, num=prog_length, axis=1)
           else:
+            # transOut = tf.transpose(outputs, perm=[1, 0, 2]) # [batch_size x prog_length x state]
+            bspOut = tf.transpose(outputs, perm=[1, 2, 0]) # [B x S x P]
+
             # pre-pend common input prefix
-            sequence = tf.concat([seq_prefix, outputs], 0)
+            sequence = tf.concat([seq_prefix, outputs], 0) # [P x B x S]
 
             # next layer inputs to assemble
             inputs=[]
-            batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [batch_size x 1]
+            batch_range = tf.expand_dims(tf.range(0, batch_size), axis=1) # [B x 1] -> batch_range[i][0] == i
             # [prog_length x batch_size]
             for time_step in range(prog_length):
               # fetch current inputs
               # gather first operand outputs
               if modelOperands:
+                def reduceOperands(time_step, opIndices):
+                  indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1) # [B x 1]
+                  idx = tf.concat([indices, batch_range], axis=1) # [B x 2] , indexes into P and B of sequence
+                  return tf.gather_nd(sequence, idx) # [B x S]
+
                 with tf.variable_scope("firstOp"):
-                  # sequence [prog_len x batch_size x state_size]
-                  # indices [batch_size x 1]
-                  indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1)
-                  idx = tf.concat([indices, batch_range], axis=1)
-                  flat_first = tf.gather_nd(sequence, idx)
+                  flat_first = reduceOperands(time_step, IR.firstOp_data)
 
                 # gather second operand outputs
                 with tf.variable_scope("sndOp"):
-                  indices = tf.expand_dims(IR.sndOp_data[:, time_step], axis=1)
-                  idx = tf.concat([indices, batch_range], axis=1)
-                  flat_snd = tf.gather_nd(sequence, idx)
+                  flat_snd = reduceOperands(time_step, IR.sndOp_data)
+
               else:
                 flat_first = None
                 flat_snd = None
@@ -345,20 +347,27 @@ with tf.Session() as sess:
               if modelUsers:
                 def reduceUsers(time_step, userIndices):
                   # filter out all users of the current pc (time_step + num_Params)
-                  userMask = tf.equal(userIndices, time_step + num_Params) # [batch_size x prog_length]
-                  expUserMask = tf.tile(tf.expand_dims(userMask, axis=2), [1, 1, state_size])
+                  userMask = tf.equal(userIndices, 1 + num_Params + time_step) # [batch_size x prog_length]
+                  if False:
+                    # works but slow
+                    expUserMask = tf.tile(tf.expand_dims(userMask, axis=2), [1, 1, state_size])
 
-                  # mask user states
-                  transOut = tf.transpose(outputs, perm=[1, 0, 2]) # [batch_size x prog_length x state]
-                  userStates = tf.where(expUserMask, transOut, tf.zeros_like(transOut, dtype=data_type()), name="userStates")
-                  # userStates : [batch_size x prog_length x state]
+                    # mask user states
+                    userStates = tf.where(expUserMask, transOut, tf.zeros_like(transOut, dtype=data_type()), name="userStates")
+                    # userStates : [batch_size x prog_length x state]
 
-                  userInput = tf.reduce_sum(userStates, axis=1) # [batch_size x state]
+                    userInput = tf.reduce_sum(userStates, axis=1) # [batch_size x state]
+                  else:
+                    # untested, potentially leaner # TODO test
+                    userMat = tf.expand_dims(tf.where(userMask, tf.ones_like(userMask, dtype=data_type()), tf.zeros_like(userMask, dtype=data_type())), axis=2) # [B x P x 1]
+                    userSum = tf.matmul(bspOut, userMat) # [B x S x P] * [B x P x 1] -> [B x S x 1]
+                    userInput = userSum[:, :, 0] # [B x S]
+
                   return userInput
 
                 with tf.variable_scope("users"):
                   first_user_state = reduceUsers(time_step, IR.firstOp_data)
-                  snd_user_state =reduceUsers(time_step, IR.sndOp_data)
+                  snd_user_state = reduceUsers(time_step, IR.sndOp_data)
                   user_input = first_user_state + snd_user_state # [batch_size x state]
 
               else:
@@ -607,8 +616,8 @@ with tf.Session() as sess:
           with tf.variable_scope("net", reuse=laterDevice, auxiliary_name_scope=False):
             with tf.name_scope(towerName):
               IR = buildIRPlaceholders()
-              StagedIR = buildInferStage(IR) # under test - no benefit in using an inference stage
-              towerOut = buildTower(StagedIR)
+              # StagedIR = buildInferStage(IR) # under test - no benefit in using an inference stage
+              towerOut = buildTower(IR)
 
       elif isLossTower:
         hasLossDevice = True
