@@ -129,9 +129,12 @@ int main(int argc, char ** argv) {
 
     // optimized prog.
     P->dump();
+#if 0
+    // redundant
     P->dce();
     std::cerr << "after DCE:\n";
     P->dump();
+#endif
 
     auto endScore = GetProgramScore(*P);
     double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
