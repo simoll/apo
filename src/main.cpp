@@ -34,7 +34,19 @@ int main(int argc, char ** argv) {
 
   // train command
   if (cmd == "train") {
-    if (argc != 3) return -1;
+    if (argc != 3 && argc != 5) return -1;
+
+    bool loadCheckpoint = false;
+    std::string cpFile;
+    if (argc == 5) {
+      loadCheckpoint = true;
+      std::string cmd = argv[3];
+      cpFile = argv[4];
+      if (cmd != "-c") {
+        std::cerr << "expected option -c <checkpoint.cp>!\n";
+        return 1;
+      }
+    }
 
     const std::string taskFile = argv[2];
 
@@ -46,6 +58,11 @@ int main(int argc, char ** argv) {
 
     APO::Job job(taskFile, cpPrefix);
     APO apo;
+
+    if (loadCheckpoint) {
+      std::cerr << "Restarting from checkpoint " << cpFile << "\n";
+      apo.loadCheckpoint(cpFile);
+    }
 
     apo.train(job);
     Model::shutdown();
@@ -148,8 +165,14 @@ int main(int argc, char ** argv) {
   }
 
   // help command
-  std::cerr << argv[0] << " <command>\nAvailable commands:\n"
-                           << "\ttrain <scenario.task>\n"
-                           << "\trun <modelCheckpoint.cp> <program.p>\n";
+  std::cerr << argv[0]
+    << " <command>\nAvailable commands:\n"
+    << "train <scenario.task> [-c checkpoint.cp]\n"
+         << "\ttrain the model with the task presented in scenatio.task.\n"
+         << "\t(optional) recover from the checkpoint file.\n"
+    << "run <modelCheckpoint.cp> <program.p>\n"
+         << "\toptimize program.p with the model configuration from the checkpoint.\n"
+    << "rand <program.p>\n"
+         << "use random MCTs to optimize the program.\n";
   return 0;
 }
