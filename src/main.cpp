@@ -80,7 +80,8 @@ int main(int argc, char ** argv) {
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
     double startOpt = get_wall_time();
-    apo.optimize(progVec, APO::Strategy::Random, stepLimit);
+    IntVec reqSteps(1, 0);
+    apo.optimize(progVec, reqSteps, APO::Strategy::Random, stepLimit);
     double endOpt = get_wall_time();
 
     // optimized prog.
@@ -88,7 +89,7 @@ int main(int argc, char ** argv) {
     // auto endScore = GetProgramScore(*P);
     double optTime = (endOpt - startOpt);
 
-    std::cerr << "Opt time= " << optTime << "s\n";
+    std::cerr << "derSteps: " << reqSteps[0] << ", Opt time= " << optTime << "s\n";
     //  std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
 
     Model::shutdown();
@@ -124,7 +125,8 @@ int main(int argc, char ** argv) {
     const int stepLimit = 256;
     ProgramVec progVec(1, P);
     double startOpt = get_wall_time();
-    apo.optimize(progVec, APO::Strategy::BestGreedy, stepLimit);
+    IntVec reqSteps(1, 0);
+    apo.optimize(progVec, reqSteps, APO::Strategy::BestGreedy, stepLimit);
     double endOpt = get_wall_time();
 
     // optimized prog.
@@ -139,7 +141,7 @@ int main(int argc, char ** argv) {
     auto endScore = GetProgramScore(*P);
     double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
 
-    std::cerr << "Start score " << startScore << ", end score: " << endScore << ". opt time= " << optTime << "s\n";
+    std::cerr << "Start score " << startScore << ", end score: " << endScore << ". derSteps: " << reqSteps[0] << ", opt time= " << optTime << "s\n";
 
     Model::shutdown();
     return 0;

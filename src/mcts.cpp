@@ -120,7 +120,7 @@ bool MonteCarloOptimizer::tryApplyModel(Program &P, Action &rewrite,
 }
 
 void
-MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
+MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oStopVec, ProgramVec & progVec, IntVec & reqSteps, const IntVec & maxStepsVec, int startId, int endId, std::string inferTower) {
   const int numJobs = endId - startId;
 
   if (endId <= startId) return;
@@ -168,6 +168,7 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
 
     // update best seen program on this derivation
       if (curScore < bestScore[progId]) {
+        reqSteps[progId] = derStep; // keep track of required step for BESt solution
         oBestVec[progId].reset(new Program(*progVec[progId]));
         bestScore[progId] = curScore;
       }
@@ -418,7 +419,7 @@ MonteCarloOptimizer::searchDerivations_ModelDriven(DerivationVec & states, int s
 
 #pragma omp parallel for \
             reduction(+ : frozen) \
-            shared(maxDistVec, roundProgs, modelRewriteDist,states) 
+            shared(maxDistVec, roundProgs, modelRewriteDist,states)
         for (int t = startIdx; t < endIdx; ++t) {
           // self inflicted timeout
           if (derStep >= maxDistVec[t]) {

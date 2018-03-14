@@ -112,8 +112,10 @@ struct APO {
   // train the model according to the loaded task
   void train(const Job & task);
 
-  // optimize @P
-  void optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit);
+  // optimize the program in @progVec using the specified strategy
+  // returns the number of required steps in @requiredSteps
+  // will not proceed beyond @stepLimit many derivation steps
+  void optimize(ProgramVec & progVec, IntVec & requiredSteps, Strategy optStrat, int stepLimit);
 };
 
 

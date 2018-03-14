@@ -571,15 +571,16 @@ APO::loadCheckpoint(const std::string cpFile) {
 }
 
 void
-APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
+APO::optimize(ProgramVec & progVec, IntVec & reqSteps, Strategy optStrat, int stepLimit) {
   const auto & inferDevices = devices.getDevices("infer");
+  reqSteps.resize(progVec.size(), 0);
 
   switch (optStrat) {
   case Strategy::BestGreedy: // best program along greedy derivation trace
   case Strategy::Greedy: { // program for which the net signalled STOP
     IntVec maxDistVec(progVec.size(), stepLimit);
     ProgramVec bestVec(1), stopVec(1);
-    montOpt.greedyOptimization(bestVec, stopVec, progVec, maxDistVec, 0, progVec.size(), inferDevices[0].tower);
+    montOpt.greedyOptimization(bestVec, stopVec, progVec, reqSteps, maxDistVec, 0, progVec.size(), inferDevices[0].tower);
     if (optStrat == Strategy::BestGreedy) {
       progVec = bestVec;
     } else {
@@ -592,6 +593,9 @@ APO::optimize(ProgramVec & progVec, Strategy optStrat, int stepLimit) {
     const int numOptRounds = 10000;
     DerivationVec derVec = montOpt.searchDerivations(progVec, 1.0, maxDistVec, numOptRounds, false, inferDevices);
     derVec[0].print(std::cerr);
+    for (int i = 0; i < derVec.size(); ++i) {
+      reqSteps[i] = derVec[i].shortestDerivation;
+    }
   } return;
   default: abort(); // unsupported strategy
   }
