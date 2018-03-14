@@ -98,12 +98,19 @@ bestX=X[:len(bestY)]
 # filter new incumbents
 topX, topY = filterImprovements(bestX, bestY)
 
+# plot training performance index
+pl.plot(X[:len(indexY)], indexY, 'k:',label="perf index")
+
 # plot data
+pl.plot(topX, topY, 'bx',label="incumbent (best)") # best seen solution
+
+# current hit rate
 pl.plot(bestX, bestY, 'b', label="best")
-pl.plot(X[:len(bestBetterY)], bestBetterY, 'c', label="improved (best)")
 pl.plot(X[:len(stopY)], stopY, 'g',label="stop")
-pl.plot(X[:len(stopBetterY)], stopBetterY, 'm',label="improved (stop)")
+
 pl.plot(incBetterX[:len(incBetterY)], incBetterY, 'k.:',label="improved (ceil)")
+pl.plot(X[:len(bestBetterY)], bestBetterY, 'c', label="improved (best)")
+pl.plot(X[:len(stopBetterY)], stopBetterY, 'm',label="improved (stop)")
 if len(incBetterY) > 0:
   # append line w/o dot
   lastValue = incBetterY[-1]
@@ -112,10 +119,6 @@ if len(incBetterY) > 0:
   if lastUpdateRound != lastRound:
     pl.plot([lastUpdateRound, lastRound], [lastValue] * 2, 'k:')
 
-# plot incumbent solution
-pl.plot(topX, topY, 'bx',label="incumbent (best)")
-
-pl.plot(X[:len(indexY)], indexY, 'k:',label="perf index")
 
 pl.title("training on {} task".format(taskName))
 
