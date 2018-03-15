@@ -335,7 +335,7 @@ with tf.Session() as sess:
               # gather first operand outputs
               if modelOperands:
                 def reduceOperands(time_step, opIndices):
-                  indices = tf.expand_dims(IR.firstOp_data[:, time_step], axis=1) # [B x 1]
+                  indices = tf.expand_dims(opIndices[:, time_step], axis=1) # [B x 1]
                   idx = tf.concat([indices, batch_range], axis=1) # [B x 2] , indexes into P and B of sequence
                   return tf.gather_nd(sequence, idx) # [B x S]
 
