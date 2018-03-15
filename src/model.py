@@ -633,7 +633,7 @@ with tf.Session() as sess:
             with tf.name_scope(towerName):
               IR = buildIRPlaceholders()
               Ref = buildReferencePlaceholders()
-              towerOut = buildTower(IR, tower)
+              towerOut = buildTower(IR, False)
 
               # make loss inference available
               buildLosses(towerOut, Ref)
