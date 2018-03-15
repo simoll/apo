@@ -240,12 +240,10 @@ APO::train(const Job & task) {
 
   std::atomic<bool> keepRunning; keepRunning.store(true);
 
-  std::mutex cpuMutex; // to co-ordinate multi-threaded processing on the GPU (eg searchThread and evaluation rounds on the trainThread)
-
   // model training - repeatedly draw samples from SampleServer and submit to device for training
 #if 1
   std::thread
-  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec, &cpuMutex] {
+  trainThread([this, &task, &keepRunning, &server, &evalProgs, &evalDistVec, &refEvalDerVec, &bestEvalDerVec] {
     const int dotStep = task.logRate / 10;
 
     const auto & trainDevices = devices.getDevices("train");
@@ -282,8 +280,6 @@ APO::train(const Job & task) {
         if (loggedRound) {
           double roundEndTime = get_wall_time();
           double totalRoundTime = roundEndTime - roundStartTime;
-
-          // std::unique_lock<std::mutex> lock(cpuMutex); // drop the lock every now and then..
 
         // dump some statistics
           auto mlStats = model.query_stats();
@@ -380,7 +376,7 @@ APO::train(const Job & task) {
 
   const int distribThreshold = 1; // heavy weight task -> always distribute
   Distribute(inferDevices, numSearchThreads,
-      [this, &totalSearchRounds, &keepRunning, &server, &cpuMutex, &inferDevices, &task]
+      [this, &totalSearchRounds, &keepRunning, &server, &inferDevices, &task]
   (int devId, int startWork, int endWork)
   {
     Device threadDevice = inferDevices[devId]; // FIXME this is a hacky way to select a subrange of devices (namely just one device)
@@ -476,7 +472,6 @@ APO::train(const Job & task) {
 #if 0
         // random search
         {
-          std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
           refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, threadInferDevices);
         }
 
@@ -486,7 +481,6 @@ APO::train(const Job & task) {
 
       } else {
         // random search
-        std::unique_lock<std::mutex> lock(cpuMutex); // acquire lock for most CPU-heavy task
         refDerVec = montOpt.searchDerivations(nextProgs, task.pRandom, nextMaxDistVec, task.numOptRounds, false, threadInferDevices);
       }
 
