@@ -3,6 +3,7 @@ from tensorflow.python.util import nest
 
 import tensorflow as tf
 import numpy as np
+from bnlstm import *
 
 # dtype used for the model and for reference inputs (distribs)
 def data_type():
@@ -244,7 +245,7 @@ with tf.Session() as sess:
     return IR
 
   # returns @TowerOutputs with the tower's output operations
-  def buildTower(IR, batch_size=None):
+  def buildTower(IR, is_training=False, batch_size=None):
     if batch_size is None:
       # configure for a dynamic batch_size
       batch_size=tf.shape(IR.length_data)[0]
@@ -264,17 +265,20 @@ with tf.Session() as sess:
     tupleState=False
     isFusedCell=False
     if cell_type == "gru":
-        make_cell = lambda: tf.nn.rnn_cell.GRUCell(state_size)
+        make_cell = lambda _: tf.nn.rnn_cell.GRUCell(state_size)
     elif cell_type == "lstm_block":
         tupleState = True
-        make_cell = lambda: tf.contrib.rnn.LSTMBlockCell(state_size)
+        make_cell = lambda _: tf.contrib.rnn.LSTMBlockCell(state_size)
     elif cell_type == "lstm_fused":
         tupleState = True
         isFusedCell = True
-        make_cell = lambda: tf.contrib.rnn.LSTMBlockFusedCell(state_size)
+        make_cell = lambda _: tf.contrib.rnn.LSTMBlockFusedCell(state_size)
     elif cell_type == "lstm":
         tupleState = True
-        make_cell = lambda: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
+        make_cell = lambda _: tf.nn.rnn_cell.BasicLSTMCell(state_size, state_is_tuple=True)
+    elif cell_type == "bnlstm":
+        tupleState = True
+        make_cell = lambda is_training: BNLSTMCell(state_size, is_training)
     else:
         print(cell_type)
         print("Failed to build model! Choose an RNN cell type.")
@@ -389,7 +393,7 @@ with tf.Session() as sess:
         ### instantiate an RNN layer on the inputs
         print("\t- roll out RNN")
         with tf.variable_scope("layer_{}".format(l)): # Recursive Dag Network
-          cell = make_cell()
+          cell = make_cell(is_training)
 
           zero_cell_state = cell.zero_state(batch_size=batch_size, dtype = data_type()) if not isFusedCell else (zero_state, zero_state) 
 
@@ -619,7 +623,7 @@ with tf.Session() as sess:
             with tf.name_scope(towerName):
               IR = buildIRPlaceholders()
               # StagedIR = buildInferStage(IR) # under test - no benefit in using an inference stage
-              towerOut = buildTower(IR)
+              towerOut = buildTower(IR, False)
 
       elif isLossTower:
         hasLossDevice = True
@@ -629,7 +633,7 @@ with tf.Session() as sess:
             with tf.name_scope(towerName):
               IR = buildIRPlaceholders()
               Ref = buildReferencePlaceholders()
-              towerOut = buildTower(IR)
+              towerOut = buildTower(IR, tower)
 
               # make loss inference available
               buildLosses(towerOut, Ref)
@@ -654,7 +658,7 @@ with tf.Session() as sess:
               Q = QueuedTrainingInputs(IR, Ref, batch_size=train_batch_size) # must be placed on train device
               QIR, QRef = Q.dequeue()
 
-              towerOut = buildTower(QIR, batch_size=train_batch_size)
+              towerOut = buildTower(QIR, is_training=True, batch_size=train_batch_size)
               towerLoss = buildLosses(towerOut, QRef)
 
               # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
