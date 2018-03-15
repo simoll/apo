@@ -93,6 +93,8 @@ def filterImprovements(X,Y):
 
 indexY = buildPerfIndex(bestY, bestBetterY)
 
+
+### plot data ###
 bestX=X[:len(bestY)]
 
 # filter new incumbents
@@ -135,7 +137,16 @@ if len(incBetterY) > 0:
     pl.plot([lastUpdateRound, lastRound], [lastValue] * 2, 'k:')
 
 
+# geknaupte axis
+pl.plot([0, X[-1]], [1.0, 1.0], "k-")
+
 pl.title("training on {} task".format(taskName))
+
+
+### grid ###
+# pl.rc('grid', linestyle=":", color='gray')
+# pl.grid(True)
+
 
 # axis
 pl.xlabel("global step")
