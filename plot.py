@@ -98,19 +98,34 @@ bestX=X[:len(bestY)]
 # filter new incumbents
 topX, topY = filterImprovements(bestX, bestY)
 
+bestBetterX = X[:len(bestBetterY)]
+topBetterX, topBetterY = filterImprovements(bestBetterX, bestBetterY)
+
+stopBetterX = X[:len(stopBetterY)]
+topStopX, topStopY = filterImprovements(stopBetterX, stopBetterY)
+
 # plot training performance index
-pl.plot(X[:len(indexY)], indexY, 'k:',label="perf index")
+pl.plot(X[:len(indexY)], indexY, 'k:',label="perf. index")
 
 # plot data
-pl.plot(topX, topY, 'bx',label="incumbent (best)") # best seen solution
+
+def plotAnnotated(rawX, Y, color, label):
+  X = rawX[:len(Y)]
+  topX, topY = filterImprovements(X, Y)
+  pl.plot(topX, topY, '{}o'.format(color)) # best seen solution
+  pl.plot(X, Y, color, label=label)
 
 # current hit rate
-pl.plot(bestX, bestY, 'b', label="best")
-pl.plot(X[:len(stopY)], stopY, 'g',label="stop")
+plotAnnotated(X, bestY, "b", "opt: bestP")
+plotAnnotated(X, stopY, "g", "opt: P@stop")
 
-pl.plot(incBetterX[:len(incBetterY)], incBetterY, 'k.:',label="improved (ceil)")
-pl.plot(X[:len(bestBetterY)], bestBetterY, 'c', label="improved (best)")
-pl.plot(X[:len(stopBetterY)], stopBetterY, 'm',label="improved (stop)")
+# fraction of improved programs
+pl.plot(incBetterX[:len(incBetterY)], incBetterY, 'k.:',label="> ref (ceil)")
+
+plotAnnotated(X, bestBetterY, "c", label="> ref (best P)")
+plotAnnotated(X, stopBetterY, "m", label="> ref (P@stop)")
+
+# extend incBetter line
 if len(incBetterY) > 0:
   # append line w/o dot
   lastValue = incBetterY[-1]
