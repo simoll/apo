@@ -46,7 +46,7 @@ class LSTMCell(RNNCell):
 class BNLSTMCell(RNNCell):
     '''Batch normalized LSTM as described in arxiv.org/abs/1603.09025'''
     def __init__(self, num_units, training, forget_bias=1.0,
-               input_size=None, activation=math_ops.tanh,
+               input_size=None, activation=tf.tanh,
                layer_norm=True, norm_gain=1.0, norm_shift=0.0,
                dropout_keep_prob=1.0, dropout_prob_seed=None,
                reuse=None):
@@ -176,4 +176,7 @@ def batch_norm(x, name_scope, training, epsilon=1e-3, decay=0.999):
         def population_statistics():
             return tf.nn.batch_normalization(x, pop_mean, pop_var, offset, scale, epsilon)
 
-        return tf.cond(training, batch_statistics, population_statistics)
+        if type(training) is bool:
+          return batch_statistics() if training else population_statistics()
+        else:
+          return tf.cond(training, batch_statistics, population_statistics)
