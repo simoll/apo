@@ -136,6 +136,7 @@ int main(int argc, char ** argv) {
 
     // set-up engine
     APO apo;
+    std::cerr << "Loading checkpoint from " << cpFile << "\n";
     apo.loadCheckpoint(cpFile);
 
     // optimize
