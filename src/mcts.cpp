@@ -167,10 +167,10 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
       );
 
     // update best seen program on this derivation
-      if (curScore < bestScore[progId]) {
+      if (curScore < bestScore[t]) {
         reqSteps[progId] = derStep; // keep track of required step for BESt solution
         oBestVec[progId].reset(new Program(*progVec[progId]));
-        bestScore[progId] = curScore;
+        bestScore[t] = curScore;
       }
 
     // signalled STOP (or last reached program)
