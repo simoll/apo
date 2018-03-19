@@ -129,9 +129,9 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
   std::vector<char> alreadyStopped(numJobs, false);
 
   // compute initial score
-  std::vector<int> bestScore;
+  std::vector<Derivation> bestDer;
   for (int i = startId; i < endId; ++i) {
-    bestScore.push_back(GetProgramScore(*progVec[i]));
+    bestDer.push_back(Derivation(*progVec[i]));
     oBestVec[i].reset(new Program(*progVec[i]));
   }
 
@@ -139,7 +139,7 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
   for (int derStep = 0; frozen < numJobs; ++derStep) {
 
     // query action distribution
-    ResultDistVec actionDistVec(numJobs);
+    ResultDistVec actionDistVec(endId + 1); // FIXME pass iterators to infer_dist instead
     model.infer_dist(actionDistVec, progVec, startId, endId, inferTower).join();
 
     // TODO (fetch CPU lock?)
@@ -161,27 +161,27 @@ MonteCarloOptimizer::greedyOptimization(ProgramVec & oBestVec, ProgramVec & oSto
 
       int curScore = GetProgramScore(*progVec[progId]);
 
-      Derivation currState(
+      Derivation curDer(
           curScore, // program after greedy action/STOP
           derStep + (signalsStop ? 0 : 1) // no step taken if this was a STOP
       );
 
     // update best seen program on this derivation
-      if (curScore < bestScore[t]) {
+      if (curDer.betterThan(bestDer[t])) {
         reqSteps[progId] = derStep; // keep track of required step for BESt solution
         oBestVec[progId].reset(new Program(*progVec[progId]));
-        bestScore[t] = curScore;
+        bestDer[t] = curDer;
       }
 
     // signalled STOP (or last reached program)
-      if (stopDerivation || signalsStop) {
+      if (!alreadyStopped[t] && (stopDerivation || signalsStop)) {
         oStopVec[progId].reset(new Program(*progVec[progId])); // remember stopped program
         alreadyStopped[t] = true;
       }
 
    // last derivation (freeze state)
       if (stopDerivation) {
-        ++frozen; continue;
+        ++frozen;
       }
     }
   } // derivation loop
