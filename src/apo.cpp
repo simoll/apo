@@ -95,7 +95,8 @@ APO::generatePrograms(int numSamples, const Job & task, std::function<void(Progr
       mutSteps = mutRand(randGen());
       P.reset(rpg.generate_ext(stubLen));
 
-      assert(P->size() <= modelConfig.prog_length);
+      if (P->size() >= modelConfig.prog_length) continue; //already to large
+
       for (int j = 0; j < mutSteps; ++j) {
         expMut.mutate(*P, 1, task.pGenExpand); // mutate at least once
         expMut.shuffle(*P, task.numShuffle);
