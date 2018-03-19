@@ -146,8 +146,9 @@ int main(int argc, char ** argv) {
     apo.optimize(progVec, reqSteps, APO::Strategy::BestGreedy, stepLimit);
     double endOpt = get_wall_time();
 
+    auto pOpt = progVec[0];
+
     // optimized prog.
-    P->dump();
 #if 0
     // redundant
     P->dce();
@@ -155,7 +156,8 @@ int main(int argc, char ** argv) {
     P->dump();
 #endif
 
-    auto endScore = GetProgramScore(*P);
+    pOpt->dump();
+    auto endScore = GetProgramScore(*pOpt);
     double optTime = (endOpt - startOpt) / (double) CLOCKS_PER_SEC;
 
     std::cerr << "Start score " << startScore << ", end score: " << endScore << ". derSteps: " << reqSteps[0] << ", opt time= " << optTime << "s\n";
