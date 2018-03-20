@@ -17,8 +17,10 @@ CreateRandomOpCodeDist() {
 
   CatDist dist((int) OpCode::End_OpCode + 1, 0.0);
 #ifdef APO_ONLY_ADD
-#warning "only emitting ADDS!!!"
+#warning "only emitting Add/Sub/Mul!!!"
   dist[(int) OpCode::Add] = 1.0;
+  dist[(int) OpCode::Sub] = 1.0;
+  dist[(int) OpCode::Mul] = 1.0;
 #else
 
   for (int i = 0; i < dist.size(); ++i) {
