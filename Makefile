@@ -42,7 +42,7 @@ endif
 
 # enable asynchronous model queries
 # this should only be enabled if (APO_ENABLE_CUDA) is set as well and a GPU is available on the system
-# otherwise openmp threads will compete with TensorFlows internal threads got the CPUs, helping nobody
+# otherwise openmp threads will compete with TensorFlows internal threads for the CPUs, helping nobody
 ifeq ($(strip $(APO_ASYNC_TASKS)),1)
   $(info apo: Building with async task support.)
   FLAGS:=${FLAGS} -DAPO_ASYNC_TASKS
